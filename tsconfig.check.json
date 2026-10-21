@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": [
+    "apps/api/src/core/**/*.ts",
+    "libs/platform/**/*.ts",
+    "libs/modules/auth/src/**/*.ts",
+    "libs/modules/catalog/src/**/*.ts",
+    "libs/modules/admin/src/**/*.ts",
+    "libs/modules/booking/src/**/*.ts",
+    "libs/modules/calendar/src/**/*.ts",
+    "libs/modules/ledger/src/**/*.ts",
+    "libs/modules/payment/src/**/*.ts"
+  ],
+  "exclude": ["**/*.test.ts"]
+}

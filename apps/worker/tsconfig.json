@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "../../dist/worker",
+    "rootDir": "../..",
+    "types": ["node"]
+  },
+  "include": [
+    "src/**/*.ts",
+    "../../apps/api/src/core/**/*.ts",
+    "../../libs/modules/ledger/src/**/*.ts",
+    "../../libs/platform/outbox/src/**/*.ts",
+    "../../libs/platform/pricing/src/**/*.ts"
+  ],
+  "exclude": ["node_modules", "dist", "**/*.test.ts", "../../libs/**/*.test.ts"]
+}

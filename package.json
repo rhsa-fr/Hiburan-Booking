@@ -1,0 +1,37 @@
+{
+  "name": "tarlink",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.api.json --noEmit",
+    "typecheck:admin": "tsc -p apps/admin/tsconfig.json --noEmit",
+    "test": "vitest run",
+    "verify:db": "vite-node scripts/verify-db.ts",
+    "migrate": "vite-node scripts/migrate-cli.ts",
+    "migrate:dry": "vite-node scripts/migrate-cli.ts --dry-run",
+    "smoke:booking": "vite-node scripts/smoke-booking.ts",
+    "smoke:admin": "vite-node scripts/smoke-admin.ts",
+    "smoke:catalog": "vite-node scripts/smoke-catalog.ts",
+    "smoke:settle": "vite-node scripts/smoke-settle.ts",
+    "dev:api": "nest start --watch",
+    "dev:admin": "npm -w apps/admin run dev",
+    "build:api": "tsc -p apps/api/tsconfig.json",
+    "build:worker": "tsc -p apps/worker/tsconfig.json",
+    "start:worker": "node dist/worker/apps/worker/src/main.js",
+    "build:admin": "npm -w apps/admin run build",
+    "start:api": "node -r ./scripts/alias-hook.js dist/api/apps/api/src/main.js"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^11.0.0",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "vite-tsconfig-paths": "^5.1.4",
+    "vitest": "^2.1.8"
+  }
+}

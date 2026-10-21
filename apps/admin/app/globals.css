@@ -1,0 +1,152 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* `--font-jakarta`_now dimuat sendiri oleh next/font (lihat app/layout.tsx). */
+
+  /* Palette acuan: D:\Project\Tarlink\index.html + style.css.
+     Token yang sama dengan tailwind.config.ts, dipakai untuk gradient dan
+     elemen yang tidak bisawarnai lewat utility class. */
+  --tl-page: #f8f9fb;
+  --tl-sidebar: #f6f7f9;
+  --tl-subtle: #f7f8fa;
+  --tl-surface: #ffffff;
+  --tl-primary: #4e6bff;
+  --tl-primary-soft: #b8c7ff;
+  --tl-text-main: #1a1d26;
+  --tl-text-secondary: #6c727f;
+  --tl-text-muted: #9ea3ae;
+  --tl-border: #eceef2;
+  --tl-ok: #1f7a4d;
+  --tl-danger: #b3261e;
+
+  color-scheme: light;
+}
+
+@layer base {
+  html {
+    /* Panel ops: 14px adalah ukuran body acuan (style.css referensi).
+       16px membuat tabel dan label terasa terlalu besar di laptop 1366px. */
+    font-size: 14px;
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-page font-sans text-textMain antialiased;
+    font-feature-settings: "cv02" 1, "cv03" 1;
+  }
+
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+
+  :focus-visible {
+    outline: 2px solid #4e6bff;
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: #e8eeff;
+    color: #1a1d26;
+  }
+
+  input,
+  select,
+  textarea {
+    caret-color: #4e6bff;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #d6dae3 transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: #d6dae3;
+    border: 3px solid #f8f9fb;
+    border-radius: 999px;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: #b9bfcc;
+  }
+}
+
+@layer utilities {
+  .tnum {
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+  .animate-fade-in {
+    animation: fade-in 160ms ease-out both;
+  }
+
+  .animate-drawer-in {
+    animation: drawer-in 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .animate-dialog-in {
+    animation: dialog-in 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes drawer-in {
+  from {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

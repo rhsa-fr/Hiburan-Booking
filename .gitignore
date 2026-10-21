@@ -1,0 +1,21 @@
+node_modules/
+dist/
+.next/
+coverage/
+
+# Rahasia: jangan pernah di-commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Artefak build & cache
+*.tsbuildinfo
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
