@@ -2,21 +2,30 @@
  * Public surface of the booking module. Everything else is internal.
  */
 export { BookingModule } from './booking.module';
-export { BookingService, auditActorToken } from './booking.service';
+export { BookingService, auditActorToken, outstandingIdr } from './booking.service';
 export type {
   AuditActorToken,
+  BookingDetailView,
+  BookingEventView,
+  BookingPackageView,
   BookingPricingView,
   BookingSlotView,
   BookingStatePort,
+  BookingVendorView,
   BookingView,
+  CustomerBookingListItem,
+  CustomerBookingListPage,
   ListBookingsResult
 } from './booking.service';
 export { BookingRepository, bookingStateFromRow } from './booking.repository';
 export type {
   AutoCompletableRow,
+  BookingDetailRow,
   BookingRow,
   BookingSlotRow,
   BookingStatusPatch,
+  CustomerBookingListRow,
+  ListForCustomerOptions,
   ListForVendorOptions,
   NewBookingAddon,
   NewBookingRecord,
@@ -52,9 +61,11 @@ export {
   bookingAddonSchema,
   bookingEventSchema,
   bookingSlotSchema,
+  BOOKING_LIST_STATUSES,
   cancelBookingSchema,
   createBookingSchema,
   declineBookingSchema,
+  listBookingsQuerySchema,
   parseInput
 } from './dto';
 export type {
@@ -62,7 +73,8 @@ export type {
   AvailabilityQueryDto,
   CancelBookingDto,
   CreateBookingDto,
-  DeclineBookingDto
+  DeclineBookingDto,
+  ListBookingsQueryDto
 } from './dto';
 export {
   assertLegalCombination,

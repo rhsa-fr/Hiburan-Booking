@@ -68,6 +68,59 @@ export type BookingRow = {
   updated_at: Date;
 };
 
+/**
+ * `findById` joins the display context of the detail screen. The joined
+ * columns are all nullable (LEFT JOIN) so a booking whose vendor/package/event
+ * row is missing still loads — the service turns the missing part into `null`.
+ */
+export type BookingDetailRow = BookingRow & {
+  vendor_slug: string | null;
+  vendor_display_name: string | null;
+  vendor_whatsapp: string | null;
+  vendor_region_code: string | null;
+  vendor_base_address: string | null;
+  package_name: string | null;
+  package_duration_minutes: number | null;
+  event_title: string | null;
+  event_type: string | null;
+  event_region_code: string | null;
+  event_venue_name: string | null;
+  event_venue_address: string | null;
+  event_lat: number | null;
+  event_lng: number | null;
+  event_guest_estimate: number | null;
+  event_notes: string | null;
+  event_start_date: string | null;
+  event_end_date: string | null;
+};
+
+/** One page of the customer booking list; `total_count` is the unpaged count. */
+export type CustomerBookingListRow = {
+  id: string;
+  code: string;
+  lifecycle_status: LifecycleStatus;
+  payment_status: PaymentStatus;
+  settlement_status: SettlementStatus;
+  vendor_id: string;
+  package_id: string;
+  total_customer_idr: string;
+  dp_amount_idr: string;
+  vendor_slug: string | null;
+  vendor_display_name: string | null;
+  package_name: string | null;
+  slot_date: string | null;
+  slot_session: CalendarSession | null;
+  created_at: Date;
+  updated_at: Date;
+  total_count: number;
+};
+
+export interface ListForCustomerOptions {
+  status: LifecycleStatus | null;
+  limit: number;
+  offset: number;
+}
+
 export type BookingSlotRow = {
   date: string;
   session: CalendarSession;
@@ -405,8 +458,35 @@ export class BookingRepository {
     }
   }
 
-  async findById(id: string): Promise<BookingRow | null> {
-    const rows = await query<BookingRow>(`SELECT * FROM bookings WHERE id = $1`, [id]);
+  async findById(id: string): Promise<BookingDetailRow | null> {
+    const rows = await query<BookingDetailRow>(
+      `SELECT b.*,
+              v.slug         AS vendor_slug,
+              v.display_name AS vendor_display_name,
+              v.region_code  AS vendor_region_code,
+              v.base_address AS vendor_base_address,
+              u.phone        AS vendor_whatsapp,
+              p.name              AS package_name,
+              p.duration_minutes  AS package_duration_minutes,
+              e.title              AS event_title,
+              e.event_type         AS event_type,
+              e.region_code        AS event_region_code,
+              e.venue_name         AS event_venue_name,
+              e.venue_address      AS event_venue_address,
+              ST_Y(e.venue_location::geometry) AS event_lat,
+              ST_X(e.venue_location::geometry) AS event_lng,
+              e.guest_estimate     AS event_guest_estimate,
+              e.notes              AS event_notes,
+              e.start_date::text   AS event_start_date,
+              e.end_date::text     AS event_end_date
+         FROM bookings b
+         LEFT JOIN vendors v  ON v.id = b.vendor_id
+         LEFT JOIN users u    ON u.id = v.owner_user_id
+         LEFT JOIN packages p ON p.id = b.package_id
+         LEFT JOIN events e   ON e.id = b.event_id
+        WHERE b.id = $1`,
+      [id]
+    );
     return rows[0] ?? null;
   }
 
@@ -625,6 +705,52 @@ export class BookingRepository {
       ]
     );
     return rows;
+  }
+
+  /**
+   * Customer list: one query, no N+1. The lateral picks the earliest slot with
+   * the session order `day < night < full`; `count(*) OVER ()` is the unpaged
+   * total (window runs before LIMIT).
+   */
+  async listForCustomer(
+    customerId: string,
+    options: ListForCustomerOptions
+  ): Promise<CustomerBookingListRow[]> {
+    return query<CustomerBookingListRow>(
+      `SELECT b.id,
+              b.code,
+              b.lifecycle_status,
+              b.payment_status,
+              b.settlement_status,
+              b.vendor_id,
+              b.package_id,
+              b.total_customer_idr,
+              b.dp_amount_idr,
+              b.created_at,
+              b.updated_at,
+              v.slug         AS vendor_slug,
+              v.display_name AS vendor_display_name,
+              p.name         AS package_name,
+              s.date::text   AS slot_date,
+              s.session      AS slot_session,
+              CAST(count(*) OVER () AS int) AS total_count
+         FROM bookings b
+         LEFT JOIN vendors v  ON v.id = b.vendor_id
+         LEFT JOIN packages p ON p.id = b.package_id
+         LEFT JOIN LATERAL (
+           SELECT bs.date, bs.session
+             FROM booking_slots bs
+            WHERE bs.booking_id = b.id
+            ORDER BY bs.date ASC,
+                     CASE bs.session WHEN 'day' THEN 0 WHEN 'night' THEN 1 ELSE 2 END
+            LIMIT 1
+         ) s ON true
+        WHERE b.customer_id = $1
+          AND ($2::text IS NULL OR b.lifecycle_status = $2::booking_lifecycle_status)
+        ORDER BY b.created_at DESC, b.id DESC
+        LIMIT $3 OFFSET $4`,
+      [customerId, options.status, options.limit, options.offset]
+    );
   }
 
   /**

@@ -12,15 +12,18 @@ import type { AuthUser } from './current-user.decorator';
 import {
   BookingRepository,
   bookingStateFromRow,
+  type BookingDetailRow,
   type BookingRow,
   type BookingSlotRow,
+  type CustomerBookingListRow,
   type NewBookingAddon
 } from './booking.repository';
 import {
   type AcceptBookingDto,
   type CancelBookingDto,
   type CreateBookingDto,
-  type DeclineBookingDto
+  type DeclineBookingDto,
+  type ListBookingsQueryDto
 } from './dto';
 import { currentRequestId } from './request-context';
 import { deriveScheduleWindow } from './schedule';
@@ -30,6 +33,7 @@ import {
   RESPOND_DEADLINE_HOURS,
   type ActorRole,
   type BookingAction,
+  type PaymentStatus,
   type TransitionResult
 } from './state-machine';
 
@@ -103,6 +107,65 @@ export interface BookingView {
   updated_at: string;
 }
 
+export interface BookingVendorView {
+  id: string;
+  slug: string;
+  display_name: string;
+  whatsapp: string | null;
+  region_code: string;
+  base_address: string | null;
+}
+
+export interface BookingPackageView {
+  id: string;
+  name: string;
+  duration_minutes: number;
+}
+
+export interface BookingEventView {
+  title: string;
+  event_type: string | null;
+  region_code: string;
+  venue_name: string | null;
+  venue_address: string;
+  location: { lat: number; lng: number } | null;
+  guest_estimate: number | null;
+  notes: string | null;
+  start_date: string;
+  end_date: string;
+}
+
+/** GET /bookings/:id: additive fields on top of the existing detail shape. */
+export interface BookingDetailView extends BookingView {
+  outstanding_idr: number;
+  vendor: BookingVendorView | null;
+  package: BookingPackageView | null;
+  event: BookingEventView | null;
+}
+
+export interface CustomerBookingListItem {
+  id: string;
+  code: string;
+  lifecycle_status: string;
+  payment_status: string;
+  settlement_status: string;
+  vendor: { id: string; slug: string; display_name: string } | null;
+  package: { id: string; name: string } | null;
+  total_customer_idr: number;
+  dp_amount_idr: number;
+  outstanding_idr: number;
+  first_slot: { date: string; session: string } | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CustomerBookingListPage {
+  items: CustomerBookingListItem[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
 export interface ListBookingsResult {
   data: BookingView[];
   next_cursor: string | null;
@@ -147,6 +210,25 @@ function moneyToJson(value: string | bigint): number {
 
 function iso(value: Date | null): string | null {
   return value ? value.toISOString() : null;
+}
+
+/**
+ * There is no `outstanding_idr` column: the remainder follows the payment
+ * status (same rule as admin.repository), never negative.
+ */
+export function outstandingIdr(
+  paymentStatus: PaymentStatus,
+  totalCustomerIdr: string,
+  dpAmountIdr: string
+): number {
+  if (paymentStatus === 'unpaid') return moneyToJson(BigInt(totalCustomerIdr));
+  if (paymentStatus === 'dp_paid') {
+    const diff = BigInt(totalCustomerIdr) - BigInt(dpAmountIdr);
+    return diff > 0n ? moneyToJson(diff) : 0;
+  }
+  // `partially_refunded`/`refunded`: refunds live in `refunds`, not on the
+  // booking row, so there is no amount left to collect.
+  return 0;
 }
 
 function codeFor(prefix: 'BK' | 'EV', now: Date): string {
@@ -765,12 +847,38 @@ export class BookingService {
     });
   }
 
-  async getById(id: string, user: AuthUser): Promise<BookingView> {
+  async getById(id: string, user: AuthUser): Promise<BookingDetailView> {
     const row = await this.repo.findById(id);
     if (!row) throw new AppError('NOT_FOUND', `Booking ${id} tidak ditemukan`);
     await this.assertCanView(row, user);
     const slots = await this.repo.findSlotsByBooking(id);
-    return this.toView(row, slots);
+    return this.toDetailView(row, slots);
+  }
+
+  /**
+   * GET /bookings: the caller's own bookings only, newest first. Role gating is
+   * repeated here because the service is also reachable from other modules.
+   */
+  async listForCustomer(
+    user: AuthUser,
+    options: ListBookingsQueryDto
+  ): Promise<CustomerBookingListPage> {
+    requireRole(user, ['customer']);
+    const page = options.page;
+    const pageSize = options.page_size;
+
+    const rows = await this.repo.listForCustomer(user.id, {
+      status: options.status ?? null,
+      limit: pageSize,
+      offset: (page - 1) * pageSize
+    });
+
+    return {
+      items: rows.map((row) => this.toListItem(row)),
+      total: rows[0]?.total_count ?? 0,
+      page,
+      page_size: pageSize
+    };
   }
 
   async listForVendor(
@@ -963,6 +1071,93 @@ export class BookingService {
       settlement_status: row.settlement_status,
       total_customer_idr: row.total_customer_idr,
       dp_amount_idr: row.dp_amount_idr
+    };
+  }
+
+  private toDetailView(row: BookingDetailRow, slots: readonly BookingSlotRow[]): BookingDetailView {
+    return {
+      ...this.toView(row, slots),
+      outstanding_idr: outstandingIdr(
+        row.payment_status,
+        row.total_customer_idr,
+        row.dp_amount_idr
+      ),
+      vendor:
+        row.vendor_slug === null || row.vendor_display_name === null
+          ? null
+          : {
+              id: row.vendor_id,
+              slug: row.vendor_slug,
+              display_name: row.vendor_display_name,
+              whatsapp: row.vendor_whatsapp,
+              region_code: row.vendor_region_code ?? '',
+              base_address: row.vendor_base_address
+            },
+      package:
+        row.package_name === null
+          ? null
+          : {
+              id: row.package_id,
+              name: row.package_name,
+              duration_minutes: row.package_duration_minutes ?? 0
+            },
+      event:
+        row.event_title === null ||
+        row.event_region_code === null ||
+        row.event_venue_address === null ||
+        row.event_start_date === null ||
+        row.event_end_date === null
+          ? null
+          : {
+              title: row.event_title,
+              event_type: row.event_type,
+              region_code: row.event_region_code,
+              venue_name: row.event_venue_name,
+              venue_address: row.event_venue_address,
+              location:
+                row.event_lat === null || row.event_lng === null
+                  ? null
+                  : { lat: row.event_lat, lng: row.event_lng },
+              guest_estimate: row.event_guest_estimate,
+              notes: row.event_notes,
+              start_date: row.event_start_date,
+              end_date: row.event_end_date
+            }
+    };
+  }
+
+  private toListItem(row: CustomerBookingListRow): CustomerBookingListItem {
+    return {
+      id: row.id,
+      code: row.code,
+      lifecycle_status: row.lifecycle_status,
+      payment_status: row.payment_status,
+      settlement_status: row.settlement_status,
+      vendor:
+        row.vendor_slug === null || row.vendor_display_name === null
+          ? null
+          : {
+              id: row.vendor_id,
+              slug: row.vendor_slug,
+              display_name: row.vendor_display_name
+            },
+      package:
+        row.package_name === null
+          ? null
+          : { id: row.package_id, name: row.package_name },
+      total_customer_idr: moneyToJson(row.total_customer_idr),
+      dp_amount_idr: moneyToJson(row.dp_amount_idr),
+      outstanding_idr: outstandingIdr(
+        row.payment_status,
+        row.total_customer_idr,
+        row.dp_amount_idr
+      ),
+      first_slot:
+        row.slot_date === null || row.slot_session === null
+          ? null
+          : { date: row.slot_date, session: row.slot_session },
+      created_at: row.created_at.toISOString(),
+      updated_at: row.updated_at.toISOString()
     };
   }
 

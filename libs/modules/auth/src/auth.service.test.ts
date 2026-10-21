@@ -3,11 +3,18 @@
  * memory so rate limiting, expiry, attempt counting, single-use consumption and
  * password login are exercised deterministically with a fixed clock.
  */
+import type { ExecutionContext } from '@nestjs/common';
 import { describe, expect, it } from 'vitest';
 import { AppError } from '@tarlink/core/errors';
-import { verifyAccessToken, type Role } from '@tarlink/platform/auth';
+import {
+  AuthGuard,
+  signAccessToken,
+  verifyAccessToken,
+  type Role
+} from '@tarlink/platform/auth';
 import type {
   AuthRepository,
+  AuthUserProfile,
   AuthUserRecord,
   NewLoginAttempt,
   NewOtpRequest,
@@ -114,6 +121,19 @@ class FakeAuthRepository implements AuthRepository {
     return this.users.find((user) => user.googleSub === googleSub) ?? null;
   }
 
+  async findUserProfile(userId: string): Promise<AuthUserProfile | null> {
+    const user = this.users.find((candidate) => candidate.id === userId);
+    if (!user) return null;
+    return {
+      id: user.id,
+      phone: user.phone,
+      email: user.email,
+      passwordHash: user.passwordHash,
+      name: user.name,
+      createdAt: new Date('2026-10-01T00:00:00.000Z')
+    };
+  }
+
   async emailExists(email: string): Promise<boolean> {
     const needle = email.trim().toLowerCase();
     return this.users.some((user) => user.email?.toLowerCase() === needle);
@@ -175,6 +195,13 @@ class FakeAuthRepository implements AuthRepository {
 
   async insertSession(input: NewSession): Promise<void> {
     this.sessions.push({ ...input, revokedAt: null });
+  }
+
+  async findActiveSessionByJti(jti: string, now: Date): Promise<{ userId: string } | null> {
+    const row = this.sessions.find(
+      (session) => session.jti === jti && !session.revokedAt && session.expiresAt > now
+    );
+    return row ? { userId: row.userId } : null;
   }
 
   async revokeAllSessions(userId: string, at: Date): Promise<number> {
@@ -767,5 +794,294 @@ describe('AuthController.register', () => {
         role: 'vendor_owner'
       })
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+  });
+});
+
+describe('AuthService.getProfile', () => {
+  it('returns the database profile with roles read from user_roles', async () => {
+    const { repository, service } = makeHarness();
+    addUser(repository, ['customer'], { email: 'user@tarlink.id', name: 'Budi Santoso' });
+    repository.roles.push({ userId: USER_ID, role: 'vendor_owner' });
+
+    const result = await service.getProfile(USER_ID);
+
+    expect(result).toEqual({
+      user: {
+        id: USER_ID,
+        phone: PHONE,
+        roles: ['customer', 'vendor_owner'],
+        email: 'user@tarlink.id',
+        full_name: 'Budi Santoso',
+        created_at: '2026-10-01T00:00:00.000Z'
+      }
+    });
+  });
+
+  it('keeps email and full_name null when the account has none', async () => {
+    const { repository, service } = makeHarness();
+    addUser(repository, ['customer']);
+
+    const result = await service.getProfile(USER_ID);
+
+    expect(result.user).toMatchObject({ email: null, full_name: null, roles: ['customer'] });
+  });
+
+  it('rejects an unknown subject with UNAUTHENTICATED', async () => {
+    const { service } = makeHarness();
+
+    await expect(service.getProfile(USER_ID)).rejects.toMatchObject({
+      code: 'UNAUTHENTICATED'
+    });
+  });
+});
+
+describe('AuthService.refresh', () => {
+  const EMAIL = 'user@tarlink.id';
+  const PASSWORD = 'kata-sandi-2026';
+
+  async function signIn(
+    repository: FakeAuthRepository,
+    service: AuthService
+  ): Promise<string | undefined> {
+    const login = await service.loginWithPassword({ email: EMAIL, password: PASSWORD });
+    return verifyAccessToken(login.access_token, SECRET).jti;
+  }
+
+  function activeJtis(repository: FakeAuthRepository): string[] {
+    return repository.sessions
+      .filter((session) => !session.revokedAt)
+      .map((session) => session.jti);
+  }
+
+  it('rotates the session and mints a token carrying the new jti', async () => {
+    const { repository, service } = makeHarness();
+    addUser(repository, ['customer'], {
+      email: EMAIL,
+      passwordHash: await hashPassword(PASSWORD)
+    });
+    const login = await service.loginWithPassword({ email: EMAIL, password: PASSWORD });
+    const loginJti = verifyAccessToken(login.access_token, SECRET).jti;
+    repository.roles.push({ userId: USER_ID, role: 'vendor_owner' });
+
+    const refreshed = await service.refresh(USER_ID, loginJti);
+    const claims = verifyAccessToken(refreshed.access_token, SECRET);
+
+    expect(loginJti).toBeTruthy();
+    expect(claims.jti).toBeTruthy();
+    expect(claims.jti).not.toBe(loginJti);
+    expect(claims.sub).toBe(USER_ID);
+    expect(claims.roles).toEqual(['customer', 'vendor_owner']);
+    expect(refreshed.user).toMatchObject({
+      id: USER_ID,
+      phone: PHONE,
+      roles: ['customer', 'vendor_owner'],
+      email: EMAIL
+    });
+    expect(refreshed.token_type).toBe('Bearer');
+    expect(refreshed.expires_in).toBe(900);
+    expect(activeJtis(repository)).toEqual([claims.jti]);
+  });
+
+  it('keeps exactly one active session across several refreshes', async () => {
+    const { repository, service } = makeHarness();
+    addUser(repository, ['customer'], {
+      email: EMAIL,
+      passwordHash: await hashPassword(PASSWORD)
+    });
+    let jti = await signIn(repository, service);
+
+    for (let round = 0; round < 3; round += 1) {
+      const refreshed = await service.refresh(USER_ID, jti);
+      jti = verifyAccessToken(refreshed.access_token, SECRET).jti;
+      expect(activeJtis(repository)).toEqual([jti]);
+    }
+
+    expect(repository.sessions).toHaveLength(4);
+  });
+
+  it('rejects a reused jti: the rotated session is already revoked', async () => {
+    const { repository, service } = makeHarness();
+    addUser(repository, ['customer'], {
+      email: EMAIL,
+      passwordHash: await hashPassword(PASSWORD)
+    });
+    const loginJti = await signIn(repository, service);
+
+    await service.refresh(USER_ID, loginJti);
+
+    await expect(service.refresh(USER_ID, loginJti)).rejects.toMatchObject({
+      code: 'UNAUTHENTICATED',
+      message: 'Sesi sudah berakhir. Silakan masuk lagi.'
+    });
+    expect(activeJtis(repository)).toHaveLength(1);
+  });
+
+  it('rejects a token without a jti claim', async () => {
+    const { repository, service } = makeHarness();
+    addUser(repository, ['customer'], { email: EMAIL });
+
+    await expect(service.refresh(USER_ID)).rejects.toMatchObject({
+      code: 'UNAUTHENTICATED',
+      message: 'Sesi tidak valid. Silakan masuk lagi.'
+    });
+    await expect(service.refresh(USER_ID, null)).rejects.toMatchObject({
+      code: 'UNAUTHENTICATED'
+    });
+    expect(repository.sessions).toHaveLength(0);
+  });
+
+  it('rejects an unknown jti with UNAUTHENTICATED', async () => {
+    const { service } = makeHarness();
+
+    await expect(service.refresh(USER_ID, 'unknown-jti')).rejects.toMatchObject({
+      code: 'UNAUTHENTICATED',
+      message: 'Sesi sudah berakhir. Silakan masuk lagi.'
+    });
+  });
+
+  it('rejects a valid jti that belongs to another user', async () => {
+    const { repository, service } = makeHarness();
+    addUser(repository, ['customer'], {
+      email: EMAIL,
+      passwordHash: await hashPassword(PASSWORD)
+    });
+    const loginJti = await signIn(repository, service);
+
+    await expect(service.refresh(ADMIN_ID, loginJti)).rejects.toMatchObject({
+      code: 'UNAUTHENTICATED'
+    });
+    expect(activeJtis(repository)).toHaveLength(1);
+  });
+
+  it('rejects a token whose sessions were revoked by setPassword', async () => {
+    const { repository, service } = makeHarness();
+    addUser(repository, ['customer'], {
+      email: EMAIL,
+      passwordHash: await hashPassword(PASSWORD)
+    });
+    const loginJti = await signIn(repository, service);
+
+    await service.setPassword(USER_ID, 'kata-sandi-baru-2026');
+
+    await expect(service.refresh(USER_ID, loginJti)).rejects.toMatchObject({
+      code: 'UNAUTHENTICATED',
+      message: 'Sesi sudah berakhir. Silakan masuk lagi.'
+    });
+  });
+
+  it('logout revokes only the session carrying that jti', async () => {
+    const { repository, service } = makeHarness();
+    addUser(repository, ['customer'], {
+      email: EMAIL,
+      passwordHash: await hashPassword(PASSWORD)
+    });
+    const firstJti = await signIn(repository, service);
+    const secondJti = await signIn(repository, service);
+
+    await expect(service.logout(USER_ID, firstJti)).resolves.toEqual({ revoked: 1 });
+
+    expect(activeJtis(repository)).toEqual([secondJti]);
+    await expect(service.refresh(USER_ID, firstJti)).rejects.toMatchObject({
+      code: 'UNAUTHENTICATED'
+    });
+    await expect(service.refresh(USER_ID, secondJti)).resolves.toMatchObject({
+      token_type: 'Bearer'
+    });
+  });
+
+  it('keeps tokens without a jti claim valid: the claim is additive', () => {
+    const token = signAccessToken({ sub: USER_ID, roles: ['customer'] }, SECRET, 900);
+
+    expect(verifyAccessToken(token, SECRET).jti).toBeUndefined();
+    expect(() =>
+      new AuthGuard(SECRET).canActivate({
+        getHandler: () => (): void => undefined,
+        getClass: () => class TestController {},
+        switchToHttp: () => ({
+          getRequest: () => ({ headers: { authorization: `Bearer ${token}` } }),
+          getResponse: () => undefined,
+          getNext: () => undefined
+        })
+      } as unknown as ExecutionContext)
+    ).not.toThrow();
+  });
+});
+
+describe('the refresh/me routes require a valid bearer token', () => {
+  const guard = new AuthGuard(SECRET);
+
+  function contextFor(request: {
+    headers: Record<string, string | undefined>;
+    user?: { id: string; roles: Role[] };
+  }): ExecutionContext {
+    return {
+      getHandler: () => (): void => undefined,
+      getClass: () => class TestController {},
+      switchToHttp: () => ({
+        getRequest: () => request,
+        getResponse: () => undefined,
+        getNext: () => undefined
+      })
+    } as unknown as ExecutionContext;
+  }
+
+  it('rejects a request without a token', () => {
+    expect(() => guard.canActivate(contextFor({ headers: {} }))).toThrowError(AppError);
+  });
+
+  it('rejects a garbage token', () => {
+    expect(() =>
+      guard.canActivate(contextFor({ headers: { authorization: 'Bearer not-a-jwt' } }))
+    ).toThrowError(AppError);
+  });
+
+  it('rejects an expired token', () => {
+    const expired = signAccessToken({ sub: USER_ID, roles: ['customer'] }, SECRET, -1);
+    expect(() =>
+      guard.canActivate(contextFor({ headers: { authorization: `Bearer ${expired}` } }))
+    ).toThrowError(AppError);
+  });
+
+  it('accepts a live token and sets the identity', () => {
+    const token = signAccessToken({ sub: USER_ID, roles: ['customer'] }, SECRET, 900);
+    const request = { headers: { authorization: `Bearer ${token}` } };
+
+    expect(guard.canActivate(contextFor(request))).toBe(true);
+    expect(request).toMatchObject({ user: { id: USER_ID, roles: ['customer'] } });
+  });
+});
+
+describe('AuthController.me / refresh', () => {
+  it('returns the profile under the data envelope', async () => {
+    const profile = {
+      user: {
+        id: USER_ID,
+        phone: PHONE,
+        roles: ['customer' as Role],
+        email: 'user@tarlink.id',
+        full_name: null,
+        created_at: '2026-10-01T00:00:00.000Z'
+      }
+    };
+    const service = { getProfile: async () => profile } as unknown as AuthService;
+    const controller = new AuthController(service);
+
+    await expect(
+      controller.me({ headers: {}, user: { id: USER_ID, roles: ['customer'] } })
+    ).resolves.toEqual({ data: profile });
+  });
+
+  it('rejects /me without a verified user', async () => {
+    const controller = new AuthController({} as AuthService);
+    await expect(controller.me({ headers: {} })).rejects.toMatchObject({
+      code: 'UNAUTHENTICATED'
+    });
+  });
+
+  it('rejects /refresh without a verified user', async () => {
+    const controller = new AuthController({} as AuthService);
+    await expect(controller.refresh({ headers: {} })).rejects.toMatchObject({
+      code: 'UNAUTHENTICATED'
+    });
   });
 });

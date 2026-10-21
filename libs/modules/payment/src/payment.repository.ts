@@ -74,6 +74,12 @@ export interface RefundRecord {
   readonly createdAt: Date;
 }
 
+/** Latest DP payment of a booking plus the booking owner, for the read route. */
+export interface DpPaymentByBooking {
+  readonly payment: PaymentRecord;
+  readonly customerId: string;
+}
+
 export interface NewPayment {
   readonly bookingId: string;
   readonly kind: PaymentKind;
@@ -155,6 +161,11 @@ export interface PaymentRepository {
   lockBooking(tx: JournalQueryClient, bookingId: string): Promise<BookingSnapshot | null>;
   lockBookingForPayment(tx: JournalQueryClient, paymentId: string): Promise<BookingSnapshot | null>;
   findActiveDpPayment(tx: JournalQueryClient, bookingId: string): Promise<PaymentRecord | null>;
+  /** Newest DP payment of the booking (any status) with the booking's customer id. */
+  findLatestDpPaymentByBooking(
+    tx: JournalQueryClient,
+    bookingId: string
+  ): Promise<DpPaymentByBooking | null>;
   insertPayment(tx: JournalQueryClient, input: NewPayment): Promise<PaymentRecord>;
   findSettlementPayment(
     tx: JournalQueryClient,
@@ -261,6 +272,16 @@ SELECT id, booking_id, kind, method, amount_idr, fee_idr, status, provider, prov
        expires_at, paid_at
 FROM payments
 WHERE booking_id = $1 AND kind = 'dp' AND status IN ('pending','paid')
+LIMIT 1
+`;
+
+const SELECT_LATEST_DP_BY_BOOKING_SQL = `
+SELECT p.id, p.booking_id, p.kind, p.method, p.amount_idr, p.fee_idr, p.status, p.provider,
+       p.provider_ref, p.expires_at, p.paid_at, b.customer_id
+FROM payments p
+JOIN bookings b ON b.id = p.booking_id
+WHERE p.booking_id = $1 AND p.kind = 'dp'
+ORDER BY p.created_at DESC, p.id DESC
 LIMIT 1
 `;
 
@@ -413,6 +434,16 @@ export class PgPaymentRepository implements PaymentRepository {
     const { rows } = await tx.query(SELECT_ACTIVE_DP_SQL, [bookingId]);
     const row = rows[0];
     return row ? mapPayment(row) : null;
+  }
+
+  async findLatestDpPaymentByBooking(
+    tx: JournalQueryClient,
+    bookingId: string
+  ): Promise<DpPaymentByBooking | null> {
+    const { rows } = await tx.query(SELECT_LATEST_DP_BY_BOOKING_SQL, [bookingId]);
+    const row = rows[0];
+    if (!row) return null;
+    return { payment: mapPayment(row), customerId: String(row.customer_id) };
   }
 
   async insertPayment(tx: JournalQueryClient, input: NewPayment): Promise<PaymentRecord> {

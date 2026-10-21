@@ -12,8 +12,8 @@
  *   - password login works for every active account that has a password, and
  *     every rejection answers with one generic message;
  *   - public registration and Google sign-up create `customer` only;
- *   - the access token carries `{ sub, roles }`; the session row keeps the
- *     matching `jti` used by logout.
+ *   - the access token carries `{ sub, roles, jti }`; the `jti` is the matching
+ *     `sessions` row, so logout and refresh act on exactly that session.
  *
  * Neither the OTP, the password nor the Google token is ever written to a log.
  */
@@ -118,6 +118,18 @@ export interface VerifyOtpResult {
 
 /** Password login returns the same payload as OTP verification. */
 export type PasswordLoginResult = VerifyOtpResult;
+
+/** `GET /auth/me`: profile read from the database, not from the token claims. */
+export interface CurrentUserResult {
+  readonly user: {
+    readonly id: string;
+    readonly phone: string | null;
+    readonly roles: Role[];
+    readonly email: string | null;
+    readonly full_name: string | null;
+    readonly created_at: string;
+  };
+}
 
 export interface LogoutResult {
   readonly revoked: number;
@@ -431,6 +443,61 @@ export class AuthService {
   }
 
   /**
+   * Current profile of the subject carried by a verified access token. Roles are
+   * re-read from `user_roles`, so a revoked role disappears immediately instead
+   * of staying alive until the token expires.
+   */
+  async getProfile(userId: string): Promise<CurrentUserResult> {
+    const user = await this.repository.findUserProfile(userId);
+    if (!user) {
+      throw new AppError('UNAUTHENTICATED', 'Sesi tidak valid');
+    }
+    const roles = await this.repository.listActiveRoles(user.id);
+    return {
+      user: {
+        id: user.id,
+        phone: user.phone,
+        roles,
+        email: user.email,
+        full_name: user.name,
+        created_at: user.createdAt.toISOString()
+      }
+    };
+  }
+
+  /**
+   * Rotates the session identified by `jti`: the old row is revoked and a new
+   * session is issued, so one refresh chain has exactly one active row. A
+   * missing, revoked or expired session is a 401 - an access token alone is not
+   * enough to keep a session alive. Normal authenticated requests never consult
+   * `sessions`; only refresh and logout do.
+   */
+  async refresh(userId: string, jti?: string | null): Promise<PasswordLoginResult> {
+    if (!jti) {
+      throw new AppError('UNAUTHENTICATED', 'Sesi tidak valid. Silakan masuk lagi.');
+    }
+
+    const now = this.now();
+    const session = await this.repository.findActiveSessionByJti(jti, now);
+    if (!session || session.userId !== userId) {
+      throw new AppError('UNAUTHENTICATED', 'Sesi sudah berakhir. Silakan masuk lagi.');
+    }
+
+    // Atomic claim: a concurrent refresh with the same jti loses here.
+    const revoked = await this.repository.revokeSessions(userId, jti, now);
+    if (revoked === 0) {
+      throw new AppError('UNAUTHENTICATED', 'Sesi sudah berakhir. Silakan masuk lagi.');
+    }
+
+    const user = await this.repository.findUserProfile(userId);
+    if (!user) {
+      throw new AppError('UNAUTHENTICATED', 'Sesi tidak valid');
+    }
+    const roles = await this.repository.listActiveRoles(user.id);
+    return this.issueSession(user, roles, now, { includeEmail: true });
+  }
+
+  /**
    * Sets (or replaces) a password and revokes every existing session, so a
    * credential change always forces a fresh login. Used by the seeding path.
    */
@@ -444,15 +511,16 @@ export class AuthService {
     await this.repository.revokeAllSessions(userId, now);
   }
 
-  /** Creates the session row and the matching access token. */
+  /** Creates the session row and the matching access token (same `jti`). */
   private async issueSession(
     user: AuthUserRecord,
     roles: Role[],
     now: Date,
     options: { includeEmail?: boolean } = {}
   ): Promise<VerifyOtpResult> {
+    const jti = this.newId();
     await this.repository.insertSession({
-      jti: this.newId(),
+      jti,
       userId: user.id,
       issuedAt: now,
       expiresAt: new Date(now.getTime() + this.jwtTtlSeconds * 1000),
@@ -461,7 +529,11 @@ export class AuthService {
     });
 
     return {
-      access_token: signAccessToken({ sub: user.id, roles }, this.jwtSecret, this.jwtTtlSeconds),
+      access_token: signAccessToken(
+        { sub: user.id, roles, jti },
+        this.jwtSecret,
+        this.jwtTtlSeconds
+      ),
       token_type: 'Bearer',
       expires_in: this.jwtTtlSeconds,
       user: {
@@ -476,9 +548,9 @@ export class AuthService {
   }
 
   /**
-   * Revokes the session identified by `jti`. The current access token carries no
-   * `jti` claim (the platform token contract is `{ sub, roles }`), so callers
-   * that cannot supply one revoke the user's most recent active session.
+   * Revokes the session identified by `jti`. Tokens minted before sessions had
+   * a `jti` claim carry none; those fall back to revoking the user's most recent
+   * active session.
    */
   async logout(userId: string, jti?: string | null): Promise<LogoutResult> {
     const revoked = await this.repository.revokeSessions(userId, jti ?? null, this.now());

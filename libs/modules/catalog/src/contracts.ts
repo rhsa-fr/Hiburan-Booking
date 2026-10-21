@@ -76,3 +76,93 @@ export interface CalendarDays {
 export interface CalendarWriteResult {
   updated: number;
 }
+
+/* ------------------------------------------------------------ public catalog */
+
+/** `GET /vendors` query after validation; `null` means "no filter". */
+export interface PublicVendorQuery {
+  q: string | null;
+  region: string | null;
+  page: number;
+  page_size: number;
+}
+
+/** One row of `GET /vendors`. */
+export interface PublicVendorCard {
+  id: string;
+  slug: string;
+  display_name: string;
+  region_code: string;
+  region_name: string;
+  base_address: string | null;
+  description: string | null;
+  rating: number | null;
+  rating_count: number;
+  min_dp_bp: number;
+  starting_price_idr: number | null;
+  package_count: number;
+}
+
+export interface PublicVendorList {
+  items: PublicVendorCard[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface PublicVendorLocation {
+  lat: number;
+  lng: number;
+}
+
+/** `GET /vendors/:idOrSlug` -> `vendor`. No KYC, legal-doc or commission fields. */
+export interface PublicVendorProfileFields {
+  id: string;
+  slug: string;
+  display_name: string;
+  legal_name: string | null;
+  description: string | null;
+  region_code: string;
+  region_name: string;
+  base_address: string | null;
+  location: PublicVendorLocation | null;
+  service_radius_km: number | null;
+  transport_fee_per_km_idr: number;
+  min_dp_bp: number;
+  rating: number | null;
+  rating_count: number;
+  whatsapp: string | null;
+}
+
+export interface PublicAddon {
+  id: string;
+  name: string;
+  price_idr: number;
+  unit: string;
+  max_qty: number;
+}
+
+export interface PublicPackage {
+  id: string;
+  name: string;
+  description: string | null;
+  duration_minutes: number;
+  personnel_count: number | null;
+  base_price_idr: number;
+  addons: PublicAddon[];
+}
+
+export interface PublicVendorProfile {
+  vendor: PublicVendorProfileFields;
+  packages: PublicPackage[];
+}
+
+/** `GET /policies/:code`: the current (newest active) version of one policy. */
+export interface PolicyDocument {
+  id: string;
+  code: string;
+  version: number;
+  body_hash: string;
+  effective_from: string;
+  body: Record<string, unknown>;
+}

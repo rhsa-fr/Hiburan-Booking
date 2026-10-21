@@ -13,12 +13,27 @@
  * the provider cannot send a bearer token, it is authenticated by the HMAC
  * signature instead.
  */
-import { Body, Controller, Headers, HttpCode, Param, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Headers,
+  HttpCode,
+  Param,
+  Post,
+  Req,
+  UseGuards
+} from '@nestjs/common';
 import { z } from 'zod';
 import { AppError } from '@tarlink/core/errors';
 import { AuthGuard, Roles, RolesGuard, type AuthenticatedRequest } from '@tarlink/platform/auth';
 import { PAYMENT_METHODS, toBigInt } from './payment.repository';
-import { PaymentService, hashRequest, type RefundResult } from './payment.service';
+import {
+  PaymentService,
+  hashRequest,
+  type DpPaymentByBookingResult,
+  type RefundResult
+} from './payment.service';
 
 const DpChargeBody = z.object({
   booking_id: z.string().uuid(),
@@ -61,6 +76,27 @@ export class PaymentController {
       }
     );
     return { data: result };
+  }
+
+  /**
+   * The mobile client re-fetches the DP instruction for its own booking. Any
+   * role reaches the handler; ownership is enforced by the service.
+   */
+  @Get('payments/by-booking/:bookingId')
+  async dpByBooking(
+    @Param('bookingId') bookingId: string,
+    @Req() req: AuthenticatedRequest
+  ): Promise<{ data: DpPaymentByBookingResult }> {
+    const parsed = z.string().uuid().safeParse(bookingId);
+    if (!parsed.success) {
+      throw new AppError('VALIDATION_ERROR', 'invalid booking id');
+    }
+
+    return {
+      data: await this.payments.getDpPaymentByBooking(parsed.data, {
+        actorId: req.user?.id ?? null
+      })
+    };
   }
 
   @Post('payments/:id/refund')

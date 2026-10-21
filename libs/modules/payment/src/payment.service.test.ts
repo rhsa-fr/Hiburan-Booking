@@ -17,6 +17,7 @@ import {
 import {
   PgPaymentRepository,
   type BookingSnapshot,
+  type DpPaymentByBooking,
   type NewAuditLog,
   type NewPayment,
   type NewRefund,
@@ -217,6 +218,19 @@ class FakeRepository implements PaymentRepository {
       }
     }
     return null;
+  }
+
+  async findLatestDpPaymentByBooking(
+    _tx: JournalQueryClient,
+    bookingId: string
+  ): Promise<DpPaymentByBooking | null> {
+    const booking = this.bookings.get(bookingId);
+    const matches = [...this.payments.values()].filter(
+      (payment) => payment.bookingId === bookingId && payment.kind === 'dp'
+    );
+    const payment = matches[matches.length - 1];
+    if (!booking || !payment) return null;
+    return { payment, customerId: booking.customerId };
   }
 
   async insertPayment(_tx: JournalQueryClient, input: NewPayment): Promise<PaymentRecord> {
@@ -1239,5 +1253,88 @@ describe('PgPaymentRepository', () => {
 
     expect(error).toBeInstanceOf(AppError);
     expect((error as AppError).code).toBe('CONFLICT');
+  });
+});
+
+describe('getDpPaymentByBooking', () => {
+  it('returns the pending DP with the instruction rebuilt by the charge helper', async () => {
+    const { service } = setup();
+    const charge = await service.createDpCharge('booking-1', 'qris', { actorId: CUSTOMER });
+
+    const result = await service.getDpPaymentByBooking('booking-1', { actorId: CUSTOMER });
+
+    expect(result.payment).toEqual({
+      id: charge.id,
+      booking_id: 'booking-1',
+      kind: 'dp',
+      status: 'pending',
+      amount_idr: 1_200_000,
+      currency: 'IDR',
+      method: 'qris',
+      provider: 'pjp',
+      provider_ref: charge.provider_ref,
+      expires_at: charge.expires_at,
+      paid_at: null
+    });
+    expect(result.payment_instruction).toEqual(charge.payment_instruction);
+    expect(result.payment_instruction?.type).toBe('qris');
+  });
+
+  it('returns a null instruction once the DP is paid', async () => {
+    const { service, repository } = setup();
+    const charge = await service.createDpCharge('booking-1', 'qris', { actorId: CUSTOMER });
+    await repository.markPaymentPaid(repository.tx, {
+      paymentId: charge.id,
+      paidAt: AT,
+      providerTxnId: 'PJP-TXN-1',
+      rawPayload: {}
+    });
+
+    const result = await service.getDpPaymentByBooking('booking-1', { actorId: CUSTOMER });
+
+    expect(result.payment.status).toBe('paid');
+    expect(result.payment.paid_at).toBe(AT.toISOString());
+    expect(result.payment_instruction).toBeNull();
+  });
+
+  it('returns a null instruction for an expired DP', async () => {
+    const { service, repository } = setup();
+    const charge = await service.createDpCharge('booking-1', 'va_bca', { actorId: CUSTOMER });
+    const stored = repository.payments.get(charge.id);
+    if (!stored) throw new Error('payment not stored');
+    repository.payments.set(charge.id, { ...stored, status: 'expired' });
+
+    const result = await service.getDpPaymentByBooking('booking-1', { actorId: CUSTOMER });
+
+    expect(result.payment.status).toBe('expired');
+    expect(result.payment_instruction).toBeNull();
+  });
+
+  it('answers NOT_FOUND when the booking has no DP payment', async () => {
+    const { service } = setup();
+
+    await expect(
+      service.getDpPaymentByBooking('booking-1', { actorId: CUSTOMER })
+    ).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+      message: 'Belum ada tagihan DP untuk booking ini'
+    });
+  });
+
+  it('rejects a caller that does not own the booking with NOT_FOUND', async () => {
+    const { service } = setup();
+    await service.createDpCharge('booking-1', 'qris', { actorId: CUSTOMER });
+
+    await expect(
+      service.getDpPaymentByBooking('booking-1', { actorId: 'other-customer' })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('rejects an unauthenticated caller', async () => {
+    const { service } = setup();
+
+    await expect(service.getDpPaymentByBooking('booking-1')).rejects.toMatchObject({
+      code: 'UNAUTHENTICATED'
+    });
   });
 });

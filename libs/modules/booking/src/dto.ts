@@ -75,6 +75,40 @@ export const cancelBookingSchema = z.object({
   reason_code: z.string().max(40).optional()
 });
 
+/** The listable lifecycle values (S-05 `no_show` is not listable here). */
+export const BOOKING_LIST_STATUSES = [
+  'requested',
+  'accepted',
+  'confirmed',
+  'countered',
+  'in_progress',
+  'completed',
+  'cancelled',
+  'rejected',
+  'expired'
+] as const;
+
+export const listBookingsQuerySchema = z.object({
+  status: z
+    .enum(BOOKING_LIST_STATUSES, {
+      errorMap: () => ({
+        message: `status harus salah satu dari: ${BOOKING_LIST_STATUSES.join(', ')}`
+      })
+    })
+    .optional(),
+  page: z.coerce
+    .number({ invalid_type_error: 'page harus bilangan bulat' })
+    .int('page harus bilangan bulat')
+    .min(1, 'page minimal 1')
+    .default(1),
+  page_size: z.coerce
+    .number({ invalid_type_error: 'page_size harus bilangan bulat' })
+    .int('page_size harus bilangan bulat')
+    .min(1, 'page_size minimal 1')
+    .max(50, 'page_size maksimal 50')
+    .default(20)
+});
+
 export const availabilityQuerySchema = z
   .object({ from: isoDate, to: isoDate })
   .refine((range) => range.from <= range.to, {
@@ -94,6 +128,7 @@ export type CreateBookingDto = z.infer<typeof createBookingSchema>;
 export type AcceptBookingDto = z.infer<typeof acceptBookingSchema>;
 export type DeclineBookingDto = z.infer<typeof declineBookingSchema>;
 export type CancelBookingDto = z.infer<typeof cancelBookingSchema>;
+export type ListBookingsQueryDto = z.infer<typeof listBookingsQuerySchema>;
 export type AvailabilityQueryDto = z.infer<typeof availabilityQuerySchema>;
 
 /** Maps zod failures to the frozen AppError envelope (400 VALIDATION_ERROR). */

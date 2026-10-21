@@ -5,6 +5,7 @@ import {
   HttpCode,
   Param,
   Post,
+  Query,
   UseGuards,
   UseInterceptors
 } from '@nestjs/common';
@@ -16,6 +17,7 @@ import {
   cancelBookingSchema,
   createBookingSchema,
   declineBookingSchema,
+  listBookingsQuerySchema,
   parseInput
 } from './dto';
 import { RequestIdInterceptor } from './request-context';
@@ -40,6 +42,18 @@ export class BookingController {
   async create(@Body() body: unknown, @CurrentUser() user: AuthUser) {
     const dto = parseInput(createBookingSchema, body);
     return { data: await this.bookings.createBooking(dto, user) };
+  }
+
+  /**
+   * Customer booking list. Returns the page object directly (no `data`
+   * envelope): the Flutter client parses `items`/`total`/`page`/`page_size`
+   * at the top level of this frozen contract.
+   */
+  @Get('bookings')
+  @Roles('customer')
+  async list(@Query() query: unknown, @CurrentUser() user: AuthUser) {
+    const dto = parseInput(listBookingsQuerySchema, query);
+    return this.bookings.listForCustomer(user, dto);
   }
 
   @Get('bookings/:id')

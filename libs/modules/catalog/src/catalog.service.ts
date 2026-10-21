@@ -24,6 +24,10 @@ import type {
   CalendarWriteResult,
   PackageList,
   PackageRow,
+  PolicyDocument,
+  PublicVendorList,
+  PublicVendorProfile,
+  PublicVendorQuery,
   VendorDetail,
   VendorDecision,
   VendorSummary,
@@ -32,6 +36,10 @@ import type {
 import {
   mapCalendarSlot,
   mapPackage,
+  mapPolicy,
+  mapPublicPackages,
+  mapPublicVendorCard,
+  mapPublicVendorProfile,
   mapVendorDetail,
   mapVendorSummary,
   mapVerifyResult
@@ -355,5 +363,40 @@ export class CatalogService {
       await this.repository.touchCalendar(client, vendorId);
       return { updated };
     });
+  }
+
+  /* ---------------------------------------------------------- public catalog */
+
+  async listPublicVendors(input: PublicVendorQuery): Promise<PublicVendorList> {
+    const { rows, total } = await this.repository.publicVendorPage({
+      q: input.q,
+      region: input.region,
+      limit: input.page_size,
+      offset: (input.page - 1) * input.page_size
+    });
+    return {
+      items: rows.map(mapPublicVendorCard),
+      total,
+      page: input.page,
+      page_size: input.page_size
+    };
+  }
+
+  async getPublicVendor(idOrSlug: string): Promise<PublicVendorProfile> {
+    const vendor = await this.repository.publicVendorProfile(idOrSlug);
+    if (!vendor) throw new AppError('NOT_FOUND', 'Vendor tidak ditemukan');
+
+    const packages = await this.repository.publicPackages(vendor.id);
+    const addons = await this.repository.publicAddons(packages.map((row) => row.id));
+    return {
+      vendor: mapPublicVendorProfile(vendor),
+      packages: mapPublicPackages(packages, addons)
+    };
+  }
+
+  async getPolicy(code: string): Promise<PolicyDocument> {
+    const row = await this.repository.currentPolicy(code);
+    if (!row) throw new AppError('NOT_FOUND', 'Kebijakan tidak ditemukan');
+    return mapPolicy(row);
   }
 }

@@ -12,7 +12,18 @@
 import { Injectable } from '@nestjs/common';
 import type { PoolClient } from 'pg';
 import { query } from '@tarlink/core/db';
-import type { CalendarSlotDbRow, PackageDbRow, UserIdRow, VendorRow, VerifyRow } from './rows';
+import type {
+  CalendarSlotDbRow,
+  PackageDbRow,
+  PolicyDbRow,
+  PublicAddonDbRow,
+  PublicPackageDbRow,
+  PublicVendorDetailRow,
+  PublicVendorListRow,
+  UserIdRow,
+  VendorRow,
+  VerifyRow
+} from './rows';
 
 export const VENDOR_COLUMNS = `
   v.id,
@@ -57,6 +68,66 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 
 function isUuid(value: string): boolean {
   return UUID_PATTERN.test(value);
+}
+
+/** `%`, `_` and `\` in user input must not act as LIKE wildcards. */
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (char) => `\\${char}`);
+}
+
+/** `$1` = LIKE pattern (or NULL), `$2` = region prefix (or NULL). */
+const PUBLIC_VENDOR_WHERE = `
+  v.verification_status = 'approved'
+  AND v.is_active
+  AND ($1::text IS NULL
+       OR v.display_name ILIKE $1 ESCAPE '\\'
+       OR v.legal_name ILIKE $1 ESCAPE '\\'
+       OR v.base_address ILIKE $1 ESCAPE '\\')
+  AND ($2::text IS NULL OR v.region_code LIKE $2 || '%')
+`;
+
+const PUBLIC_VENDOR_LIST_COLUMNS = `
+  v.id,
+  v.slug,
+  v.display_name,
+  v.region_code,
+  r.name AS region_name,
+  v.base_address,
+  v.description,
+  v.rating_sum,
+  v.rating_count,
+  v.min_dp_bp,
+  (SELECT MIN(p.base_price_idr) FROM packages p WHERE p.vendor_id = v.id AND p.is_active)
+    AS starting_price_idr,
+  (SELECT COUNT(*)::int FROM packages p WHERE p.vendor_id = v.id AND p.is_active)
+    AS package_count
+`;
+
+const PUBLIC_VENDOR_DETAIL_COLUMNS = `
+  v.id,
+  v.slug,
+  v.display_name,
+  v.legal_name,
+  v.description,
+  v.region_code,
+  r.name AS region_name,
+  v.base_address,
+  ST_Y(COALESCE(v.base_location::geometry, r.centroid::geometry)) AS lat,
+  ST_X(COALESCE(v.base_location::geometry, r.centroid::geometry)) AS lng,
+  v.service_radius_km,
+  v.transport_fee_per_km_idr,
+  v.min_dp_bp,
+  v.rating_sum,
+  v.rating_count,
+  u.phone AS whatsapp
+`;
+
+export interface PublicVendorFilter {
+  /** Already trimmed; `null` = no text filter. */
+  q: string | null;
+  region: string | null;
+  limit: number;
+  offset: number;
 }
 
 export interface VendorInsertInput {
@@ -523,5 +594,94 @@ export class CatalogRepository {
     await client.query(`UPDATE vendors SET calendar_updated_at = now() WHERE id = $1::uuid`, [
       vendorId
     ]);
+  }
+
+  /* ---------------------------------------------------------- public catalog */
+
+  /**
+   * Public listing. Only approved+active vendors; `q` is matched as a
+   * case-insensitive substring of display_name/legal_name/base_address and
+   * `region` as an exact code prefix (`32` covers everything under Jawa Barat).
+   */
+  async publicVendorPage(filter: PublicVendorFilter): Promise<{
+    rows: PublicVendorListRow[];
+    total: number;
+  }> {
+    const like = filter.q === null ? null : `%${escapeLike(filter.q)}%`;
+    const rows = await query<PublicVendorListRow>(
+      `SELECT ${PUBLIC_VENDOR_LIST_COLUMNS}
+         FROM vendors v
+         LEFT JOIN regions r ON r.code = v.region_code
+        WHERE ${PUBLIC_VENDOR_WHERE}
+        ORDER BY v.rating_count DESC, v.display_name ASC
+        LIMIT $3 OFFSET $4`,
+      [like, filter.region, filter.limit, filter.offset]
+    );
+    const counted = await query<{ total: number }>(
+      `SELECT COUNT(*)::int AS total
+         FROM vendors v
+        WHERE ${PUBLIC_VENDOR_WHERE}`,
+      [like, filter.region]
+    );
+    return { rows, total: counted[0]?.total ?? 0 };
+  }
+
+  /** Accepts a uuid or a slug; returns null when not public or unknown. */
+  async publicVendorProfile(idOrSlug: string): Promise<PublicVendorDetailRow | null> {
+    const predicate = isUuid(idOrSlug) ? 'v.id = $1::uuid' : 'v.slug = $1';
+    const rows = await query<PublicVendorDetailRow>(
+      `SELECT ${PUBLIC_VENDOR_DETAIL_COLUMNS}
+         FROM vendors v
+         LEFT JOIN regions r ON r.code = v.region_code
+         LEFT JOIN users u ON u.id = v.owner_user_id
+        WHERE ${predicate}
+          AND v.verification_status = 'approved'
+          AND v.is_active
+        LIMIT 1`,
+      [idOrSlug]
+    );
+    return rows[0] ?? null;
+  }
+
+  async publicPackages(vendorId: string): Promise<PublicPackageDbRow[]> {
+    return query<PublicPackageDbRow>(
+      `SELECT p.id, p.name, p.description, p.duration_minutes, p.personnel_count, p.base_price_idr
+         FROM packages p
+        WHERE p.vendor_id = $1::uuid
+          AND p.is_active
+        ORDER BY p.created_at ASC, p.id ASC`,
+      [vendorId]
+    );
+  }
+
+  async publicAddons(packageIds: readonly string[]): Promise<PublicAddonDbRow[]> {
+    if (packageIds.length === 0) return [];
+    return query<PublicAddonDbRow>(
+      `SELECT a.id, a.package_id, a.name, a.price_idr, a.unit, a.max_qty
+         FROM package_addons a
+        WHERE a.package_id = ANY($1::uuid[])
+          AND a.is_active
+        ORDER BY a.name ASC, a.id ASC`,
+      [packageIds]
+    );
+  }
+
+  /**
+   * "Current" is deterministic: active, not expired, newest `effective_from`
+   * first (`effective_to` only shrinks the window, the index guarantees one
+   * open row per code but historical rows can still be active+closed).
+   */
+  async currentPolicy(code: string): Promise<PolicyDbRow | null> {
+    const rows = await query<PolicyDbRow>(
+      `SELECT id, code, version, body_hash, effective_from, body
+         FROM policy_versions
+        WHERE code = $1
+          AND is_active
+          AND (effective_to IS NULL OR effective_to > now())
+        ORDER BY effective_from DESC, created_at DESC
+        LIMIT 1`,
+      [code]
+    );
+    return rows[0] ?? null;
   }
 }

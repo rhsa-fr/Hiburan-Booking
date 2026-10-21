@@ -10,6 +10,7 @@ Repositori ini berisi **backend API**, **panel admin**, **worker**, dan **librar
 |---|---|
 | `apps/api` | API NestJS (`/v1`), entrypoint HTTP |
 | `apps/admin` | Panel admin Next.js (App Router) |
+| `apps/mobile` | Aplikasi pelanggan Flutter (Android + web) |
 | `apps/worker` | Worker poller PostgreSQL (tanpa Redis) |
 | `libs/modules/*` | Domain: `auth`, `booking`, `payment`, `ledger`, `catalog`, `admin`, `calendar` |
 | `libs/platform/*` | Fondasi: db, config, auth, error, uang |
@@ -21,6 +22,7 @@ Repositori ini berisi **backend API**, **panel admin**, **worker**, dan **librar
 
 - Node.js ≥ 20, TypeScript, npm workspaces
 - NestJS 11 (API), Next.js 15 + Tailwind (panel), React 19
+- Flutter 3.35 / Dart 3.9 (aplikasi pelanggan)
 - PostgreSQL 15 + PostGIS (Docker)
 - Vitest (unit + integrasi), Playwright/CDP untuk probe UI
 
@@ -45,6 +47,15 @@ npm run dev:admin     # http://localhost:3002
 npm run start:worker  # poller: auto-complete, auto-release, outbox
 ```
 
+Aplikasi pelanggan (Flutter, folder `apps/mobile`):
+
+```bash
+cd apps/mobile
+flutter pub get
+flutter run -d chrome --dart-define=API_BASE_URL=http://localhost:3001
+flutter build apk --debug        # APK untuk HP Android
+```
+
 Akun dev default (dari `seed-admin.mjs`): `admin@tarlink.id` / `Tarlink#2026` ganti sebelum dipakai di lingkungan nyata.
 
 ## Aturan uang
@@ -67,6 +78,14 @@ npm run smoke:catalog       # 12 endpoint katalog
 ```
 
 Tes integrasi yang menyentuh DB hanya jalan bila `RUN_DB_TESTS=1`, karena jurnal append-only membuat baris uji tidak bisa dihapus.
+
+Aplikasi pelanggan:
+
+```bash
+cd apps/mobile
+flutter analyze
+flutter test
+```
 
 ## Build
 

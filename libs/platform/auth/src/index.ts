@@ -22,6 +22,8 @@ export type Role =
 export interface AccessTokenPayload {
   sub: string;
   roles: Role[];
+  /** Session id (`sessions.jti`). Optional: older callers omit it. */
+  jti?: string;
 }
 
 export interface AccessTokenClaims extends AccessTokenPayload {
@@ -82,6 +84,7 @@ export function signAccessToken(
   const claims: AccessTokenClaims = {
     sub: payload.sub,
     roles: [...payload.roles],
+    ...(payload.jti ? { jti: payload.jti } : {}),
     iat: issuedAt,
     exp: issuedAt + Math.floor(ttlSeconds)
   };
@@ -141,6 +144,7 @@ export function verifyAccessToken(token: string, secret: string): AccessTokenCla
   return {
     sub: claims.sub,
     roles: claims.roles as Role[],
+    ...(typeof claims.jti === 'string' ? { jti: claims.jti } : {}),
     iat: claims.iat,
     exp: claims.exp
   };
@@ -149,6 +153,8 @@ export function verifyAccessToken(token: string, secret: string): AccessTokenCla
 export interface AuthenticatedUser {
   id: string;
   roles: Role[];
+  /** Session id carried by tokens minted since session rotation; absent on older tokens. */
+  jti?: string;
 }
 
 /** The only user shape guards accept. It is populated from verified claims. */
@@ -197,7 +203,11 @@ export class AuthGuard implements CanActivate {
     }
 
     const claims = verifyAccessToken(match[1], this.secret);
-    request.user = { id: claims.sub, roles: claims.roles };
+    request.user = {
+      id: claims.sub,
+      roles: claims.roles,
+      ...(claims.jti ? { jti: claims.jti } : {})
+    };
     return true;
   }
 }

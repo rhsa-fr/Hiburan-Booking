@@ -14,12 +14,22 @@
  * header. Responses use the project envelope `{ "data": … }`; errors are mapped
  * by the global filter from `AppError`.
  */
-import { Body, Controller, HttpCode, Ip, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  Ip,
+  Post,
+  Req,
+  UseGuards
+} from '@nestjs/common';
 import { z } from 'zod';
 import { AppError } from '@tarlink/core/errors';
 import { AuthGuard, type AuthenticatedRequest } from '@tarlink/platform/auth';
 import {
   AuthService,
+  type CurrentUserResult,
   type LogoutResult,
   type PasswordLoginResult,
   type RequestOtpResult,
@@ -134,6 +144,31 @@ export class AuthController {
       throw new AppError('UNAUTHENTICATED', 'Authentication is required');
     }
 
-    return { data: await this.auth.logout(user.id) };
+    return { data: await this.auth.logout(user.id, user.jti) };
+  }
+
+  /** Profile of the verified caller; roles come from the database, not the token. */
+  @Get('me')
+  @UseGuards(AuthGuard)
+  async me(@Req() req: AuthenticatedRequest): Promise<{ data: CurrentUserResult }> {
+    const user = req.user;
+    if (!user) {
+      throw new AppError('UNAUTHENTICATED', 'Authentication is required');
+    }
+
+    return { data: await this.auth.getProfile(user.id) };
+  }
+
+  /** Rotates the session carried by the current token and returns a new one. */
+  @Post('refresh')
+  @HttpCode(200)
+  @UseGuards(AuthGuard)
+  async refresh(@Req() req: AuthenticatedRequest): Promise<{ data: PasswordLoginResult }> {
+    const user = req.user;
+    if (!user) {
+      throw new AppError('UNAUTHENTICATED', 'Authentication is required');
+    }
+
+    return { data: await this.auth.refresh(user.id, user.jti) };
   }
 }

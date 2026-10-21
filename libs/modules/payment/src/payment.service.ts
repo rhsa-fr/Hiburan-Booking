@@ -30,6 +30,7 @@ import {
   type PaymentMethod,
   type PaymentRecord,
   type PaymentRepository,
+  type PaymentStatus,
   type RefundStatus
 } from './payment.repository';
 
@@ -97,6 +98,25 @@ export interface DpChargeResult {
   readonly provider_ref: string;
   readonly expires_at: string;
   readonly payment_instruction: PaymentInstruction;
+}
+
+/** `GET /payments/by-booking/:bookingId` body. */
+export interface DpPaymentByBookingResult {
+  readonly payment: {
+    readonly id: string;
+    readonly booking_id: string;
+    readonly kind: 'dp';
+    readonly status: PaymentStatus;
+    readonly amount_idr: number;
+    readonly currency: 'IDR';
+    readonly method: PaymentMethod;
+    readonly provider: string;
+    readonly provider_ref: string;
+    readonly expires_at: string | null;
+    readonly paid_at: string | null;
+  };
+  /** Rebuilt with the same helper as `POST /payments/dp`; null when not pending. */
+  readonly payment_instruction: PaymentInstruction | null;
 }
 
 export interface SettleManualInput {
@@ -321,6 +341,50 @@ export class PaymentService {
         return this.toChargeResult(payment);
       });
     });
+  }
+
+  /* --------------------------------------------------------- DP read route */
+
+  /**
+   * Most recent DP payment of a booking, whatever its status, for the mobile
+   * client that needs to re-fetch the instruction. Ownership comes from the
+   * booking row (same rule as the charge route: NOT_FOUND, never FORBIDDEN, so
+   * another customer's booking is not disclosed).
+   */
+  async getDpPaymentByBooking(
+    bookingId: string,
+    opts: RequestOptions = {}
+  ): Promise<DpPaymentByBookingResult> {
+    if (!bookingId) throw new AppError('VALIDATION_ERROR', 'bookingId is required');
+    const actorId = opts.actorId ?? null;
+    if (!actorId) {
+      throw new AppError('UNAUTHENTICATED', 'an authenticated actor is required');
+    }
+
+    const found = await this.repository.transaction((tx) =>
+      this.repository.findLatestDpPaymentByBooking(tx, bookingId)
+    );
+    if (!found || found.customerId !== actorId) {
+      throw new AppError('NOT_FOUND', 'Belum ada tagihan DP untuk booking ini');
+    }
+
+    const payment = found.payment;
+    return {
+      payment: {
+        id: payment.id,
+        booking_id: payment.bookingId,
+        kind: 'dp',
+        status: payment.status,
+        amount_idr: jsonRupiah(payment.amountIdr),
+        currency: 'IDR',
+        method: payment.method,
+        provider: payment.provider,
+        provider_ref: payment.providerRef,
+        expires_at: payment.expiresAt ? payment.expiresAt.toISOString() : null,
+        paid_at: payment.paidAt ? payment.paidAt.toISOString() : null
+      },
+      payment_instruction: payment.status === 'pending' ? this.buildInstruction(payment) : null
+    };
   }
 
   /* --------------------------------------------------------- manual settle */

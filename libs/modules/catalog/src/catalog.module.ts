@@ -4,17 +4,19 @@ import { AuthGuard, JWT_SECRET, RolesGuard } from '@tarlink/platform/auth';
 import { CatalogController } from './catalog.controller';
 import { CatalogRepository } from './catalog.repository';
 import { CatalogService } from './catalog.service';
+import { PublicCatalogController } from './public-catalog.controller';
 
 /**
  * Catalog module: vendor lifecycle, packages and the vendor calendar
- * (`POST/PATCH /admin/vendors*`).
+ * (`POST/PATCH /admin/vendors*`) plus the guard-free public browse routes
+ * (`GET /vendors*`, `GET /policies/:code`).
  *
  * Note for the lead: `AppModule` is lead-owned; import `CatalogModule` there.
  * It needs no extra configuration — the JWT secret is read from `loadConfig()`
  * here and both guards are registered in this injector, same as `AdminModule`.
  */
 @Module({
-  controllers: [CatalogController],
+  controllers: [CatalogController, PublicCatalogController],
   providers: [
     CatalogRepository,
     CatalogService,

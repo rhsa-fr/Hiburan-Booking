@@ -6,6 +6,7 @@ export { AuthModule } from './auth.module';
 export {
   PgAuthRepository,
   type AuthRepository,
+  type AuthUserProfile,
   type AuthUserRecord,
   type NewLoginAttempt,
   type NewOtpRequest,
@@ -37,6 +38,7 @@ export {
   type AuthEnvironment,
   type AuthServiceDeps,
   type AuthenticatedUserSummary,
+  type CurrentUserResult,
   type GoogleLoginInput,
   type LoginWithPasswordInput,
   type LogoutResult,

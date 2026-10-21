@@ -13,6 +13,10 @@ coverage/
 # Artefak build & cache
 *.tsbuildinfo
 *.log
+.dart_tool/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
 
 # OS / editor
 .DS_Store

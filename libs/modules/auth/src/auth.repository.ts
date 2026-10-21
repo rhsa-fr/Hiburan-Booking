@@ -42,6 +42,12 @@ export interface AuthUserRecord {
   readonly passwordHash: string | null;
 }
 
+/** Read-only profile of the authenticated user (`GET /auth/me`). */
+export interface AuthUserProfile extends AuthUserRecord {
+  readonly name: string | null;
+  readonly createdAt: Date;
+}
+
 export interface NewUser {
   readonly id: string;
   readonly phone: string | null;
@@ -83,6 +89,8 @@ export interface AuthRepository {
   /** Case-insensitive lookup used by email+password login. */
   findUserByEmail(email: string): Promise<AuthUserRecord | null>;
   findUserByGoogleSub(googleSub: string): Promise<AuthUserRecord | null>;
+  /** Active user plus the profile fields, by id. Null when absent or not active. */
+  findUserProfile(userId: string): Promise<AuthUserProfile | null>;
   /** True when any user (active or not) already owns this email. */
   emailExists(email: string): Promise<boolean>;
   /** True when any user already owns this phone. */
@@ -103,6 +111,8 @@ export interface AuthRepository {
   /** Writes a new password hash; false when the user does not exist. */
   updatePassword(userId: string, passwordHash: string, updatedAt: Date): Promise<boolean>;
   insertSession(input: NewSession): Promise<void>;
+  /** Session row for `jti` that is neither revoked nor expired; null otherwise. */
+  findActiveSessionByJti(jti: string, now: Date): Promise<{ userId: string } | null>;
   /** Revokes every active session of a user (e.g. after a password change). */
   revokeAllSessions(userId: string, at: Date): Promise<number>;
   /**
@@ -132,6 +142,11 @@ interface UserRow {
 
 function toUserRecord(row: UserRow): AuthUserRecord {
   return { id: row.id, phone: row.phone, email: row.email, passwordHash: row.password_hash };
+}
+
+interface UserProfileRow extends UserRow {
+  name: string | null;
+  created_at: Date;
 }
 
 function isUniqueViolation(err: unknown): boolean {
@@ -236,6 +251,20 @@ export class PgAuthRepository implements AuthRepository {
     );
     const row = rows[0];
     return row ? toUserRecord(row) : null;
+  }
+
+  async findUserProfile(userId: string): Promise<AuthUserProfile | null> {
+    const rows = await query<UserProfileRow>(
+      "SELECT id, phone, email, password_hash, name, created_at FROM users WHERE id = $1 AND status = 'active'",
+      [userId]
+    );
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      ...toUserRecord(row),
+      name: row.name,
+      createdAt: row.created_at
+    };
   }
 
   async emailExists(email: string): Promise<boolean> {
@@ -344,6 +373,17 @@ export class PgAuthRepository implements AuthRepository {
        VALUES ($1, $2, $3, $4, $5, $6::inet)`,
       [input.jti, input.userId, input.issuedAt, input.expiresAt, input.userAgent, input.ip]
     );
+  }
+
+  async findActiveSessionByJti(jti: string, now: Date): Promise<{ userId: string } | null> {
+    const rows = await query<{ user_id: string }>(
+      `SELECT user_id FROM sessions
+        WHERE jti = $1 AND revoked_at IS NULL AND expires_at > $2
+        LIMIT 1`,
+      [jti, now]
+    );
+    const row = rows[0];
+    return row ? { userId: row.user_id } : null;
   }
 
   async revokeAllSessions(userId: string, at: Date): Promise<number> {
