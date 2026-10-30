@@ -2,6 +2,7 @@ node_modules/
 dist/
 .next/
 coverage/
+stitch_tarlink_live_entertainment_app/
 
 # Rahasia: jangan pernah di-commit
 .env
@@ -13,10 +14,20 @@ coverage/
 # Artefak build & cache
 *.tsbuildinfo
 *.log
+storage/
+apps/mobile/e2e_shots/
 .dart_tool/
 build/
 .flutter-plugins
 .flutter-plugins-dependencies
+
+# Konfigurasi & artefak agen lokal (bukan bagian produk)
+.commandcode/
+.opencode/
+
+# Draf desain sementara & arsip diagnostik
+docs/_tmp_*.html
+opendesain/*.zip
 
 # OS / editor
 .DS_Store
