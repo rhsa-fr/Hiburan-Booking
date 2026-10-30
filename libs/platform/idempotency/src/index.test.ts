@@ -26,16 +26,10 @@ class MemoryStore implements IdempotencyStore {
 
   async tryClaim(request: ClaimRequest): Promise<boolean> {
     const id = this.id(request.scope, request.key, request.actorId);
-    const existing = this.rows.get(id);
-
-    if (existing) {
-      if (existing.expiresAt.getTime() <= Date.now()) {
-        this.rows.delete(id);
-      } else {
-        // ON CONFLICT DO NOTHING / 23505: the caller lost the race.
-        return false;
-      }
-    }
+    // The unit double keeps rows for the whole test; TTL reclaim belongs to
+    // the Postgres store and is not exercised here, so wall-clock time must
+    // not decide whether a FixedClock fixture is still alive.
+    if (this.rows.has(id)) return false;
 
     this.rows.set(id, {
       requestHash: request.requestHash,

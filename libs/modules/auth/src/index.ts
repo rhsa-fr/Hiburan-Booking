@@ -13,7 +13,8 @@ export {
   type NewSession,
   type NewUser,
   type OtpChannel,
-  type OtpRequestRecord
+  type OtpRequestRecord,
+  type SessionRefreshRecord
 } from './auth.repository';
 export {
   GoogleTokenInfoVerifier,
@@ -23,15 +24,21 @@ export {
 export {
   AuthService,
   INVALID_CREDENTIALS_MESSAGE,
+  LOGIN_IP_RATE_LIMIT_MAX,
   LOGIN_RATE_LIMIT_MAX,
   LOGIN_RATE_LIMIT_WINDOW_SECONDS,
   OTP_CHANNEL,
+  OTP_IP_RATE_LIMIT_MAX,
+  OTP_IP_RATE_LIMIT_WINDOW_SECONDS,
   OTP_MAX_ATTEMPTS,
   OTP_RATE_LIMIT_MAX,
   OTP_RATE_LIMIT_WINDOW_SECONDS,
   OTP_TTL_SECONDS,
+  REFRESH_TOKEN_BYTES,
   hashOtpCode,
   hashPassword,
+  hashRefreshToken,
+  issueRefreshToken,
   normalizeEmail,
   normalizePhone,
   verifyPassword,

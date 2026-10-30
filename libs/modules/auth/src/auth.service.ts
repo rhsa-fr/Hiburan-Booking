@@ -39,6 +39,11 @@ export const OTP_CHANNEL: OtpChannel = 'whatsapp';
 
 export const LOGIN_RATE_LIMIT_MAX = 5;
 export const LOGIN_RATE_LIMIT_WINDOW_SECONDS = 10 * 60;
+/** Per-IP caps: distinct from the per-email/per-phone quotas above. */
+export const LOGIN_IP_RATE_LIMIT_MAX = 30;
+export const OTP_IP_RATE_LIMIT_MAX = 10;
+export const OTP_IP_RATE_LIMIT_WINDOW_SECONDS = 60 * 60;
+export const REFRESH_TOKEN_BYTES = 32;
 
 /** One message for every password-login rejection, so nothing is enumerated. */
 export const INVALID_CREDENTIALS_MESSAGE = 'Email atau kata sandi salah';
@@ -58,8 +63,13 @@ export interface AuthServiceDeps {
   readonly repository: AuthRepository;
   readonly jwtSecret: string;
   readonly jwtTtlSeconds: number;
-  /** `dev_code` is returned only when this is not `production`. */
+  /** Lifetime of the opaque refresh token (session row), defaults to 30 days. */
+  readonly refreshTtlSeconds?: number;
+  /** `dev_code` is returned only when this is not `production` AND the flag is on. */
   readonly nodeEnv: AuthEnvironment;
+  readonly otpDevMode?: boolean;
+  readonly loginIpRateLimitMax?: number;
+  readonly otpIpRateLimitMax?: number;
   /** Null/undefined means `GOOGLE_CLIENT_ID` is not configured. */
   readonly googleVerifier?: GoogleTokenVerifier | null;
   readonly now?: () => Date;
@@ -81,12 +91,15 @@ export interface RequestOtpResult {
 export interface VerifyOtpInput {
   readonly phone: string;
   readonly code: string;
+  readonly ip?: string | null;
+  readonly userAgent?: string | null;
 }
 
 export interface LoginWithPasswordInput {
   readonly email: string;
   readonly password: string;
   readonly ip?: string | null;
+  readonly userAgent?: string | null;
 }
 
 export interface RegisterInput {
@@ -94,10 +107,14 @@ export interface RegisterInput {
   readonly password: string;
   readonly phone: string;
   readonly full_name?: string;
+  readonly ip?: string | null;
+  readonly userAgent?: string | null;
 }
 
 export interface GoogleLoginInput {
   readonly id_token: string;
+  readonly ip?: string | null;
+  readonly userAgent?: string | null;
 }
 
 export interface AuthenticatedUserSummary {
@@ -111,6 +128,8 @@ export interface AuthenticatedUserSummary {
 
 export interface VerifyOtpResult {
   readonly access_token: string;
+  /** Opaque, single-use, rotated on every refresh. Stored hashed in `sessions`. */
+  readonly refresh_token: string;
   readonly token_type: 'Bearer';
   readonly expires_in: number;
   readonly user: AuthenticatedUserSummary;
@@ -170,6 +189,15 @@ export function normalizeEmail(email: string): string {
 /** `code_hash` format shared by the writer and the reader. */
 export function hashOtpCode(code: string, phone: string): string {
   return createHash('sha256').update(`${code}:${phone}`, 'utf8').digest('hex');
+}
+
+/** Opaque refresh token: 256 bits, returned once and stored only as a hash. */
+export function issueRefreshToken(): string {
+  return randomBytes(REFRESH_TOKEN_BYTES).toString('base64url');
+}
+
+export function hashRefreshToken(token: string): string {
+  return createHash('sha256').update(token, 'utf8').digest('hex');
 }
 
 function deriveScryptKey(
@@ -233,7 +261,11 @@ export class AuthService {
   private readonly repository: AuthRepository;
   private readonly jwtSecret: string;
   private readonly jwtTtlSeconds: number;
+  private readonly refreshTtlSeconds: number;
   private readonly nodeEnv: AuthEnvironment;
+  private readonly otpDevMode: boolean;
+  private readonly loginIpRateLimitMax: number;
+  private readonly otpIpRateLimitMax: number;
   private readonly googleVerifier: GoogleTokenVerifier | null;
   private readonly now: () => Date;
   private readonly newId: () => string;
@@ -242,7 +274,11 @@ export class AuthService {
     this.repository = deps.repository;
     this.jwtSecret = deps.jwtSecret;
     this.jwtTtlSeconds = deps.jwtTtlSeconds;
+    this.refreshTtlSeconds = deps.refreshTtlSeconds ?? 30 * 24 * 60 * 60;
     this.nodeEnv = deps.nodeEnv;
+    this.otpDevMode = deps.otpDevMode ?? false;
+    this.loginIpRateLimitMax = deps.loginIpRateLimitMax ?? LOGIN_IP_RATE_LIMIT_MAX;
+    this.otpIpRateLimitMax = deps.otpIpRateLimitMax ?? OTP_IP_RATE_LIMIT_MAX;
     this.googleVerifier = deps.googleVerifier ?? null;
     this.now = deps.now ?? (() => new Date());
     this.newId = deps.newId ?? (() => randomUUID());
@@ -259,6 +295,22 @@ export class AuthService {
         'RATE_LIMITED',
         `OTP requests are limited to ${OTP_RATE_LIMIT_MAX} per ${OTP_RATE_LIMIT_WINDOW_SECONDS / 60} minutes`
       );
+    }
+
+    if (input.ip) {
+      const ipWindowStart = new Date(
+        now.getTime() - OTP_IP_RATE_LIMIT_WINDOW_SECONDS * 1000
+      );
+      const recentFromIp = await this.repository.countRecentOtpRequestsByIp(
+        input.ip,
+        ipWindowStart
+      );
+      if (recentFromIp >= this.otpIpRateLimitMax) {
+        throw new AppError(
+          'RATE_LIMITED',
+          `OTP requests from this network are limited to ${this.otpIpRateLimitMax} per hour`
+        );
+      }
     }
 
     const code = randomInt(0, OTP_CODE_UPPER_BOUND).toString().padStart(6, '0');
@@ -279,9 +331,9 @@ export class AuthService {
       request_id: requestId,
       expires_in: OTP_TTL_SECONDS,
       channel: OTP_CHANNEL,
-      // Development convenience only. In production the code leaves the process
-      // through the WhatsApp provider, never through the API response.
-      ...(this.nodeEnv !== 'production' ? { dev_code: code } : {})
+      // Double gate: never in production, and only when OTP_DEV_MODE is on.
+      // This keeps a misconfigured staging deploy from leaking the code.
+      ...(this.nodeEnv !== 'production' && this.otpDevMode ? { dev_code: code } : {})
     };
   }
 
@@ -316,7 +368,10 @@ export class AuthService {
     }
 
     const roles = await this.repository.listActiveRoles(user.id);
-    return this.issueSession(user, roles, now);
+    return this.issueSession(user, roles, now, {
+      ip: input.ip ?? null,
+      userAgent: input.userAgent ?? null
+    });
   }
 
   /**
@@ -345,6 +400,19 @@ export class AuthService {
       );
     }
 
+    // Per-IP quota stops one host from spraying many different emails, which
+    // the per-email counter above can never see.
+    if (ip) {
+      const ipFailures = await this.repository.countFailedLoginAttemptsByIp(ip, windowStart);
+      if (ipFailures >= this.loginIpRateLimitMax) {
+        await this.repository.recordLoginAttempt({ email, ip, succeeded: false, createdAt: now });
+        throw new AppError(
+          'RATE_LIMITED',
+          `Login attempts from this network are limited to ${this.loginIpRateLimitMax} per ${LOGIN_RATE_LIMIT_WINDOW_SECONDS / 60} minutes`
+        );
+      }
+    }
+
     const user = await this.repository.findUserByEmail(email);
     if (!user || user.passwordHash === null) {
       return reject();
@@ -357,7 +425,11 @@ export class AuthService {
 
     const roles = await this.repository.listActiveRoles(user.id);
     await this.repository.recordLoginAttempt({ email, ip, succeeded: true, createdAt: now });
-    return this.issueSession(user, roles, now, { includeEmail: true });
+    return this.issueSession(user, roles, now, {
+      includeEmail: true,
+      ip,
+      userAgent: input.userAgent ?? null
+    });
   }
 
   /**
@@ -393,7 +465,11 @@ export class AuthService {
 
     const user = await this.repository.createUser(newUser);
     const roles = await this.repository.listActiveRoles(user.id);
-    return this.issueSession(user, roles, now, { includeEmail: true });
+    return this.issueSession(user, roles, now, {
+      includeEmail: true,
+      ip: input.ip ?? null,
+      userAgent: input.userAgent ?? null
+    });
   }
 
   /**
@@ -439,7 +515,11 @@ export class AuthService {
     }
 
     const roles = await this.repository.listActiveRoles(user.id);
-    return this.issueSession(user, roles, now, { includeEmail: true });
+    return this.issueSession(user, roles, now, {
+      includeEmail: true,
+      ip: input.ip ?? null,
+      userAgent: input.userAgent ?? null
+    });
   }
 
   /**
@@ -498,6 +578,63 @@ export class AuthService {
   }
 
   /**
+   * Refresh-token path (§9.1): the opaque token is the credential, so an expired
+   * access token no longer forces a re-login. Every successful refresh rotates
+   * the token; presenting a revoked token means it was replayed and the whole
+   * rotation family is revoked.
+   */
+  async refreshWithToken(refreshToken: string): Promise<PasswordLoginResult> {
+    if (typeof refreshToken !== 'string' || refreshToken.length < 32) {
+      throw new AppError('UNAUTHENTICATED', 'Sesi sudah berakhir. Silakan masuk lagi.');
+    }
+
+    const now = this.now();
+    const session = await this.repository.findSessionByRefreshHash(hashRefreshToken(refreshToken));
+    if (!session) {
+      throw new AppError('UNAUTHENTICATED', 'Sesi sudah berakhir. Silakan masuk lagi.');
+    }
+
+    if (session.revokedAt !== null) {
+      // Reuse of an already-rotated token: revoke the whole family.
+      await this.repository.revokeFamily(session.familyId, now);
+      throw new AppError('UNAUTHENTICATED', 'Sesi sudah berakhir. Silakan masuk lagi.');
+    }
+
+    if (!session.refreshExpiresAt || session.refreshExpiresAt.getTime() <= now.getTime()) {
+      await this.repository.markSessionRotated(session.jti, now);
+      throw new AppError('UNAUTHENTICATED', 'Sesi sudah berakhir. Silakan masuk lagi.');
+    }
+
+    const rotated = await this.repository.markSessionRotated(session.jti, now);
+    if (!rotated) {
+      throw new AppError('UNAUTHENTICATED', 'Sesi sudah berakhir. Silakan masuk lagi.');
+    }
+
+    const user = await this.repository.findUserProfile(session.userId);
+    if (!user) {
+      throw new AppError('UNAUTHENTICATED', 'Sesi tidak valid');
+    }
+    const roles = await this.repository.listActiveRoles(user.id);
+    return this.issueSession(user, roles, now, {
+      includeEmail: true,
+      familyId: session.familyId,
+      parentId: session.jti
+    });
+  }
+
+  /** Logout with a refresh token, for clients whose access token already expired. */
+  async logoutByRefreshToken(refreshToken: string): Promise<LogoutResult> {
+    if (typeof refreshToken !== 'string' || refreshToken.length === 0) {
+      return { revoked: 0 };
+    }
+    const revoked = await this.repository.revokeByRefreshHash(
+      hashRefreshToken(refreshToken),
+      this.now()
+    );
+    return { revoked };
+  }
+
+  /**
    * Sets (or replaces) a password and revokes every existing session, so a
    * credential change always forces a fresh login. Used by the seeding path.
    */
@@ -511,21 +648,37 @@ export class AuthService {
     await this.repository.revokeAllSessions(userId, now);
   }
 
-  /** Creates the session row and the matching access token (same `jti`). */
+  /**
+   * Creates the session row, the access token (same `jti`) and a fresh opaque
+   * refresh token. The session row lives for the refresh TTL; the access token
+   * still expires after `jwtTtlSeconds`.
+   */
   private async issueSession(
     user: AuthUserRecord,
     roles: Role[],
     now: Date,
-    options: { includeEmail?: boolean } = {}
+    options: {
+      includeEmail?: boolean;
+      ip?: string | null;
+      userAgent?: string | null;
+      familyId?: string;
+      parentId?: string | null;
+    } = {}
   ): Promise<VerifyOtpResult> {
     const jti = this.newId();
+    const refreshToken = issueRefreshToken();
+    const refreshExpiresAt = new Date(now.getTime() + this.refreshTtlSeconds * 1000);
     await this.repository.insertSession({
       jti,
       userId: user.id,
       issuedAt: now,
-      expiresAt: new Date(now.getTime() + this.jwtTtlSeconds * 1000),
-      userAgent: null,
-      ip: null
+      expiresAt: refreshExpiresAt,
+      userAgent: options.userAgent ?? null,
+      ip: options.ip ?? null,
+      refreshTokenHash: hashRefreshToken(refreshToken),
+      refreshExpiresAt,
+      familyId: options.familyId ?? this.newId(),
+      parentId: options.parentId ?? null
     });
 
     return {
@@ -534,6 +687,7 @@ export class AuthService {
         this.jwtSecret,
         this.jwtTtlSeconds
       ),
+      refresh_token: refreshToken,
       token_type: 'Bearer',
       expires_in: this.jwtTtlSeconds,
       user: {

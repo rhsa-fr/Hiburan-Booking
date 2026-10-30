@@ -101,3 +101,130 @@ describe('CatalogService.createVendor — vendor_owner grant', () => {
     await expect(service.createVendor(CREATE_INPUT)).rejects.toThrow('user_roles check violated');
   });
 });
+
+const TARLING_CATEGORY = {
+  id: 1,
+  slug: 'tarling',
+  name: 'Tarling & Dangdut',
+  is_active: true
+};
+const ORGAN_CATEGORY = {
+  id: 2,
+  slug: 'organ-tunggal',
+  name: 'Organ Tunggal',
+  is_active: true
+};
+const ASSIGNED_CATEGORIES = [
+  { slug: 'tarling', name: 'Tarling & Dangdut', is_primary: true },
+  { slug: 'organ-tunggal', name: 'Organ Tunggal', is_primary: false }
+];
+
+function arrangeCategories() {
+  const repository = new CatalogRepository();
+  vi.spyOn(repository, 'lockVendor').mockResolvedValue(VENDOR_ROW);
+  vi.spyOn(repository, 'vendorExists').mockResolvedValue(true);
+  const listVendorCategories = vi
+    .spyOn(repository, 'listVendorCategories')
+    .mockResolvedValue(ASSIGNED_CATEGORIES);
+  const vendorCategoriesInTx = vi
+    .spyOn(repository, 'vendorCategoriesInTx')
+    .mockResolvedValue(ASSIGNED_CATEGORIES);
+  const categoriesBySlugs = vi
+    .spyOn(repository, 'categoriesBySlugs')
+    .mockResolvedValue([TARLING_CATEGORY, ORGAN_CATEGORY]);
+  const replaceVendorCategories = vi
+    .spyOn(repository, 'replaceVendorCategories')
+    .mockResolvedValue(undefined);
+
+  return {
+    service: new CatalogService(repository),
+    repository,
+    listVendorCategories,
+    vendorCategoriesInTx,
+    categoriesBySlugs,
+    replaceVendorCategories
+  };
+}
+
+describe('CatalogService vendor categories', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('lists the assigned categories for the admin surface', async () => {
+    const { service, listVendorCategories } = arrangeCategories();
+
+    const result = await service.listVendorCategories(VENDOR_ID);
+
+    expect(listVendorCategories).toHaveBeenCalledWith(VENDOR_ID);
+    expect(result).toEqual({ vendor_id: VENDOR_ID, items: ASSIGNED_CATEGORIES });
+  });
+
+  it('rejects a missing vendor on read', async () => {
+    const { service, repository, listVendorCategories } = arrangeCategories();
+    vi.spyOn(repository, 'vendorExists').mockResolvedValue(false);
+
+    await expect(service.listVendorCategories(VENDOR_ID)).rejects.toMatchObject({
+      code: 'NOT_FOUND'
+    });
+    expect(listVendorCategories).not.toHaveBeenCalled();
+  });
+
+  it('promotes the first slug when the client flags no primary', async () => {
+    const { service, replaceVendorCategories } = arrangeCategories();
+
+    const result = await service.setVendorCategories(VENDOR_ID, {
+      categories: [{ slug: 'tarling' }, { slug: 'organ-tunggal' }]
+    });
+
+    expect(replaceVendorCategories).toHaveBeenCalledWith({}, VENDOR_ID, [1, 2], 1);
+    expect(result.items).toEqual(ASSIGNED_CATEGORIES);
+  });
+
+  it('honours an explicit primary flag', async () => {
+    const { service, replaceVendorCategories } = arrangeCategories();
+
+    await service.setVendorCategories(VENDOR_ID, {
+      categories: [{ slug: 'tarling' }, { slug: 'organ-tunggal', is_primary: true }]
+    });
+
+    expect(replaceVendorCategories).toHaveBeenCalledWith({}, VENDOR_ID, [1, 2], 2);
+  });
+
+  it('clears all categories when the list is empty', async () => {
+    const { service, replaceVendorCategories, vendorCategoriesInTx } = arrangeCategories();
+    vendorCategoriesInTx.mockResolvedValue([]);
+
+    const result = await service.setVendorCategories(VENDOR_ID, { categories: [] });
+
+    expect(replaceVendorCategories).toHaveBeenCalledWith({}, VENDOR_ID, [], null);
+    expect(result.items).toEqual([]);
+  });
+
+  it('rejects an unknown category without touching existing rows', async () => {
+    const { service, categoriesBySlugs, replaceVendorCategories } = arrangeCategories();
+    categoriesBySlugs.mockResolvedValue([TARLING_CATEGORY]);
+
+    await expect(
+      service.setVendorCategories(VENDOR_ID, {
+        categories: [{ slug: 'tarling' }, { slug: 'tidak-ada' }]
+      })
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    expect(replaceVendorCategories).not.toHaveBeenCalled();
+  });
+
+  it('rejects an inactive category', async () => {
+    const { service, categoriesBySlugs, replaceVendorCategories } = arrangeCategories();
+    categoriesBySlugs.mockResolvedValue([
+      TARLING_CATEGORY,
+      { ...ORGAN_CATEGORY, is_active: false }
+    ]);
+
+    await expect(
+      service.setVendorCategories(VENDOR_ID, {
+        categories: [{ slug: 'tarling' }, { slug: 'organ-tunggal' }]
+      })
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    expect(replaceVendorCategories).not.toHaveBeenCalled();
+  });
+});

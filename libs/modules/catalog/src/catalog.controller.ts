@@ -38,6 +38,7 @@ import type {
   CalendarWriteResult,
   PackageList,
   PackageRow,
+  VendorCategoryList,
   VendorDetail,
   VendorSummary,
   VerifyVendorResult
@@ -75,6 +76,26 @@ const optionalPhone = z.preprocess(
 
 const moneyAmount = z.number().int().positive().max(MAX_IDR);
 
+const httpUrl = z
+  .string()
+  .trim()
+  .url()
+  .max(500)
+  .refine(
+    (value) => /^https?:\/\//i.test(value),
+    'URL harus memakai http atau https'
+  );
+
+/** `null` clears a media URL; empty string from an HTML form also clears it. */
+const nullableUrl = z.preprocess(
+  (value) => (typeof value === 'string' && value.trim() === '' ? null : value),
+  httpUrl.nullable().optional()
+);
+
+const photoUrls = z.array(httpUrl).max(8).optional();
+
+const inclusions = z.array(z.string().trim().min(1).max(120)).max(30).optional();
+
 const isoDate = z
   .string()
   .trim()
@@ -102,7 +123,11 @@ const UPDATE_VENDOR_BODY = z
     free_radius_km: z.number().int().min(0).max(2_000_000_000).optional(),
     transport_fee_per_km_idr: z.number().int().min(0).max(MAX_IDR).optional(),
     min_dp_bp: z.number().int().min(0).max(10000).optional(),
-    is_active: z.boolean().optional()
+    is_active: z.boolean().optional(),
+    avatar_url: nullableUrl,
+    banner_url: nullableUrl,
+    photo_urls: photoUrls,
+    video_url: nullableUrl
   })
   .passthrough();
 
@@ -113,12 +138,49 @@ const VERIFY_BODY = z
   })
   .passthrough();
 
+const WRITE_CATEGORIES_BODY = z
+  .object({
+    categories: z
+      .array(
+        z.object({
+          slug: z
+            .string()
+            .trim()
+            .regex(/^[a-z0-9-]{1,50}$/, 'Slug kategori tidak valid'),
+          is_primary: z.boolean().optional()
+        })
+      )
+      .max(10)
+  })
+  .passthrough()
+  .superRefine((value, ctx) => {
+    const seen = new Set<string>();
+    for (const category of value.categories) {
+      if (seen.has(category.slug)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Kategori ganda: ${category.slug}`
+        });
+      }
+      seen.add(category.slug);
+    }
+    if (value.categories.filter((category) => category.is_primary === true).length > 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Hanya satu kategori yang boleh menjadi primer'
+      });
+    }
+  });
+
 const CREATE_PACKAGE_BODY = z
   .object({
     name: z.string().trim().min(1).max(150),
     duration_minutes: z.number().int().min(30).max(1440),
+    personnel_count: z.number().int().min(0).max(200).nullable().optional(),
     base_price_idr: moneyAmount,
     description: nullableText(4000),
+    inclusions,
+    photo_url: nullableUrl,
     is_active: z.boolean().optional()
   })
   .passthrough();
@@ -127,8 +189,11 @@ const UPDATE_PACKAGE_BODY = z
   .object({
     name: z.string().trim().min(1).max(150).optional(),
     duration_minutes: z.number().int().min(30).max(1440).optional(),
+    personnel_count: z.number().int().min(0).max(200).nullable().optional(),
     base_price_idr: moneyAmount.optional(),
     description: nullableText(4000),
+    inclusions,
+    photo_url: nullableUrl,
     is_active: z.boolean().optional()
   })
   .passthrough();
@@ -210,6 +275,23 @@ export class CatalogController {
     return this.catalog.updateVendor(
       id,
       parse(UPDATE_VENDOR_BODY, body, 'Perubahan vendor tidak valid')
+    );
+  }
+
+  @Get(':id/categories')
+  async vendorCategories(@Param('id') id: string): Promise<VendorCategoryList> {
+    return this.catalog.listVendorCategories(id);
+  }
+
+  @Put(':id/categories')
+  @Roles(...WRITE_ROLES)
+  async setVendorCategories(
+    @Param('id') id: string,
+    @Body() body: unknown
+  ): Promise<VendorCategoryList> {
+    return this.catalog.setVendorCategories(
+      id,
+      parse(WRITE_CATEGORIES_BODY, body, 'Kategori vendor tidak valid')
     );
   }
 

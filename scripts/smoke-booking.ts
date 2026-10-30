@@ -8,7 +8,7 @@
  * Pemakaian: npm run smoke:booking
  * Tidak mengubah data bisnis: seluruh baris uji memakai kode/HP unik per run.
  */
-import { createHmac } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { loadDotEnv, loadConfig as loadConfigRelative } from '../apps/api/src/core/config';
 import { loadConfig as loadConfigAlias } from '@tarlink/core/config';
@@ -68,29 +68,59 @@ async function main(): Promise<void> {
 
     const auth = (token: string): Record<string, string> => ({ authorization: `Bearer ${token}` });
 
-    // 3. Buat booking sebagai pelanggan
+    // 3. Buat booking sebagai pelanggan (idempoten, D-11)
     const eventDate = new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+    const idempotencyKey = randomUUID();
+    const createPayload = {
+      vendor_id: fx.vendorId,
+      package_id: fx.packageId,
+      policy_version_id: fx.policyVersionId,
+      client_generated_id: idempotencyKey,
+      event: {
+        title: 'Hajatan Aqiqah 12',
+        region_code: fx.regionCode,
+        venue_address: 'Jl. Pantura No. 12, Cirebon',
+        start_date: eventDate,
+        end_date: eventDate
+      },
+      slots: [{ date: eventDate, session: 'night' }]
+    };
     const createRes = await fetch(`${base}/bookings`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', ...auth(customerToken) },
-      body: JSON.stringify({
-        vendor_id: fx.vendorId,
-        package_id: fx.packageId,
-        policy_version_id: fx.policyVersionId,
-        event: {
-          title: 'Hajatan Aqiqah 12',
-          region_code: fx.regionCode,
-          venue_address: 'Jl. Pantura No. 12, Cirebon',
-          start_date: eventDate,
-          end_date: eventDate
-        },
-        slots: [{ date: eventDate, session: 'night' }]
-      })
+      headers: {
+        'content-type': 'application/json',
+        'idempotency-key': idempotencyKey,
+        ...auth(customerToken)
+      },
+      body: JSON.stringify(createPayload)
     });
     const createBody = await createRes.json().catch(() => null);
     const bookingId = pickId(createBody);
     step('POST /v1/bookings', createRes.status === 201 || createRes.status === 200, `status=${createRes.status} ${bookingId ?? JSON.stringify(createBody)}`);
     if (!bookingId) throw new Error('booking id tidak diperoleh');
+
+    const replayRes = await fetch(`${base}/bookings`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'idempotency-key': idempotencyKey,
+        ...auth(customerToken)
+      },
+      body: JSON.stringify(createPayload)
+    });
+    const replayBody = await replayRes.json().catch(() => null);
+    const replayId = pickId(replayBody);
+    const { rows: replayRows } = await client.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM bookings WHERE client_generated_id = $1`,
+      [idempotencyKey]
+    );
+    step(
+      'POST /v1/bookings replay idempoten',
+      replayId === bookingId &&
+        replayRes.headers.get('idempotency-replayed') === 'true' &&
+        replayRows[0]?.count === '1',
+      `replay=${replayId} header=${replayRes.headers.get('idempotency-replayed')} rows=${replayRows[0]?.count}`
+    );
 
     // 4. Accept oleh vendor
     const acceptRes = await fetch(`${base}/bookings/${bookingId}/accept`, {

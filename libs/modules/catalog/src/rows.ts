@@ -25,6 +25,11 @@ export type VendorRow = {
   created_at: Date;
   verified_at: Date | null;
   verified_by: string | null;
+  /** Optional so older test fixtures without media columns stay valid. */
+  avatar_url?: string | null;
+  banner_url?: string | null;
+  photo_urls?: string[] | null;
+  video_url?: string | null;
 };
 
 export type VerifyRow = {
@@ -44,6 +49,10 @@ export type PackageDbRow = {
   base_price_idr: string;
   is_active: boolean;
   created_at: Date;
+  /** Optional so older test fixtures without the new columns stay valid. */
+  personnel_count?: number | null;
+  inclusions?: string[] | null;
+  photo_url?: string | null;
 };
 
 export type CalendarSlotDbRow = {
@@ -56,7 +65,28 @@ export type UserIdRow = {
   id: string;
 };
 
+/** Categories assigned to one vendor, primary first. */
+export type VendorCategoryDbRow = {
+  slug: string;
+  name: string;
+  is_primary: boolean;
+};
+
+/** Category lookup during an assignment write. */
+export type CategoryLookupRow = {
+  id: number;
+  slug: string;
+  name: string;
+  is_active: boolean;
+};
+
 /* ------------------------------------------------------------ public catalog */
+
+export type PublicCategoryDbRow = {
+  slug: string;
+  name: string;
+  sort_order: number;
+};
 
 export type PublicVendorListRow = {
   id: string;
@@ -66,8 +96,15 @@ export type PublicVendorListRow = {
   region_name: string | null;
   base_address: string | null;
   description: string | null;
+  avatar_url: string | null;
+  banner_url: string | null;
+  photo_urls: string[] | null;
+  video_url: string | null;
   rating_sum: number;
   rating_count: number;
+  response_rate_bp: number | null;
+  category_slug: string | null;
+  category_name: string | null;
   min_dp_bp: number;
   /** NULL when the vendor has no active package. */
   starting_price_idr: string | null;
@@ -83,6 +120,10 @@ export type PublicVendorDetailRow = {
   region_code: string;
   region_name: string | null;
   base_address: string | null;
+  avatar_url: string | null;
+  banner_url: string | null;
+  photo_urls: string[] | null;
+  video_url: string | null;
   /** `ST_Y(base_location::geometry)`; NULL when the vendor has no location. */
   lat: number | null;
   /** `ST_X(base_location::geometry)`; NULL when the vendor has no location. */
@@ -92,6 +133,9 @@ export type PublicVendorDetailRow = {
   min_dp_bp: number;
   rating_sum: number;
   rating_count: number;
+  response_rate_bp: number | null;
+  category_slug: string | null;
+  category_name: string | null;
   /** `users.phone` of the owner; NULL when absent. */
   whatsapp: string | null;
 };
@@ -100,9 +144,11 @@ export type PublicPackageDbRow = {
   id: string;
   name: string;
   description: string | null;
+  photo_url: string | null;
   duration_minutes: number;
   personnel_count: number | null;
   base_price_idr: string;
+  inclusions?: string[] | null;
 };
 
 export type PublicAddonDbRow = {

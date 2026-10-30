@@ -14,13 +14,16 @@ import type { PoolClient } from 'pg';
 import { query } from '@tarlink/core/db';
 import type {
   CalendarSlotDbRow,
+  CategoryLookupRow,
   PackageDbRow,
   PolicyDbRow,
   PublicAddonDbRow,
+  PublicCategoryDbRow,
   PublicPackageDbRow,
   PublicVendorDetailRow,
   PublicVendorListRow,
   UserIdRow,
+  VendorCategoryDbRow,
   VendorRow,
   VerifyRow
 } from './rows';
@@ -42,7 +45,11 @@ export const VENDOR_COLUMNS = `
   v.is_active,
   v.created_at,
   v.verified_at,
-  v.verified_by
+  v.verified_by,
+  v.avatar_url,
+  v.banner_url,
+  v.photo_urls,
+  v.video_url
 `;
 
 const PACKAGE_COLUMNS = `
@@ -51,6 +58,9 @@ const PACKAGE_COLUMNS = `
   p.name,
   p.description,
   p.duration_minutes,
+  p.personnel_count,
+  p.inclusions,
+  p.photo_url,
   p.base_price_idr,
   p.is_active,
   p.created_at
@@ -64,6 +74,12 @@ const VERIFY_RETURNING = `
   verified_by
 `;
 
+const VENDOR_CATEGORY_COLUMNS = `
+  c.slug,
+  c.name,
+  vc.is_primary
+`;
+
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function isUuid(value: string): boolean {
@@ -75,7 +91,8 @@ function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, (char) => `\\${char}`);
 }
 
-/** `$1` = LIKE pattern (or NULL), `$2` = region prefix (or NULL). */
+/** `$1` = LIKE pattern (or NULL), `$2` = region prefix (or NULL),
+ *  `$3` = category slug (or NULL), `$4` = date (or NULL), `$5` = session (or NULL). */
 const PUBLIC_VENDOR_WHERE = `
   v.verification_status = 'approved'
   AND v.is_active
@@ -84,6 +101,44 @@ const PUBLIC_VENDOR_WHERE = `
        OR v.legal_name ILIKE $1 ESCAPE '\\'
        OR v.base_address ILIKE $1 ESCAPE '\\')
   AND ($2::text IS NULL OR v.region_code LIKE $2 || '%')
+  AND ($3::text IS NULL OR EXISTS (
+        SELECT 1
+          FROM vendor_categories vc
+          JOIN categories c ON c.id = vc.category_id
+         WHERE vc.vendor_id = v.id
+           AND c.slug = $3
+           AND c.is_active
+      ))
+  AND ($4::date IS NULL OR EXISTS (
+        SELECT 1
+          FROM (
+            SELECT
+              bool_or(cs.session = 'full')  AS full_ok,
+              bool_or(cs.session = 'day')   AS day_ok,
+              bool_or(cs.session = 'night') AS night_ok
+              FROM calendar_slots cs
+             WHERE cs.vendor_id = v.id
+               AND cs.date = $4::date
+               AND cs.status = 'available'
+          ) slots
+         WHERE ($5::text IS NULL AND (slots.full_ok OR slots.day_ok OR slots.night_ok))
+            OR ($5::text = 'full'  AND (slots.full_ok OR (slots.day_ok AND slots.night_ok)))
+            OR ($5::text = 'day'   AND (slots.day_ok OR slots.full_ok))
+            OR ($5::text = 'night' AND (slots.night_ok OR slots.full_ok))
+      ))
+`;
+
+/** Primary category for the card: a vendor may belong to many, one flagged. */
+const PUBLIC_VENDOR_CATEGORY_JOIN = `
+  LEFT JOIN LATERAL (
+    SELECT c.slug, c.name
+      FROM vendor_categories vc
+      JOIN categories c ON c.id = vc.category_id
+     WHERE vc.vendor_id = v.id
+       AND vc.is_primary
+       AND c.is_active
+     LIMIT 1
+  ) cat ON true
 `;
 
 const PUBLIC_VENDOR_LIST_COLUMNS = `
@@ -94,8 +149,15 @@ const PUBLIC_VENDOR_LIST_COLUMNS = `
   r.name AS region_name,
   v.base_address,
   v.description,
+  v.avatar_url,
+  v.banner_url,
+  v.photo_urls,
+  v.video_url,
   v.rating_sum,
   v.rating_count,
+  v.response_rate_bp,
+  cat.slug AS category_slug,
+  cat.name AS category_name,
   v.min_dp_bp,
   (SELECT MIN(p.base_price_idr) FROM packages p WHERE p.vendor_id = v.id AND p.is_active)
     AS starting_price_idr,
@@ -112,6 +174,10 @@ const PUBLIC_VENDOR_DETAIL_COLUMNS = `
   v.region_code,
   r.name AS region_name,
   v.base_address,
+  v.avatar_url,
+  v.banner_url,
+  v.photo_urls,
+  v.video_url,
   ST_Y(COALESCE(v.base_location::geometry, r.centroid::geometry)) AS lat,
   ST_X(COALESCE(v.base_location::geometry, r.centroid::geometry)) AS lng,
   v.service_radius_km,
@@ -119,6 +185,9 @@ const PUBLIC_VENDOR_DETAIL_COLUMNS = `
   v.min_dp_bp,
   v.rating_sum,
   v.rating_count,
+  v.response_rate_bp,
+  cat.slug AS category_slug,
+  cat.name AS category_name,
   u.phone AS whatsapp
 `;
 
@@ -126,6 +195,10 @@ export interface PublicVendorFilter {
   /** Already trimmed; `null` = no text filter. */
   q: string | null;
   region: string | null;
+  category: string | null;
+  date: string | null;
+  session: string | null;
+  sort: 'rating' | 'price_asc' | 'name_asc';
   limit: number;
   offset: number;
 }
@@ -151,6 +224,10 @@ export interface VendorUpdateInput {
   transport_fee_per_km_idr?: string;
   min_dp_bp?: number;
   is_active?: boolean;
+  avatar_url?: string | null;
+  banner_url?: string | null;
+  photo_urls?: string[];
+  video_url?: string | null;
 }
 
 export interface PackageInsertInput {
@@ -160,6 +237,9 @@ export interface PackageInsertInput {
   base_price_idr: string;
   description: string | null;
   is_active: boolean;
+  personnel_count: number | null;
+  inclusions: string[];
+  photo_url: string | null;
 }
 
 export interface PackageUpdateInput {
@@ -169,6 +249,9 @@ export interface PackageUpdateInput {
   base_price_idr?: string;
   description?: string | null;
   is_active?: boolean;
+  personnel_count?: number | null;
+  inclusions?: string[];
+  photo_url?: string | null;
 }
 
 export interface CalendarCellInput {
@@ -335,6 +418,10 @@ export class CatalogRepository {
     }
     if (patch.min_dp_bp !== undefined) set('min_dp_bp', patch.min_dp_bp);
     if (patch.is_active !== undefined) set('is_active', patch.is_active);
+    if (patch.avatar_url !== undefined) set('avatar_url', patch.avatar_url);
+    if (patch.banner_url !== undefined) set('banner_url', patch.banner_url);
+    if (patch.photo_urls !== undefined) set('photo_urls', patch.photo_urls);
+    if (patch.video_url !== undefined) set('video_url', patch.video_url);
 
     if (assignments.length === 0) {
       return this.lockVendor(client, id);
@@ -351,6 +438,80 @@ export class CatalogRepository {
       params
     );
     return result.rows[0] ?? null;
+  }
+
+  /* ------------------------------------------------------- vendor categories */
+
+  async listVendorCategories(vendorId: string): Promise<VendorCategoryDbRow[]> {
+    if (!isUuid(vendorId)) return [];
+    return query<VendorCategoryDbRow>(
+      `SELECT ${VENDOR_CATEGORY_COLUMNS}
+         FROM vendor_categories vc
+         JOIN categories c ON c.id = vc.category_id
+        WHERE vc.vendor_id = $1::uuid
+        ORDER BY vc.is_primary DESC, c.sort_order ASC, c.slug ASC`,
+      [vendorId]
+    );
+  }
+
+  async vendorCategoriesInTx(
+    client: PoolClient,
+    vendorId: string
+  ): Promise<VendorCategoryDbRow[]> {
+    const result = await client.query<VendorCategoryDbRow>(
+      `SELECT ${VENDOR_CATEGORY_COLUMNS}
+         FROM vendor_categories vc
+         JOIN categories c ON c.id = vc.category_id
+        WHERE vc.vendor_id = $1::uuid
+        ORDER BY vc.is_primary DESC, c.sort_order ASC, c.slug ASC`,
+      [vendorId]
+    );
+    return result.rows;
+  }
+
+  async categoriesBySlugs(client: PoolClient, slugs: string[]): Promise<CategoryLookupRow[]> {
+    if (slugs.length === 0) return [];
+    const result = await client.query<CategoryLookupRow>(
+      `SELECT id, slug, name, is_active
+         FROM categories
+        WHERE slug = ANY($1::text[])`,
+      [slugs]
+    );
+    return result.rows;
+  }
+
+  /**
+   * Replaces the full set of categories for a vendor. Existing rows keep their
+   * `created_at`; the primary flag is cleared first so moving it between rows
+   * never trips the `vendor_categories_one_primary` unique index.
+   */
+  async replaceVendorCategories(
+    client: PoolClient,
+    vendorId: string,
+    categoryIds: readonly number[],
+    primaryCategoryId: number | null
+  ): Promise<void> {
+    await client.query(
+      `UPDATE vendor_categories SET is_primary = false WHERE vendor_id = $1::uuid`,
+      [vendorId]
+    );
+    await client.query(
+      `DELETE FROM vendor_categories
+        WHERE vendor_id = $1::uuid
+          AND NOT (category_id = ANY($2::smallint[]))`,
+      [vendorId, categoryIds]
+    );
+    if (categoryIds.length === 0) return;
+
+    await client.query(
+      `INSERT INTO vendor_categories (vendor_id, category_id, is_primary)
+       SELECT $1::uuid, c.id, COALESCE(c.id = $3::smallint, false)
+         FROM categories c
+        WHERE c.id = ANY($2::smallint[])
+       ON CONFLICT (vendor_id, category_id)
+       DO UPDATE SET is_primary = EXCLUDED.is_primary`,
+      [vendorId, categoryIds, primaryCategoryId]
+    );
   }
 
   /** `approve`: verified_at = now(), verified_by = actor. */
@@ -425,8 +586,9 @@ export class CatalogRepository {
     const result = await client.query<PackageDbRow>(
       `WITH inserted AS (
          INSERT INTO packages
-           (vendor_id, name, duration_minutes, base_price_idr, description, is_active)
-         VALUES ($1::uuid, $2, $3, $4::bigint, $5, $6)
+           (vendor_id, name, duration_minutes, personnel_count, inclusions,
+            photo_url, base_price_idr, description, is_active)
+         VALUES ($1::uuid, $2, $3, $4, $5::jsonb, $6, $7::bigint, $8, $9)
          RETURNING *
        )
        SELECT ${PACKAGE_COLUMNS} FROM inserted p`,
@@ -434,6 +596,9 @@ export class CatalogRepository {
         vendorId,
         input.name,
         input.duration_minutes,
+        input.personnel_count,
+        JSON.stringify(input.inclusions),
+        input.photo_url,
         input.base_price_idr,
         input.description,
         input.is_active
@@ -467,6 +632,12 @@ export class CatalogRepository {
     }
     if (patch.description !== undefined) set('description', patch.description);
     if (patch.is_active !== undefined) set('is_active', patch.is_active);
+    if (patch.personnel_count !== undefined) set('personnel_count', patch.personnel_count);
+    if (patch.inclusions !== undefined) {
+      params.push(JSON.stringify(patch.inclusions));
+      assignments.push(`inclusions = $${params.length}::jsonb`);
+    }
+    if (patch.photo_url !== undefined) set('photo_url', patch.photo_url);
 
     if (assignments.length === 0) {
       return this.findPackageInTx(client, packageId, vendorId);
@@ -563,13 +734,14 @@ export class CatalogRepository {
     vendorId: string,
     cells: readonly CalendarCellInput[],
     status: string,
-    actorId: string
+    actorId: string,
+    source: 'admin' | 'vendor' = 'admin'
   ): Promise<number> {
     if (cells.length === 0) return 0;
 
     const result = await client.query(
       `INSERT INTO calendar_slots (vendor_id, date, session, status, source, updated_by)
-       SELECT $1::uuid, c.d, c.s, $4::calendar_slot_status, 'admin', $5::uuid
+       SELECT $1::uuid, c.d, c.s, $4::calendar_slot_status, $6::calendar_slot_source, $5::uuid
          FROM unnest($2::date[], $3::text[]) AS c(d, s)
        ON CONFLICT (vendor_id, date, session) DO UPDATE
           SET status = EXCLUDED.status,
@@ -583,7 +755,8 @@ export class CatalogRepository {
         cells.map((cell) => cell.date),
         cells.map((cell) => cell.session),
         status,
-        actorId
+        actorId,
+        source
       ]
     );
     return result.rowCount ?? 0;
@@ -608,22 +781,47 @@ export class CatalogRepository {
     total: number;
   }> {
     const like = filter.q === null ? null : `%${escapeLike(filter.q)}%`;
+    const orderBy =
+      filter.sort === 'price_asc'
+        ? 'starting_price_idr ASC NULLS LAST, v.display_name ASC, v.id ASC'
+        : filter.sort === 'name_asc'
+          ? 'v.display_name ASC, v.id ASC'
+          : 'v.rating_count DESC, v.display_name ASC, v.id ASC';
     const rows = await query<PublicVendorListRow>(
       `SELECT ${PUBLIC_VENDOR_LIST_COLUMNS}
          FROM vendors v
          LEFT JOIN regions r ON r.code = v.region_code
+         ${PUBLIC_VENDOR_CATEGORY_JOIN}
         WHERE ${PUBLIC_VENDOR_WHERE}
-        ORDER BY v.rating_count DESC, v.display_name ASC
-        LIMIT $3 OFFSET $4`,
-      [like, filter.region, filter.limit, filter.offset]
+        ORDER BY ${orderBy}
+        LIMIT $6 OFFSET $7`,
+      [
+        like,
+        filter.region,
+        filter.category,
+        filter.date,
+        filter.session,
+        filter.limit,
+        filter.offset
+      ]
     );
     const counted = await query<{ total: number }>(
       `SELECT COUNT(*)::int AS total
          FROM vendors v
         WHERE ${PUBLIC_VENDOR_WHERE}`,
-      [like, filter.region]
+      [like, filter.region, filter.category, filter.date, filter.session]
     );
     return { rows, total: counted[0]?.total ?? 0 };
+  }
+
+  /** Active categories in display order. Public reference data only. */
+  async publicCategories(): Promise<PublicCategoryDbRow[]> {
+    return query<PublicCategoryDbRow>(
+      `SELECT slug, name, sort_order
+         FROM categories
+        WHERE is_active
+        ORDER BY sort_order ASC, name ASC`
+    );
   }
 
   /** Accepts a uuid or a slug; returns null when not public or unknown. */
@@ -634,6 +832,7 @@ export class CatalogRepository {
          FROM vendors v
          LEFT JOIN regions r ON r.code = v.region_code
          LEFT JOIN users u ON u.id = v.owner_user_id
+         ${PUBLIC_VENDOR_CATEGORY_JOIN}
         WHERE ${predicate}
           AND v.verification_status = 'approved'
           AND v.is_active
@@ -645,7 +844,8 @@ export class CatalogRepository {
 
   async publicPackages(vendorId: string): Promise<PublicPackageDbRow[]> {
     return query<PublicPackageDbRow>(
-      `SELECT p.id, p.name, p.description, p.duration_minutes, p.personnel_count, p.base_price_idr
+      `SELECT p.id, p.name, p.description, p.duration_minutes, p.personnel_count,
+              p.inclusions, p.base_price_idr, p.photo_url
          FROM packages p
         WHERE p.vendor_id = $1::uuid
           AND p.is_active

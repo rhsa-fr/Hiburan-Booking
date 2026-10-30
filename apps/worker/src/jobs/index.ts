@@ -1,5 +1,6 @@
 import { runAutoComplete } from './auto-complete';
 import { runAutoRelease } from './auto-release';
+import { runCleanupAuth } from './cleanup-auth';
 import { runExpireHolds } from './expire-holds';
 import { runExpireUnpaid } from './expire-unpaid';
 import { runOutbox } from './outbox';
@@ -15,5 +16,6 @@ export const JOBS: readonly Job[] = [
   { name: 'expire_holds', lockKey: 74_102, run: runExpireHolds },
   { name: 'auto_complete', lockKey: 74_103, run: runAutoComplete },
   { name: 'auto_release', lockKey: 74_104, run: runAutoRelease },
-  { name: 'outbox', lockKey: 74_105, run: runOutbox }
+  { name: 'outbox', lockKey: 74_105, run: runOutbox },
+  { name: 'cleanup_auth', lockKey: 74_106, run: runCleanupAuth }
 ];

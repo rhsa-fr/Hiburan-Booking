@@ -21,6 +21,9 @@ async function bootstrap(): Promise<void> {
     allowedHeaders: ['Authorization', 'Content-Type', 'Idempotency-Key', 'Accept', 'X-Request-Id'],
     maxAge: 600
   });
+  // Behind Railway/reverse proxies `@Ip()` must read X-Forwarded-For, otherwise
+  // every client shares one IP and the per-IP limiter blocks everyone.
+  app.getHttpAdapter().getInstance().set('trust proxy', cfg.TRUST_PROXY);
   app.setGlobalPrefix('v1');
   await app.listen(cfg.PORT);
   // eslint-disable-next-line no-console

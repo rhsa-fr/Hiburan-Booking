@@ -68,13 +68,16 @@ async function insertMinimal(
   const cols: string[] = [];
   const vals: string[] = [];
   for (const c of rows) {
+    // Overrides must win even when the column has a DEFAULT: the booking
+    // fixture supplies service_fee_idr and that value must match
+    // total_customer_idr, or `bookings_check` rejects the row.
+    const override = overrides[c.column_name];
+    if (override !== undefined) {
+      cols.push(c.column_name);
+      vals.push(override);
+      continue;
+    }
     if (c.is_nullable === 'NO' && c.column_default === null && c.is_identity !== 'YES') {
-      const override = overrides[c.column_name];
-      if (override !== undefined) {
-        cols.push(c.column_name);
-        vals.push(override);
-        continue;
-      }
       switch (c.data_type) {
         case 'uuid':
           cols.push(c.column_name);
@@ -222,6 +225,27 @@ async function main(): Promise<void> {
       'anti double-booking (EXCLUDE USING gist)',
       Number(excl[0].n) >= 1 && Number(gist[0].n) >= 1,
       `${excl[0].n} exclusion constraint, ${gist[0].n} index gist`
+    );
+
+    const { rows: trgm } = await client.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM pg_indexes
+        WHERE schemaname = current_schema() AND indexdef ILIKE '%gin_trgm_ops%'`
+    );
+    record(
+      'index trigram pencarian vendor',
+      Number(trgm[0].n) >= 3,
+      `${trgm[0].n} index gin_trgm_ops`
+    );
+
+    const { rows: idemGuard } = await client.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM pg_indexes
+        WHERE schemaname = current_schema()
+          AND indexname = 'bookings_client_generated_uniq'`
+    );
+    record(
+      'guard idempotensi client_generated_id',
+      Number(idemGuard[0].n) === 1,
+      `${idemGuard[0].n} index unik parsial`
     );
 
     const { rows: coa } = await client.query<{ n: string }>(

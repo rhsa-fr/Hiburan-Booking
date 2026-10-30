@@ -1,5 +1,10 @@
 export { CatalogModule } from './catalog.module';
 export { CatalogService } from './catalog.service';
+export type {
+  CreatePackageInput,
+  UpdatePackageInput,
+  WriteCalendarInput
+} from './catalog.service';
 export { CatalogRepository } from './catalog.repository';
 export {
   CALENDAR_SESSIONS,

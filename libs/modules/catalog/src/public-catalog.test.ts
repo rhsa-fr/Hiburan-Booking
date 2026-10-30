@@ -37,8 +37,15 @@ const LIST_ROW: PublicVendorListRow = {
   region_name: 'Kabupaten Cirebon',
   base_address: 'Jl. Merdeka 1',
   description: 'Tarling dangdut',
+  avatar_url: 'https://example.com/avatar.jpg',
+  banner_url: 'https://example.com/banner.jpg',
+  photo_urls: ['https://example.com/p1.jpg'],
+  video_url: 'https://youtube.com/watch?v=123',
   rating_sum: 24,
   rating_count: 5,
+  response_rate_bp: 9200,
+  category_slug: 'tarling',
+  category_name: 'Tarling & Dangdut',
   min_dp_bp: 3000,
   starting_price_idr: '5000000',
   package_count: 3
@@ -53,6 +60,10 @@ const DETAIL_ROW: PublicVendorDetailRow = {
   region_code: '3209',
   region_name: 'Kabupaten Cirebon',
   base_address: 'Jl. Merdeka 1',
+  avatar_url: 'https://example.com/avatar.jpg',
+  banner_url: 'https://example.com/banner.jpg',
+  photo_urls: ['https://example.com/p1.jpg'],
+  video_url: 'https://youtube.com/watch?v=123',
   lat: -6.7,
   lng: 108.5,
   service_radius_km: 25,
@@ -60,6 +71,9 @@ const DETAIL_ROW: PublicVendorDetailRow = {
   min_dp_bp: 3000,
   rating_sum: 24,
   rating_count: 5,
+  response_rate_bp: 9200,
+  category_slug: 'tarling',
+  category_name: 'Tarling & Dangdut',
   whatsapp: '6281200000001'
 };
 
@@ -67,6 +81,7 @@ const PACKAGE_ROW: PublicPackageDbRow = {
   id: PACKAGE_ID,
   name: 'Paket 6 jam',
   description: 'Enam jam',
+  photo_url: 'https://example.com/pkg.jpg',
   duration_minutes: 360,
   personnel_count: 6,
   base_price_idr: '5000000'
@@ -126,8 +141,15 @@ describe('GET /vendors', () => {
           region_name: 'Kabupaten Cirebon',
           base_address: 'Jl. Merdeka 1',
           description: 'Tarling dangdut',
+          avatar_url: 'https://example.com/avatar.jpg',
+          banner_url: 'https://example.com/banner.jpg',
+          photo_urls: ['https://example.com/p1.jpg'],
+          video_url: 'https://youtube.com/watch?v=123',
           rating: 4.8,
           rating_count: 5,
+          response_rate_bp: 9200,
+          category_slug: 'tarling',
+          category_name: 'Tarling & Dangdut',
           min_dp_bp: 3000,
           starting_price_idr: 5000000,
           package_count: 3
@@ -152,6 +174,10 @@ describe('GET /vendors', () => {
     const [item] = (await service().listPublicVendors({
       q: null,
       region: null,
+      category: null,
+      date: null,
+      session: null,
+      sort: 'rating',
       page: 1,
       page_size: 20
     })).items;
@@ -164,21 +190,102 @@ describe('GET /vendors', () => {
   it('applies q and region filters and pagination to the SQL', async () => {
     queryMock.mockResolvedValueOnce([]).mockResolvedValueOnce([{ total: 0 }]);
 
-    await service().listPublicVendors({ q: 'tarling', region: '32', page: 2, page_size: 5 });
+    await service().listPublicVendors({
+      q: 'tarling',
+      region: '32',
+      category: null,
+      date: null,
+      session: null,
+      sort: 'rating',
+      page: 2,
+      page_size: 5
+    });
 
     expect(sqlOf(0)).toContain('v.display_name ILIKE $1');
     expect(sqlOf(0)).toContain("v.region_code LIKE $2 || '%'");
-    expect(paramsOf(0)).toEqual(['%tarling%', '32', 5, 5]);
+    expect(paramsOf(0)).toEqual(['%tarling%', '32', null, null, null, 5, 5]);
     expect(sqlOf(1)).toContain('COUNT(*)::int AS total');
-    expect(paramsOf(1)).toEqual(['%tarling%', '32']);
+    expect(paramsOf(1)).toEqual(['%tarling%', '32', null, null, null]);
   });
 
   it('escapes LIKE wildcards in q', async () => {
     queryMock.mockResolvedValueOnce([]).mockResolvedValueOnce([{ total: 0 }]);
 
-    await service().listPublicVendors({ q: '100%_a', region: null, page: 1, page_size: 20 });
+    await service().listPublicVendors({
+      q: '100%_a',
+      region: null,
+      category: null,
+      date: null,
+      session: null,
+      sort: 'rating',
+      page: 1,
+      page_size: 20
+    });
 
     expect(paramsOf(0)[0]).toBe('%100\\%\\_a%');
+  });
+
+  it('filters by category, date, and session, and pushes sort into SQL', async () => {
+    queryMock.mockResolvedValueOnce([]).mockResolvedValueOnce([{ total: 0 }]);
+
+    await service().listPublicVendors({
+      q: null,
+      region: null,
+      category: 'organ-tunggal',
+      date: '2026-12-05',
+      session: 'night',
+      sort: 'price_asc',
+      page: 1,
+      page_size: 20
+    });
+
+    expect(sqlOf(0)).toContain('c.slug = $3');
+    expect(sqlOf(0)).toContain('cs.date = $4::date');
+    expect(sqlOf(0)).toContain("cs.status = 'available'");
+    expect(sqlOf(0)).toContain('starting_price_idr ASC NULLS LAST');
+    expect(paramsOf(0)).toEqual([null, null, 'organ-tunggal', '2026-12-05', 'night', 20, 0]);
+    expect(paramsOf(1)).toEqual([null, null, 'organ-tunggal', '2026-12-05', 'night']);
+  });
+
+  it('uses name sort when requested', async () => {
+    queryMock.mockResolvedValueOnce([]).mockResolvedValueOnce([{ total: 0 }]);
+
+    await service().listPublicVendors({
+      q: null,
+      region: null,
+      category: null,
+      date: null,
+      session: null,
+      sort: 'name_asc',
+      page: 1,
+      page_size: 20
+    });
+
+    expect(sqlOf(0)).toContain('v.display_name ASC, v.id ASC');
+  });
+});
+
+describe('GET /categories', () => {
+  beforeEach(() => {
+    queryMock.mockReset();
+  });
+
+  it('returns active categories in display order', async () => {
+    queryMock.mockResolvedValueOnce([
+      { slug: 'tarling', name: 'Tarling & Dangdut', sort_order: 1 },
+      { slug: 'organ-tunggal', name: 'Organ Tunggal', sort_order: 2 }
+    ]);
+
+    const result = await controller().categories();
+
+    expect(result).toEqual({
+      items: [
+        { slug: 'tarling', name: 'Tarling & Dangdut', sort_order: 1 },
+        { slug: 'organ-tunggal', name: 'Organ Tunggal', sort_order: 2 }
+      ]
+    });
+    expect(sqlOf(0)).toContain('WHERE is_active');
+    expect(sqlOf(0)).toContain('ORDER BY sort_order ASC, name ASC');
   });
 });
 
@@ -207,12 +314,19 @@ describe('GET /vendors/:idOrSlug', () => {
       region_code: '3209',
       region_name: 'Kabupaten Cirebon',
       base_address: 'Jl. Merdeka 1',
+      avatar_url: 'https://example.com/avatar.jpg',
+      banner_url: 'https://example.com/banner.jpg',
+      photo_urls: ['https://example.com/p1.jpg'],
+      video_url: 'https://youtube.com/watch?v=123',
       location: { lat: -6.7, lng: 108.5 },
       service_radius_km: 25,
       transport_fee_per_km_idr: 5000,
       min_dp_bp: 3000,
       rating: 4.8,
       rating_count: 5,
+      response_rate_bp: 9200,
+      category_slug: 'tarling',
+      category_name: 'Tarling & Dangdut',
       whatsapp: '6281200000001'
     });
     expect(result.packages).toEqual([
@@ -220,9 +334,11 @@ describe('GET /vendors/:idOrSlug', () => {
         id: PACKAGE_ID,
         name: 'Paket 6 jam',
         description: 'Enam jam',
+        photo_url: 'https://example.com/pkg.jpg',
         duration_minutes: 360,
         personnel_count: 6,
         base_price_idr: 5000000,
+        inclusions: [],
         addons: [
           {
             id: ADDON_ID,
@@ -364,8 +480,8 @@ describe('GET /vendors validation', () => {
 
     expect(result.page).toBe(2);
     expect(result.page_size).toBe(3);
-    expect(sqlOf(0)).toContain('LIMIT $3 OFFSET $4');
-    expect(paramsOf(0)).toEqual([null, null, 3, 3]);
+    expect(sqlOf(0)).toContain('LIMIT $6 OFFSET $7');
+    expect(paramsOf(0)).toEqual([null, null, null, null, null, 3, 3]);
   });
 
   it('treats a blank q/region as absent', async () => {
@@ -373,6 +489,21 @@ describe('GET /vendors validation', () => {
 
     await controller().vendors({ q: '  ', region: '' });
 
-    expect(paramsOf(0)).toEqual([null, null, 20, 0]);
+    expect(paramsOf(0)).toEqual([null, null, null, null, null, 20, 0]);
+  });
+
+  it('rejects invalid date, session, category slug, and sort', async () => {
+    await expect(controller().vendors({ date: '05-12-2026' })).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR'
+    });
+    await expect(controller().vendors({ session: 'morning' })).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR'
+    });
+    await expect(controller().vendors({ category: 'Tarling Dangdut' })).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR'
+    });
+    await expect(controller().vendors({ sort: 'newest' })).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR'
+    });
   });
 });

@@ -14,6 +14,7 @@ import type {
   PublicVendorCard,
   PublicVendorProfileFields,
   VendorDetail,
+  VendorCategoryAssignment,
   VendorSummary,
   VendorVerificationStatus,
   VerifyVendorResult
@@ -27,6 +28,7 @@ import type {
   PublicPackageDbRow,
   PublicVendorDetailRow,
   PublicVendorListRow,
+  VendorCategoryDbRow,
   VendorRow,
   VerifyRow
 } from './rows';
@@ -91,7 +93,11 @@ export function mapVendorDetail(row: VendorRow): VendorDetail {
       'vendor.transport_fee_per_km_idr'
     ),
     min_dp_bp: row.min_dp_bp,
-    is_active: row.is_active
+    is_active: row.is_active,
+    avatar_url: row.avatar_url ?? null,
+    banner_url: row.banner_url ?? null,
+    photo_urls: row.photo_urls ?? [],
+    video_url: row.video_url ?? null
   };
 }
 
@@ -119,7 +125,18 @@ export function mapPackage(row: PackageDbRow): PackageRow {
     base_price_idr: idrToJson(row.base_price_idr, 'package.base_price_idr'),
     description: row.description,
     is_active: row.is_active,
-    created_at: toIsoRequired(row.created_at)
+    created_at: toIsoRequired(row.created_at),
+    personnel_count: row.personnel_count ?? null,
+    inclusions: row.inclusions ?? [],
+    photo_url: row.photo_url ?? null
+  };
+}
+
+export function mapVendorCategory(row: VendorCategoryDbRow): VendorCategoryAssignment {
+  return {
+    slug: row.slug,
+    name: row.name,
+    is_primary: row.is_primary
   };
 }
 
@@ -148,8 +165,15 @@ export function mapPublicVendorCard(row: PublicVendorListRow): PublicVendorCard 
     region_name: row.region_name ?? row.region_code,
     base_address: row.base_address,
     description: row.description,
+    avatar_url: row.avatar_url ?? null,
+    banner_url: row.banner_url ?? null,
+    photo_urls: row.photo_urls ?? [],
+    video_url: row.video_url ?? null,
     rating: publicRating(row.rating_sum, row.rating_count),
     rating_count: row.rating_count,
+    response_rate_bp: row.response_rate_bp,
+    category_slug: row.category_slug,
+    category_name: row.category_name,
     min_dp_bp: row.min_dp_bp,
     starting_price_idr:
       row.starting_price_idr === null
@@ -169,6 +193,10 @@ export function mapPublicVendorProfile(row: PublicVendorDetailRow): PublicVendor
     region_code: row.region_code,
     region_name: row.region_name ?? row.region_code,
     base_address: row.base_address,
+    avatar_url: row.avatar_url ?? null,
+    banner_url: row.banner_url ?? null,
+    photo_urls: row.photo_urls ?? [],
+    video_url: row.video_url ?? null,
     location:
       row.lat === null || row.lng === null ? null : { lat: row.lat, lng: row.lng },
     service_radius_km: row.service_radius_km,
@@ -179,6 +207,9 @@ export function mapPublicVendorProfile(row: PublicVendorDetailRow): PublicVendor
     min_dp_bp: row.min_dp_bp,
     rating: publicRating(row.rating_sum, row.rating_count),
     rating_count: row.rating_count,
+    response_rate_bp: row.response_rate_bp,
+    category_slug: row.category_slug,
+    category_name: row.category_name,
     whatsapp: row.whatsapp
   };
 }
@@ -205,9 +236,11 @@ export function mapPublicPackages(
     id: row.id,
     name: row.name,
     description: row.description,
+    photo_url: row.photo_url ?? null,
     duration_minutes: row.duration_minutes,
     personnel_count: row.personnel_count,
     base_price_idr: idrToJson(row.base_price_idr, 'package.base_price_idr'),
+    inclusions: row.inclusions ?? [],
     addons: byPackage.get(row.id) ?? []
   }));
 }

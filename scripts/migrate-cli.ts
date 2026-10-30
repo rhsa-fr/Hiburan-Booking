@@ -9,7 +9,8 @@ import { runMigrations } from './migrate';
 
 loadDotEnv();
 
-runMigrations({})
+const dryRun = process.argv.includes('--dry-run');
+runMigrations({ dryRun })
   .then((result) => {
     // eslint-disable-next-line no-console
     console.log(`migrasi selesai: applied=${result.applied.length} pending=${result.pending.length}`);

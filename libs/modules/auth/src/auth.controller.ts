@@ -18,6 +18,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   HttpCode,
   Ip,
   Post,
@@ -25,8 +26,13 @@ import {
   UseGuards
 } from '@nestjs/common';
 import { z } from 'zod';
+import { loadConfig } from '@tarlink/core/config';
 import { AppError } from '@tarlink/core/errors';
-import { AuthGuard, type AuthenticatedRequest } from '@tarlink/platform/auth';
+import {
+  AuthGuard,
+  verifyAccessToken,
+  type AuthenticatedRequest
+} from '@tarlink/platform/auth';
 import {
   AuthService,
   type CurrentUserResult,
@@ -67,6 +73,20 @@ const GoogleBody = z.object({
   id_token: z.string().min(1).max(4096)
 });
 
+/** Refresh/logout accept the opaque token; the legacy access-token path still works. */
+const RefreshBody = z.object({
+  refresh_token: z.string().min(1).max(256).optional()
+});
+
+function bearerClaims(authorization: string | undefined): { sub: string; jti?: string } | null {
+  if (typeof authorization !== 'string' || !authorization.startsWith('Bearer ')) return null;
+  try {
+    return verifyAccessToken(authorization.slice('Bearer '.length), loadConfig().JWT_SECRET);
+  } catch {
+    return null;
+  }
+}
+
 @Controller('auth')
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
@@ -84,13 +104,17 @@ export class AuthController {
 
   @Post('otp/verify')
   @HttpCode(200)
-  async verifyOtp(@Body() body: unknown): Promise<{ data: VerifyOtpResult }> {
+  async verifyOtp(
+    @Body() body: unknown,
+    @Ip() ip: string,
+    @Headers('user-agent') userAgent?: string
+  ): Promise<{ data: VerifyOtpResult }> {
     const parsed = VerifyOtpBody.safeParse(body);
     if (!parsed.success) {
       throw new AppError('VALIDATION_ERROR', 'invalid OTP verification request', parsed.error.issues);
     }
 
-    return { data: await this.auth.verifyOtp(parsed.data) };
+    return { data: await this.auth.verifyOtp({ ...parsed.data, ip, userAgent }) };
   }
 
   /**
@@ -99,13 +123,17 @@ export class AuthController {
    */
   @Post('login')
   @HttpCode(200)
-  async login(@Body() body: unknown, @Ip() ip: string): Promise<{ data: PasswordLoginResult }> {
+  async login(
+    @Body() body: unknown,
+    @Ip() ip: string,
+    @Headers('user-agent') userAgent?: string
+  ): Promise<{ data: PasswordLoginResult }> {
     const parsed = LoginBody.safeParse(body);
     if (!parsed.success) {
       throw new AppError('VALIDATION_ERROR', 'invalid login request', parsed.error.issues);
     }
 
-    return { data: await this.auth.loginWithPassword({ ...parsed.data, ip }) };
+    return { data: await this.auth.loginWithPassword({ ...parsed.data, ip, userAgent }) };
   }
 
   /**
@@ -114,37 +142,56 @@ export class AuthController {
    */
   @Post('register')
   @HttpCode(201)
-  async register(@Body() body: unknown): Promise<{ data: VerifyOtpResult }> {
+  async register(
+    @Body() body: unknown,
+    @Ip() ip: string,
+    @Headers('user-agent') userAgent?: string
+  ): Promise<{ data: VerifyOtpResult }> {
     const parsed = RegisterBody.safeParse(body);
     if (!parsed.success) {
       throw new AppError('VALIDATION_ERROR', 'invalid registration request', parsed.error.issues);
     }
 
-    return { data: await this.auth.register(parsed.data) };
+    return { data: await this.auth.register({ ...parsed.data, ip, userAgent }) };
   }
 
   /** Google Sign-In: exchanges a Google ID token for our access token. */
   @Post('google')
   @HttpCode(200)
-  async google(@Body() body: unknown): Promise<{ data: VerifyOtpResult }> {
+  async google(
+    @Body() body: unknown,
+    @Ip() ip: string,
+    @Headers('user-agent') userAgent?: string
+  ): Promise<{ data: VerifyOtpResult }> {
     const parsed = GoogleBody.safeParse(body);
     if (!parsed.success) {
       throw new AppError('VALIDATION_ERROR', 'invalid Google sign-in request', parsed.error.issues);
     }
 
-    return { data: await this.auth.loginWithGoogle(parsed.data) };
+    return { data: await this.auth.loginWithGoogle({ ...parsed.data, ip, userAgent }) };
   }
 
   @Post('logout')
   @HttpCode(200)
-  @UseGuards(AuthGuard)
-  async logout(@Req() req: AuthenticatedRequest): Promise<{ data: LogoutResult }> {
-    const user = req.user;
-    if (!user) {
-      throw new AppError('UNAUTHENTICATED', 'Authentication is required');
+  async logout(
+    @Body() body: unknown,
+    @Headers('authorization') authorization?: string
+  ): Promise<{ data: LogoutResult }> {
+    const parsed = RefreshBody.safeParse(body ?? {});
+    if (!parsed.success) {
+      throw new AppError('VALIDATION_ERROR', 'invalid logout request', parsed.error.issues);
     }
 
-    return { data: await this.auth.logout(user.id, user.jti) };
+    // Refresh-token logout works even when the access token already expired.
+    if (parsed.data.refresh_token) {
+      return { data: await this.auth.logoutByRefreshToken(parsed.data.refresh_token) };
+    }
+
+    const claims = bearerClaims(authorization);
+    if (!claims) {
+      throw new AppError('UNAUTHENTICATED', 'Authentication is required');
+    }
+    return { data: await this.auth.logout(claims.sub, claims.jti) };
   }
 
   /** Profile of the verified caller; roles come from the database, not the token. */
@@ -159,16 +206,30 @@ export class AuthController {
     return { data: await this.auth.getProfile(user.id) };
   }
 
-  /** Rotates the session carried by the current token and returns a new one. */
+  /**
+   * Rotates the session and returns a new access + refresh pair.
+   * A `refresh_token` body is the primary path (works after the access token
+   * expired). The legacy Bearer path is kept for clients that have not migrated.
+   */
   @Post('refresh')
   @HttpCode(200)
-  @UseGuards(AuthGuard)
-  async refresh(@Req() req: AuthenticatedRequest): Promise<{ data: PasswordLoginResult }> {
-    const user = req.user;
-    if (!user) {
-      throw new AppError('UNAUTHENTICATED', 'Authentication is required');
+  async refresh(
+    @Body() body: unknown,
+    @Headers('authorization') authorization?: string
+  ): Promise<{ data: PasswordLoginResult }> {
+    const parsed = RefreshBody.safeParse(body ?? {});
+    if (!parsed.success) {
+      throw new AppError('VALIDATION_ERROR', 'invalid refresh request', parsed.error.issues);
     }
 
-    return { data: await this.auth.refresh(user.id, user.jti) };
+    if (parsed.data.refresh_token) {
+      return { data: await this.auth.refreshWithToken(parsed.data.refresh_token) };
+    }
+
+    const claims = bearerClaims(authorization);
+    if (!claims) {
+      throw new AppError('UNAUTHENTICATED', 'Authentication is required');
+    }
+    return { data: await this.auth.refresh(claims.sub, claims.jti) };
   }
 }

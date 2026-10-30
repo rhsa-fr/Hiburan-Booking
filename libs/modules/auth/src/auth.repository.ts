@@ -73,11 +73,27 @@ export interface NewSession {
   readonly expiresAt: Date;
   readonly userAgent: string | null;
   readonly ip: string | null;
+  /** sha256 of the opaque refresh token; the plaintext is never stored. */
+  readonly refreshTokenHash: string;
+  readonly refreshExpiresAt: Date;
+  readonly familyId: string;
+  readonly parentId: string | null;
+}
+
+/** Row used by refresh rotation and reuse detection. */
+export interface SessionRefreshRecord {
+  readonly jti: string;
+  readonly userId: string;
+  readonly familyId: string;
+  readonly revokedAt: Date | null;
+  readonly refreshExpiresAt: Date | null;
 }
 
 export interface AuthRepository {
   /** Number of OTP requests for `phone` created at/after `since`. */
   countRecentOtpRequests(phone: string, since: Date): Promise<number>;
+  /** Number of OTP requests from `ip` created at/after `since` (null when no IP). */
+  countRecentOtpRequestsByIp(ip: string, since: Date): Promise<number>;
   insertOtpRequest(input: NewOtpRequest): Promise<void>;
   /** Newest request for `phone` that is neither consumed nor expired. */
   findActiveOtpRequest(phone: string, now: Date): Promise<OtpRequestRecord | null>;
@@ -106,6 +122,8 @@ export interface AuthRepository {
   listActiveRoles(userId: string): Promise<Role[]>;
   /** Number of failed password logins for `email` created at/after `since`. */
   countFailedLoginAttempts(email: string, since: Date): Promise<number>;
+  /** Number of failed password logins from `ip` created at/after `since`. */
+  countFailedLoginAttemptsByIp(ip: string, since: Date): Promise<number>;
   /** Audit row for one password login attempt (success or failure). */
   recordLoginAttempt(input: NewLoginAttempt): Promise<void>;
   /** Writes a new password hash; false when the user does not exist. */
@@ -120,6 +138,14 @@ export interface AuthRepository {
    * session that is still active. Returns the number of rows revoked.
    */
   revokeSessions(userId: string, jti: string | null, at: Date): Promise<number>;
+  /** Session lookup for refresh rotation, including already-revoked rows. */
+  findSessionByRefreshHash(refreshTokenHash: string): Promise<SessionRefreshRecord | null>;
+  /** Marks one session as rotated (revoked + rotated_at + reason) atomically. */
+  markSessionRotated(jti: string, at: Date): Promise<boolean>;
+  /** Revokes every session in a rotation family (refresh-token reuse). */
+  revokeFamily(familyId: string, at: Date): Promise<number>;
+  /** Revokes the session owning `refreshTokenHash` (logout by refresh token). */
+  revokeByRefreshHash(refreshTokenHash: string, at: Date): Promise<number>;
 }
 
 interface OtpRow {
@@ -149,6 +175,14 @@ interface UserProfileRow extends UserRow {
   created_at: Date;
 }
 
+interface SessionRefreshRow {
+  jti: string;
+  user_id: string;
+  family_id: string | null;
+  revoked_at: Date | null;
+  refresh_expires_at: Date | null;
+}
+
 function isUniqueViolation(err: unknown): boolean {
   return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === '23505';
 }
@@ -158,6 +192,14 @@ export class PgAuthRepository implements AuthRepository {
     const rows = await query<{ count: number }>(
       'SELECT COUNT(*)::int AS count FROM otp_requests WHERE phone = $1 AND created_at >= $2',
       [phone, since]
+    );
+    return rows[0]?.count ?? 0;
+  }
+
+  async countRecentOtpRequestsByIp(ip: string, since: Date): Promise<number> {
+    const rows = await query<{ count: number }>(
+      'SELECT COUNT(*)::int AS count FROM otp_requests WHERE requester_ip = $1::inet AND created_at >= $2',
+      [ip, since]
     );
     return rows[0]?.count ?? 0;
   }
@@ -352,6 +394,14 @@ export class PgAuthRepository implements AuthRepository {
     return rows[0]?.count ?? 0;
   }
 
+  async countFailedLoginAttemptsByIp(ip: string, since: Date): Promise<number> {
+    const rows = await query<{ count: number }>(
+      'SELECT COUNT(*)::int AS count FROM login_attempts WHERE ip = $1::inet AND succeeded = false AND created_at >= $2',
+      [ip, since]
+    );
+    return rows[0]?.count ?? 0;
+  }
+
   async recordLoginAttempt(input: NewLoginAttempt): Promise<void> {
     await query(
       'INSERT INTO login_attempts (email, ip, succeeded, created_at) VALUES ($1, $2::inet, $3, $4)',
@@ -369,9 +419,22 @@ export class PgAuthRepository implements AuthRepository {
 
   async insertSession(input: NewSession): Promise<void> {
     await query(
-      `INSERT INTO sessions (jti, user_id, issued_at, expires_at, user_agent, ip)
-       VALUES ($1, $2, $3, $4, $5, $6::inet)`,
-      [input.jti, input.userId, input.issuedAt, input.expiresAt, input.userAgent, input.ip]
+      `INSERT INTO sessions
+         (jti, user_id, issued_at, expires_at, user_agent, ip,
+          refresh_token_hash, refresh_expires_at, family_id, parent_id)
+       VALUES ($1, $2, $3, $4, $5, $6::inet, $7, $8, $9, $10)`,
+      [
+        input.jti,
+        input.userId,
+        input.issuedAt,
+        input.expiresAt,
+        input.userAgent,
+        input.ip,
+        input.refreshTokenHash,
+        input.refreshExpiresAt,
+        input.familyId,
+        input.parentId
+      ]
     );
   }
 
@@ -415,6 +478,66 @@ export class PgAuthRepository implements AuthRepository {
         )
         RETURNING id`,
       [userId, at]
+    );
+    return rows.length;
+  }
+
+  async findSessionByRefreshHash(
+    refreshTokenHash: string
+  ): Promise<SessionRefreshRecord | null> {
+    const rows = await query<SessionRefreshRow>(
+      `SELECT jti, user_id, family_id, revoked_at, refresh_expires_at
+         FROM sessions
+        WHERE refresh_token_hash = $1
+        LIMIT 1`,
+      [refreshTokenHash]
+    );
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      jti: row.jti,
+      userId: row.user_id,
+      // Rows written before migration 011 have no family; fall back to the jti
+      // so reuse detection still isolates that single session.
+      familyId: row.family_id ?? row.jti,
+      revokedAt: row.revoked_at,
+      refreshExpiresAt: row.refresh_expires_at
+    };
+  }
+
+  async markSessionRotated(jti: string, at: Date): Promise<boolean> {
+    const rows = await query<{ id: string }>(
+      `UPDATE sessions
+          SET revoked_at = $2,
+              rotated_at = $2,
+              revoke_reason = 'rotated'
+        WHERE jti = $1 AND revoked_at IS NULL
+        RETURNING id`,
+      [jti, at]
+    );
+    return rows.length > 0;
+  }
+
+  async revokeFamily(familyId: string, at: Date): Promise<number> {
+    const rows = await query<{ id: string }>(
+      `UPDATE sessions
+          SET revoked_at = $2,
+              revoke_reason = COALESCE(revoke_reason, 'reuse_detected')
+        WHERE family_id = $1 AND revoked_at IS NULL
+        RETURNING id`,
+      [familyId, at]
+    );
+    return rows.length;
+  }
+
+  async revokeByRefreshHash(refreshTokenHash: string, at: Date): Promise<number> {
+    const rows = await query<{ id: string }>(
+      `UPDATE sessions
+          SET revoked_at = $2,
+              revoke_reason = COALESCE(revoke_reason, 'logout')
+        WHERE refresh_token_hash = $1 AND revoked_at IS NULL
+        RETURNING id`,
+      [refreshTokenHash, at]
     );
     return rows.length;
   }

@@ -2,7 +2,7 @@
  * Uji kontrak endpoint katalog vendor (packet A).
  *
  * Membuat user pemilik uji lebih dulu lewat SQL, lalu menjalankan seluruh
- * alur: buat vendor -> ubah -> verifikasi -> paket -> kalender -> nonaktifkan.
+ * alur: buat vendor -> ubah -> verifikasi -> kategori -> paket -> kalender -> nonaktifkan.
  * Baris uji memakai penanda unik dan sengaja DIBIARKAN supaya panel punya data
  * contoh yang nyata.
  *
@@ -151,6 +151,53 @@ async function main(): Promise<void> {
       'POST /admin/vendors/:id/verify',
       verified.status === 200 && verifyBody?.verification_status === 'approved',
       `status=${verified.status} state=${String(verifyBody?.verification_status)}`
+    );
+
+    const assigned = await call(`/admin/vendors/${vendorId}/categories`, financeToken, {
+      method: 'PUT',
+      body: JSON.stringify({
+        categories: [{ slug: 'tarling', is_primary: true }, { slug: 'pendukung-acara' }]
+      })
+    });
+    const assignedBody = unwrap(assigned.body);
+    const assignedItems = Array.isArray(assignedBody?.items)
+      ? (assignedBody.items as Json[])
+      : [];
+    record(
+      'PUT /admin/vendors/:id/categories',
+      assigned.status === 200 &&
+        assignedItems.length === 2 &&
+        assignedItems[0]?.slug === 'tarling' &&
+        assignedItems[0]?.is_primary === true,
+      `status=${assigned.status} items=${assignedItems.length}`
+    );
+
+    const readCategories = await call(`/admin/vendors/${vendorId}/categories`, superToken);
+    const readCategoriesBody = unwrap(readCategories.body);
+    const readCategoryItems = Array.isArray(readCategoriesBody?.items)
+      ? (readCategoriesBody.items as Json[])
+      : [];
+    record(
+      'GET /admin/vendors/:id/categories',
+      readCategories.status === 200 && readCategoryItems.length === 2,
+      `status=${readCategories.status} items=${readCategoryItems.length}`
+    );
+
+    const unknownCategory = await call(`/admin/vendors/${vendorId}/categories`, financeToken, {
+      method: 'PUT',
+      body: JSON.stringify({ categories: [{ slug: 'tidak-ada' }] })
+    });
+    record('kategori tak dikenal ditolak', unknownCategory.status === 400, `status=${unknownCategory.status}`);
+
+    const filtered = await call('/vendors?category=tarling&page_size=50', superToken);
+    const filteredBody = unwrap(filtered.body);
+    const filteredItems = Array.isArray(filteredBody?.items)
+      ? (filteredBody.items as Json[])
+      : [];
+    record(
+      'filter kategori publik menemukan vendor',
+      filtered.status === 200 && filteredItems.some((item) => item.id === vendorId),
+      `status=${filtered.status} total=${String(filteredBody?.total)}`
     );
 
     const pkg = await call(`/admin/vendors/${vendorId}/packages`, financeToken, {

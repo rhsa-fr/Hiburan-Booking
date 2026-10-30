@@ -28,6 +28,15 @@ export function loadDotEnv(file = resolve(process.cwd(), '.env')): void {
 }
 
 
+/** `true`/`1`/`yes`/`on` enable a flag; anything else (including "false") disables it. */
+const boolFromEnv = z.preprocess((value) => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
+  }
+  return false;
+}, z.boolean());
+
 const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(3001),
@@ -36,10 +45,23 @@ const EnvSchema = z.object({
   JWT_SECRET: z.string().min(16),
   JWT_TTL_SECONDS: z.coerce.number().int().positive().default(900),
   REFRESH_TTL_DAYS: z.coerce.number().int().positive().default(30),
+  /** OTP `dev_code` is returned only when this is on AND NODE_ENV != production. */
+  OTP_DEV_MODE: boolFromEnv.default(false),
+  LOGIN_IP_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(30),
+  OTP_IP_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
+  /** Trust `X-Forwarded-For`; enable behind Railway/reverse proxies. */
+  TRUST_PROXY: boolFromEnv.default(false),
   PJP_PROVIDER: z.string().default('sandbox'),
   PJP_MERCHANT_ID: z.string().optional(),
   PJP_API_KEY: z.string().optional(),
-  PJP_WEBHOOK_SECRET: z.string().optional()
+  PJP_WEBHOOK_SECRET: z.string().optional(),
+  /** Local upload directory; relative paths resolve from the repo root. */
+  UPLOAD_DIR: z.string().default('storage/uploads'),
+  /** Optional public origin for media URLs (no trailing /v1). */
+  MEDIA_PUBLIC_BASE_URL: z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    z.string().url().optional()
+  )
 });
 
 export type AppConfig = z.infer<typeof EnvSchema>;

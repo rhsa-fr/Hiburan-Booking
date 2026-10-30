@@ -52,8 +52,9 @@ class MemoryIdempotencyStore implements IdempotencyStore {
 
   async tryClaim(request: ClaimRequest): Promise<boolean> {
     const id = this.id(request.scope, request.key, request.actorId);
-    const existing = this.rows.get(id);
-    if (existing && existing.expiresAt.getTime() > Date.now()) return false;
+    // FixedClock fixtures are older than real "now"; TTL reclaim is not part
+    // of these unit tests, so a stored row always wins the race here.
+    if (this.rows.has(id)) return false;
     this.rows.set(id, {
       requestHash: request.requestHash,
       status: 'in_progress',
@@ -491,6 +492,18 @@ describe('createDpCharge', () => {
     expect(result.payment_instruction.bank).toBe('BCA');
     expect(result.payment_instruction.va_number).toMatch(/^\d{12}$/);
   });
+
+  it.each(['gopay', 'ovo', 'dana', 'shopeepay'] as const)(
+    'rejects e-wallet method %s instead of building a fake VA',
+    async (method) => {
+      const { service, repository } = setup();
+
+      await expect(
+        service.createDpCharge('booking-1', method, { actorId: CUSTOMER })
+      ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+      expect(repository.payments.size).toBe(0);
+    }
+  );
 
   it('rejects a booking that is not accepted', async () => {
     const { service, repository } = setup();

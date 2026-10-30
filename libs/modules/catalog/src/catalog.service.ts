@@ -25,9 +25,11 @@ import type {
   PackageList,
   PackageRow,
   PolicyDocument,
+  PublicCategoryList,
   PublicVendorList,
   PublicVendorProfile,
   PublicVendorQuery,
+  VendorCategoryList,
   VendorDetail,
   VendorDecision,
   VendorSummary,
@@ -40,6 +42,7 @@ import {
   mapPublicPackages,
   mapPublicVendorCard,
   mapPublicVendorProfile,
+  mapVendorCategory,
   mapVendorDetail,
   mapVendorSummary,
   mapVerifyResult
@@ -78,6 +81,10 @@ export interface VerifyVendorInput {
   note?: string;
 }
 
+export interface SetVendorCategoriesInput {
+  categories: ReadonlyArray<{ slug: string; is_primary?: boolean }>;
+}
+
 export interface VerifyContext {
   actorId: string;
   /** `audit_logs.actor_role`; `admin_super` for this route. */
@@ -91,6 +98,9 @@ export interface CreatePackageInput {
   base_price_idr: number;
   description?: string | null;
   is_active?: boolean;
+  personnel_count?: number | null;
+  inclusions?: string[];
+  photo_url?: string | null;
 }
 
 export interface UpdatePackageInput {
@@ -99,6 +109,9 @@ export interface UpdatePackageInput {
   base_price_idr?: number;
   description?: string | null;
   is_active?: boolean;
+  personnel_count?: number | null;
+  inclusions?: string[];
+  photo_url?: string | null;
 }
 
 export interface WriteCalendarInput {
@@ -187,6 +200,61 @@ export class CatalogService {
     });
   }
 
+  /* ------------------------------------------------------- vendor categories */
+
+  async listVendorCategories(vendorId: string): Promise<VendorCategoryList> {
+    if (!(await this.repository.vendorExists(vendorId))) {
+      throw new AppError('NOT_FOUND', 'Vendor tidak ditemukan');
+    }
+    const rows = await this.repository.listVendorCategories(vendorId);
+    return { vendor_id: vendorId, items: rows.map(mapVendorCategory) };
+  }
+
+  /**
+   * Replaces the vendor's category set. Input order is preserved for the
+   * primary pick: the first `is_primary` entry wins, otherwise the first slug.
+   * Writes are atomic with the vendor lock, so a concurrent assignment cannot
+   * leave two primaries behind.
+   */
+  async setVendorCategories(
+    vendorId: string,
+    input: SetVendorCategoriesInput
+  ): Promise<VendorCategoryList> {
+    const slugs = [...new Set(input.categories.map((category) => category.slug))];
+    const primarySlug =
+      input.categories.find((category) => category.is_primary === true)?.slug ??
+      slugs[0] ??
+      null;
+
+    return withTransaction(async (client) => {
+      if (!(await this.repository.lockVendor(client, vendorId))) {
+        throw new AppError('NOT_FOUND', 'Vendor tidak ditemukan');
+      }
+
+      const found = await this.repository.categoriesBySlugs(client, slugs);
+      const bySlug = new Map(found.map((row) => [row.slug, row] as const));
+
+      const unknown = slugs.filter((slug) => !bySlug.has(slug));
+      if (unknown.length > 0) {
+        throw new AppError('VALIDATION_ERROR', `Kategori tidak dikenal: ${unknown.join(', ')}`);
+      }
+      const inactive = found
+        .filter((row) => !row.is_active)
+        .map((row) => row.slug);
+      if (inactive.length > 0) {
+        throw new AppError('VALIDATION_ERROR', `Kategori tidak aktif: ${inactive.join(', ')}`);
+      }
+
+      const categoryIds = slugs.map((slug) => bySlug.get(slug)!.id);
+      const primaryId =
+        primarySlug === null ? null : (bySlug.get(primarySlug)?.id ?? null);
+
+      await this.repository.replaceVendorCategories(client, vendorId, categoryIds, primaryId);
+      const rows = await this.repository.vendorCategoriesInTx(client, vendorId);
+      return { vendor_id: vendorId, items: rows.map(mapVendorCategory) };
+    });
+  }
+
   async verifyVendor(
     id: string,
     input: VerifyVendorInput,
@@ -268,7 +336,10 @@ export class CatalogService {
           duration_minutes: input.duration_minutes,
           base_price_idr: idrToPgParam(input.base_price_idr, 'package.base_price_idr'),
           description: input.description ?? null,
-          is_active: input.is_active ?? true
+          is_active: input.is_active ?? true,
+          personnel_count: input.personnel_count ?? null,
+          inclusions: input.inclusions ?? [],
+          photo_url: input.photo_url ?? null
         });
         return mapPackage(row);
       } catch (err) {
@@ -334,7 +405,8 @@ export class CatalogService {
   async writeCalendar(
     vendorId: string,
     input: WriteCalendarInput,
-    actorId: string
+    actorId: string,
+    source: 'admin' | 'vendor' = 'admin'
   ): Promise<CalendarWriteResult> {
     const cells = expandCalendarCells(input.from, input.to, input.sessions);
 
@@ -358,7 +430,8 @@ export class CatalogService {
         vendorId,
         plan.writes,
         input.status,
-        actorId
+        actorId,
+        source
       );
       await this.repository.touchCalendar(client, vendorId);
       return { updated };
@@ -371,6 +444,10 @@ export class CatalogService {
     const { rows, total } = await this.repository.publicVendorPage({
       q: input.q,
       region: input.region,
+      category: input.category,
+      date: input.date,
+      session: input.session,
+      sort: input.sort,
       limit: input.page_size,
       offset: (input.page - 1) * input.page_size
     });
@@ -379,6 +456,17 @@ export class CatalogService {
       total,
       page: input.page,
       page_size: input.page_size
+    };
+  }
+
+  async listPublicCategories(): Promise<PublicCategoryList> {
+    const rows = await this.repository.publicCategories();
+    return {
+      items: rows.map((row) => ({
+        slug: row.slug,
+        name: row.name,
+        sort_order: row.sort_order
+      }))
     };
   }
 

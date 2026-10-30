@@ -23,7 +23,11 @@ import {
   type JournalEntryDraft,
   type JournalQueryClient
 } from '@tarlink/modules/ledger';
-import { IdempotencyService, type IdempotencyStore } from '@tarlink/platform/idempotency';
+import {
+  IdempotencyService,
+  hashRequest,
+  type IdempotencyStore
+} from '@tarlink/platform/idempotency';
 import type { BookingPaymentPort } from './booking.port';
 import {
   PAYMENT_METHODS,
@@ -39,6 +43,18 @@ const PAID_EVENT_TYPES = new Set(['payment.paid', 'payment.succeeded', 'payment.
 const IDEMPOTENCY_TTL_SECONDS = 24 * 60 * 60;
 /** `payments.method` values the manual settlement path may write. */
 const SETTLE_MANUAL_METHODS = new Set(['transfer_manual', 'cash']);
+/**
+ * Rails with a real instruction builder. E-wallet is declared in the enum/DDL
+ * but has no deeplink instruction yet; accepting it used to produce a bogus VA
+ * (`gopay` → bank "AY"), so it is rejected until the gateway supports it.
+ */
+const SUPPORTED_DP_METHODS = new Set<PaymentMethod>([
+  'qris',
+  'va_bca',
+  'va_bni',
+  'va_bri',
+  'va_mandiri'
+]);
 /** `audit_logs.request_id` is VARCHAR(40); an oversized header must not fail a write. */
 const REQUEST_ID_MAX_LENGTH = 40;
 
@@ -199,17 +215,7 @@ export interface RefundAdvanceResult {
 }
 
 /** Stable JSON for idempotency request hashing (§7.5 step 2). */
-export function hashRequest(payload: unknown): string {
-  return createHash('sha256').update(canonicalJson(payload)).digest('hex');
-}
-
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
-  if (Array.isArray(value)) return `[${value.map((item) => canonicalJson(item)).join(',')}]`;
-  const record = value as Record<string, unknown>;
-  const keys = Object.keys(record).sort();
-  return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(',')}}`;
-}
+export { hashRequest };
 
 /** Money leaves the process as a JSON number only when it is exactly representable. */
 function jsonRupiah(value: bigint): number {
@@ -270,6 +276,12 @@ export class PaymentService {
     if (!bookingId) throw new AppError('VALIDATION_ERROR', 'bookingId is required');
     if (!PAYMENT_METHODS.includes(method)) {
       throw new AppError('VALIDATION_ERROR', `unsupported payment method: ${String(method)}`);
+    }
+    if (!SUPPORTED_DP_METHODS.has(method)) {
+      throw new AppError(
+        'VALIDATION_ERROR',
+        'Metode e-wallet belum tersedia. Gunakan QRIS atau virtual account.'
+      );
     }
     // Money operations always carry the identity of the verified token.
     const actorId = opts.actorId ?? null;
@@ -1023,12 +1035,20 @@ export class PaymentService {
         expires_at: expiresAt
       };
     }
-    const bank = payment.method.slice(3).toUpperCase();
-    const digest = createHash('sha256').update(payment.id).digest('hex');
-    const vaNumber = (BigInt(`0x${digest}`) % 1_000_000_000_000n)
-      .toString()
-      .padStart(12, '0');
-    return { type: 'va', va_number: vaNumber, bank, expires_at: expiresAt };
+    if (payment.method.startsWith('va_')) {
+      const bank = payment.method.slice(3).toUpperCase();
+      const digest = createHash('sha256').update(payment.id).digest('hex');
+      const vaNumber = (BigInt(`0x${digest}`) % 1_000_000_000_000n)
+        .toString()
+        .padStart(12, '0');
+      return { type: 'va', va_number: vaNumber, bank, expires_at: expiresAt };
+    }
+    // Defensive: createDpCharge rejects unsupported rails, so a stored row with
+    // no instruction builder is a data problem, never a valid instruction.
+    throw new AppError(
+      'INTERNAL_ERROR',
+      `Metode pembayaran tidak didukung: ${String(payment.method)}`
+    );
   }
 
   private verifySignature(raw: Buffer, signature: string, timestamp?: string | number): void {

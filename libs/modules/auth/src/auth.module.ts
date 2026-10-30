@@ -34,7 +34,11 @@ import { GoogleTokenInfoVerifier } from './google-verifier';
           repository: new PgAuthRepository(),
           jwtSecret: cfg.JWT_SECRET,
           jwtTtlSeconds: cfg.JWT_TTL_SECONDS,
+          refreshTtlSeconds: cfg.REFRESH_TTL_DAYS * 24 * 60 * 60,
           nodeEnv: cfg.NODE_ENV,
+          otpDevMode: cfg.OTP_DEV_MODE,
+          loginIpRateLimitMax: cfg.LOGIN_IP_RATE_LIMIT_MAX,
+          otpIpRateLimitMax: cfg.OTP_IP_RATE_LIMIT_MAX,
           googleVerifier: googleClientId ? new GoogleTokenInfoVerifier(googleClientId) : null
         });
       }

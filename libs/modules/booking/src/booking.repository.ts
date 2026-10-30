@@ -19,6 +19,10 @@ import type {
   StatusAxis
 } from './state-machine';
 
+function isForeignKeyViolation(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === '23503';
+}
+
 export type BookingRow = {
   id: string;
   code: string;
@@ -158,6 +162,24 @@ export type AddonRow = {
   max_qty: number;
 };
 
+export type PolicyVersionRow = {
+  id: string;
+  code: string;
+  version: number;
+  body: unknown;
+  body_hash: string;
+  effective_from: Date;
+  effective_to: Date | null;
+  is_active: boolean;
+};
+
+export interface TermsSnapshotInput {
+  bookingId: string;
+  policyVersionId: string;
+  terms: unknown;
+  termsHash: string;
+}
+
 export type AutoCompletableRow = {
   id: string;
   vendor_id: string;
@@ -205,6 +227,7 @@ export interface NewBookingRecord {
   pricingSnapshot: Record<string, unknown>;
   policyVersionId: string;
   respondDeadline: Date;
+  clientGeneratedId: string | null;
 }
 
 export interface NewBookingAddon {
@@ -303,6 +326,37 @@ export class BookingRepository {
     return rows.rows[0] ?? null;
   }
 
+  /** D-12: the booking freezes the policy version that was effective at creation. */
+  async findPolicyVersion(
+    client: PoolClient,
+    policyVersionId: string
+  ): Promise<PolicyVersionRow | null> {
+    const rows = await client.query<PolicyVersionRow>(
+      `SELECT id, code, version, body, body_hash,
+              effective_from, effective_to, is_active
+         FROM policy_versions
+        WHERE id = $1`,
+      [policyVersionId]
+    );
+    return rows.rows[0] ?? null;
+  }
+
+  async insertTermsSnapshot(client: PoolClient, input: TermsSnapshotInput): Promise<void> {
+    try {
+      await client.query(
+        `INSERT INTO booking_terms_snapshot
+           (booking_id, policy_version_id, terms, terms_hash)
+         VALUES ($1, $2, $3::jsonb, $4)`,
+        [input.bookingId, input.policyVersionId, JSON.stringify(input.terms), input.termsHash]
+      );
+    } catch (err) {
+      if (isForeignKeyViolation(err)) {
+        throw new AppError('VALIDATION_ERROR', 'Referensi kebijakan tidak valid');
+      }
+      throw err;
+    }
+  }
+
   async findPackage(
     client: PoolClient,
     vendorId: string,
@@ -360,85 +414,109 @@ export class BookingRepository {
   }
 
   async insertEvent(client: PoolClient, event: NewEventRecord): Promise<{ id: string; code: string }> {
-    const rows = await client.query<{ id: string; code: string }>(
-      `INSERT INTO events
-         (code, customer_id, title, event_type, region_code, venue_name, venue_address,
-          venue_location, start_date, end_date, guest_estimate, notes)
-       VALUES
-         ($1, $2, $3, $4, $5, $6, $7,
-          CASE WHEN $8::float8 IS NULL OR $9::float8 IS NULL
-               THEN NULL
-               ELSE ST_SetSRID(ST_MakePoint($8::float8, $9::float8), 4326)
-          END,
-          $10::date, $11::date, $12, $13)
-       RETURNING id, code`,
-      [
-        event.code,
-        event.customerId,
-        event.title,
-        event.eventType,
-        event.regionCode,
-        event.venueName,
-        event.venueAddress,
-        event.longitude,
-        event.latitude,
-        event.startDate,
-        event.endDate,
-        event.guestEstimate,
-        event.notes
-      ]
-    );
+    let rows: { rows: { id: string; code: string }[] };
+    try {
+      rows = await client.query<{ id: string; code: string }>(
+        `INSERT INTO events
+           (code, customer_id, title, event_type, region_code, venue_name, venue_address,
+            venue_location, start_date, end_date, guest_estimate, notes)
+         VALUES
+           ($1, $2, $3, $4, $5, $6, $7,
+            CASE WHEN $8::float8 IS NULL OR $9::float8 IS NULL
+                 THEN NULL
+                 ELSE ST_SetSRID(ST_MakePoint($8::float8, $9::float8), 4326)
+            END,
+            $10::date, $11::date, $12, $13)
+         RETURNING id, code`,
+        [
+          event.code,
+          event.customerId,
+          event.title,
+          event.eventType,
+          event.regionCode,
+          event.venueName,
+          event.venueAddress,
+          event.longitude,
+          event.latitude,
+          event.startDate,
+          event.endDate,
+          event.guestEstimate,
+          event.notes
+        ]
+      );
+    } catch (err) {
+      if (isForeignKeyViolation(err)) {
+        throw new AppError('VALIDATION_ERROR', 'Referensi wilayah atau pelanggan tidak valid');
+      }
+      throw err;
+    }
     const row = rows.rows[0];
     if (!row) throw new AppError('INTERNAL_ERROR', 'Gagal menyimpan event');
     return row;
   }
 
   async insertBooking(client: PoolClient, record: NewBookingRecord): Promise<BookingRow> {
-    const rows = await client.query<BookingRow>(
-      `INSERT INTO bookings
-         (code, customer_id, vendor_id, event_id, package_id, currency,
-          price_package_idr, price_addons_idr, price_transport_idr, service_fee_idr, discount_idr,
-          commission_bp, commission_threshold_idr, commission_bp_tier2,
-          commission_min_idr, commission_cap_idr,
-          commission_tier1_idr, commission_tier2_idr, commission_idr,
-          total_customer_idr, dp_amount_idr, vendor_entitlement_idr,
-          pricing_snapshot, policy_version_id, respond_deadline)
-       VALUES
-         ($1, $2, $3, $4, $5, 'IDR',
-          $6, $7, $8, $9, $10,
-          $11, $12, $13,
-          $14, $15,
-          $16, $17, $18,
-          $19, $20, $21,
-          $22::jsonb, $23, $24)
-       RETURNING *`,
-      [
-        record.code,
-        record.customerId,
-        record.vendorId,
-        record.eventId,
-        record.packageId,
-        record.pricePackageIdr.toString(),
-        record.priceAddonsIdr.toString(),
-        record.priceTransportIdr.toString(),
-        record.serviceFeeIdr.toString(),
-        record.discountIdr.toString(),
-        record.commissionBp,
-        record.commissionThresholdIdr.toString(),
-        record.commissionBpTier2,
-        record.commissionMinIdr.toString(),
-        record.commissionCapIdr.toString(),
-        record.commissionTier1Idr.toString(),
-        record.commissionTier2Idr.toString(),
-        record.commissionIdr.toString(),
-        record.totalCustomerIdr.toString(),
-        record.dpAmountIdr.toString(),
-        record.vendorEntitlementIdr.toString(),
-        JSON.stringify(record.pricingSnapshot),
-        record.policyVersionId,
-        record.respondDeadline
-      ]
-    );
+    let rows: { rows: BookingRow[] };
+    try {
+      rows = await client.query<BookingRow>(
+        `INSERT INTO bookings
+           (code, customer_id, vendor_id, event_id, package_id, currency,
+            price_package_idr, price_addons_idr, price_transport_idr, service_fee_idr, discount_idr,
+            commission_bp, commission_threshold_idr, commission_bp_tier2,
+            commission_min_idr, commission_cap_idr,
+            commission_tier1_idr, commission_tier2_idr, commission_idr,
+            total_customer_idr, dp_amount_idr, vendor_entitlement_idr,
+            pricing_snapshot, policy_version_id, respond_deadline, client_generated_id)
+         VALUES
+           ($1, $2, $3, $4, $5, 'IDR',
+            $6, $7, $8, $9, $10,
+            $11, $12, $13,
+            $14, $15,
+            $16, $17, $18,
+            $19, $20, $21,
+            $22::jsonb, $23, $24, $25)
+         RETURNING *`,
+        [
+          record.code,
+          record.customerId,
+          record.vendorId,
+          record.eventId,
+          record.packageId,
+          record.pricePackageIdr.toString(),
+          record.priceAddonsIdr.toString(),
+          record.priceTransportIdr.toString(),
+          record.serviceFeeIdr.toString(),
+          record.discountIdr.toString(),
+          record.commissionBp,
+          record.commissionThresholdIdr.toString(),
+          record.commissionBpTier2,
+          record.commissionMinIdr.toString(),
+          record.commissionCapIdr.toString(),
+          record.commissionTier1Idr.toString(),
+          record.commissionTier2Idr.toString(),
+          record.commissionIdr.toString(),
+          record.totalCustomerIdr.toString(),
+          record.dpAmountIdr.toString(),
+          record.vendorEntitlementIdr.toString(),
+          JSON.stringify(record.pricingSnapshot),
+          record.policyVersionId,
+          record.respondDeadline,
+          record.clientGeneratedId
+        ]
+      );
+    } catch (err) {
+      if (isForeignKeyViolation(err)) {
+        throw new AppError('VALIDATION_ERROR', 'Referensi booking tidak valid');
+      }
+      const pg = err as { code?: unknown; constraint?: unknown };
+      if (
+        pg.code === '23505' &&
+        pg.constraint === 'bookings_client_generated_uniq'
+      ) {
+        throw new AppError('CONFLICT', 'Booking dengan client_generated_id ini sudah ada');
+      }
+      throw err;
+    }
     const row = rows.rows[0];
     if (!row) throw new AppError('INTERNAL_ERROR', 'Gagal menyimpan booking');
     return row;

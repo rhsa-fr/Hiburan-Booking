@@ -20,7 +20,8 @@ import type {
   NewOtpRequest,
   NewSession,
   NewUser,
-  OtpRequestRecord
+  OtpRequestRecord,
+  SessionRefreshRecord
 } from './auth.repository';
 import type { GoogleIdentity, GoogleTokenVerifier } from './google-verifier';
 import { GoogleTokenInfoVerifier } from './google-verifier';
@@ -66,6 +67,12 @@ class FakeAuthRepository implements AuthRepository {
 
   async countRecentOtpRequests(phone: string, since: Date): Promise<number> {
     return this.otpRequests.filter((row) => row.phone === phone && row.createdAt >= since).length;
+  }
+
+  async countRecentOtpRequestsByIp(ip: string, since: Date): Promise<number> {
+    return this.otpRequests.filter(
+      (row) => row.requesterIp === ip && row.createdAt >= since
+    ).length;
   }
 
   async insertOtpRequest(input: NewOtpRequest): Promise<void> {
@@ -180,6 +187,12 @@ class FakeAuthRepository implements AuthRepository {
     ).length;
   }
 
+  async countFailedLoginAttemptsByIp(ip: string, since: Date): Promise<number> {
+    return this.loginAttempts.filter(
+      (row) => row.ip === ip && !row.succeeded && row.createdAt >= since
+    ).length;
+  }
+
   async recordLoginAttempt(input: NewLoginAttempt): Promise<void> {
     this.loginAttempts.push({ ...input });
   }
@@ -216,6 +229,44 @@ class FakeAuthRepository implements AuthRepository {
     for (const session of targets) session.revokedAt = at;
     return targets.length;
   }
+
+  async findSessionByRefreshHash(
+    refreshTokenHash: string
+  ): Promise<SessionRefreshRecord | null> {
+    const row = this.sessions.find((session) => session.refreshTokenHash === refreshTokenHash);
+    if (!row) return null;
+    return {
+      jti: row.jti,
+      userId: row.userId,
+      familyId: row.familyId,
+      revokedAt: row.revokedAt,
+      refreshExpiresAt: row.refreshExpiresAt
+    };
+  }
+
+  async markSessionRotated(jti: string, at: Date): Promise<boolean> {
+    const row = this.sessions.find((session) => session.jti === jti && !session.revokedAt);
+    if (!row) return false;
+    row.revokedAt = at;
+    return true;
+  }
+
+  async revokeFamily(familyId: string, at: Date): Promise<number> {
+    const active = this.sessions.filter(
+      (session) => session.familyId === familyId && !session.revokedAt
+    );
+    for (const session of active) session.revokedAt = at;
+    return active.length;
+  }
+
+  async revokeByRefreshHash(refreshTokenHash: string, at: Date): Promise<number> {
+    const row = this.sessions.find(
+      (session) => session.refreshTokenHash === refreshTokenHash && !session.revokedAt
+    );
+    if (!row) return 0;
+    row.revokedAt = at;
+    return 1;
+  }
 }
 
 interface Harness {
@@ -234,6 +285,7 @@ function makeHarness(overrides: Partial<AuthServiceDeps> = {}): Harness {
     jwtSecret: SECRET,
     jwtTtlSeconds: 900,
     nodeEnv: 'test',
+    otpDevMode: true,
     now: () => current,
     newId: () => {
       sequence += 1;
@@ -1083,5 +1135,84 @@ describe('AuthController.me / refresh', () => {
     await expect(controller.refresh({ headers: {} })).rejects.toMatchObject({
       code: 'UNAUTHENTICATED'
     });
+  });
+});
+
+describe('AuthService refresh token + IP limits', () => {
+  const EMAIL = 'refresh@tarlink.id';
+  const PASSWORD = 'kata-sandi-2026';
+
+  async function signedIn(overrides: Partial<AuthServiceDeps> = {}) {
+    const harness = makeHarness(overrides);
+    addUser(harness.repository, ['customer'], {
+      email: EMAIL,
+      passwordHash: await hashPassword(PASSWORD)
+    });
+    const login = await harness.service.loginWithPassword({ email: EMAIL, password: PASSWORD });
+    return { ...harness, login };
+  }
+
+  it('stores only the refresh hash and returns an opaque token', async () => {
+    const { repository, login } = await signedIn();
+
+    expect(login.refresh_token.length).toBeGreaterThanOrEqual(32);
+    expect(repository.sessions).toHaveLength(1);
+    expect(repository.sessions[0]?.refreshTokenHash).toHaveLength(64);
+    expect(repository.sessions[0]?.refreshTokenHash).not.toBe(login.refresh_token);
+  });
+
+  it('rotates the refresh token and keeps one active session', async () => {
+    const { repository, service, login } = await signedIn();
+
+    const refreshed = await service.refreshWithToken(login.refresh_token);
+    expect(refreshed.refresh_token).not.toBe(login.refresh_token);
+    expect(refreshed.access_token).not.toBe(login.access_token);
+    const active = repository.sessions.filter((session) => session.revokedAt === null);
+    expect(active).toHaveLength(1);
+  });
+
+  it('revokes the whole family when a rotated token is replayed', async () => {
+    const { repository, service, login } = await signedIn();
+
+    await service.refreshWithToken(login.refresh_token);
+    await expect(service.refreshWithToken(login.refresh_token)).rejects.toMatchObject({
+      code: 'UNAUTHENTICATED'
+    });
+    expect(repository.sessions.every((session) => session.revokedAt !== null)).toBe(true);
+  });
+
+  it('rejects a refresh token after its TTL', async () => {
+    const { service, login, advance } = await signedIn({ refreshTtlSeconds: 60 });
+
+    advance(61);
+    await expect(service.refreshWithToken(login.refresh_token)).rejects.toMatchObject({
+      code: 'UNAUTHENTICATED'
+    });
+  });
+
+  it('limits failed logins from one IP across different emails', async () => {
+    const { service } = makeHarness({ loginIpRateLimitMax: 2 });
+    const attempt = (email: string) =>
+      service.loginWithPassword({ email, password: 'salah-sekali', ip: '203.0.113.9' });
+
+    await expect(attempt('a@tarlink.id')).rejects.toMatchObject({ code: 'UNAUTHENTICATED' });
+    await expect(attempt('b@tarlink.id')).rejects.toMatchObject({ code: 'UNAUTHENTICATED' });
+    await expect(attempt('c@tarlink.id')).rejects.toMatchObject({ code: 'RATE_LIMITED' });
+  });
+
+  it('limits OTP requests from one IP', async () => {
+    const { service } = makeHarness({ otpIpRateLimitMax: 2 });
+    const request = (phone: string) =>
+      service.requestOtp({ phone, ip: '203.0.113.10' });
+
+    await request('081200000001');
+    await request('081200000002');
+    await expect(request('081200000003')).rejects.toMatchObject({ code: 'RATE_LIMITED' });
+  });
+
+  it('omits dev_code when OTP_DEV_MODE is off', async () => {
+    const { service } = makeHarness({ nodeEnv: 'development', otpDevMode: false });
+    const result = await service.requestOtp({ phone: '08123456789' });
+    expect(result).not.toHaveProperty('dev_code');
   });
 });

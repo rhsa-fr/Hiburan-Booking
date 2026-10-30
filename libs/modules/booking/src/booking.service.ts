@@ -1,8 +1,13 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { randomBytes } from 'crypto';
 import type { PoolClient } from 'pg';
 import { withTransaction } from '../../../../apps/api/src/core/db';
 import { AppError } from '../../../../apps/api/src/core/errors';
+import {
+  IdempotencyService,
+  hashRequest,
+  type IdempotencyStore
+} from '../../../platform/idempotency/src/index';
 import {
   computeCommission,
   DEFAULT_COMMISSION
@@ -38,6 +43,22 @@ import {
 } from './state-machine';
 
 const HOUR_MS = 60 * 60 * 1000;
+export const BOOKING_IDEMPOTENCY_STORE = 'BOOKING_IDEMPOTENCY_STORE';
+export const BOOKING_IDEMPOTENCY_SCOPE = 'POST /v1/bookings';
+const IDEMPOTENCY_TTL_SECONDS = 24 * 60 * 60;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function uuidOrNull(value: string | null | undefined): string | null {
+  return typeof value === 'string' && UUID_PATTERN.test(value) ? value : null;
+}
+
+/** A 23505 on `<table>_code_key` means the random booking/event code collided. */
+function isCodeCollision(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  if ((err as { code?: unknown }).code !== '23505') return false;
+  const constraint = (err as { constraint?: unknown }).constraint;
+  return typeof constraint === 'string' && constraint.endsWith('_code_key');
+}
 
 /**
  * platform_settings is not part of this packet. The values below are the
@@ -307,7 +328,10 @@ function decodeCursor(cursor: string | undefined): { createdAt: Date; id: string
 export class BookingService {
   constructor(
     @Inject(BookingRepository) private readonly repo: BookingRepository,
-    @Inject(CalendarService) private readonly calendar: CalendarService
+    @Inject(CalendarService) private readonly calendar: CalendarService,
+    @Optional()
+    @Inject(BOOKING_IDEMPOTENCY_STORE)
+    private readonly idempotencyStore?: IdempotencyStore
   ) {}
 
   /**
@@ -317,10 +341,13 @@ export class BookingService {
   async createBooking(
     input: CreateBookingDto,
     user: AuthUser,
-    now: Date = new Date()
+    now: Date = new Date(),
+    fallbackClientId: string | null = null
   ): Promise<BookingView> {
     const role = requireRole(user, ['customer']);
     const uniqueSlots = this.assertUniqueSlots(input);
+    const clientGeneratedId =
+      uuidOrNull(input.client_generated_id) ?? uuidOrNull(fallbackClientId);
 
     const row = await withTransaction(async (client) => {
       const vendor = await this.repo.findVendor(client, input.vendor_id);
@@ -332,6 +359,19 @@ export class BookingService {
       const pkg = await this.repo.findPackage(client, input.vendor_id, input.package_id);
       if (!pkg) throw new AppError('NOT_FOUND', `Paket ${input.package_id} tidak ditemukan`);
       if (!pkg.is_active) throw new AppError('CONFLICT', 'Paket tidak aktif');
+
+      // D-12: only an existing, currently effective policy version may be frozen.
+      const policy = await this.repo.findPolicyVersion(client, input.policy_version_id);
+      if (!policy) {
+        throw new AppError('NOT_FOUND', 'Versi kebijakan tidak ditemukan');
+      }
+      if (
+        !policy.is_active ||
+        policy.effective_from.getTime() > now.getTime() ||
+        (policy.effective_to !== null && policy.effective_to.getTime() <= now.getTime())
+      ) {
+        throw new AppError('VALIDATION_ERROR', 'Versi kebijakan tidak berlaku');
+      }
 
       const basePriceIdr = BigInt(pkg.base_price_idr);
       const priceRule = await this.repo.findPriceRule(
@@ -368,8 +408,7 @@ export class BookingService {
         { actor: role, now }
       );
 
-      const event = await this.repo.insertEvent(client, {
-        code: codeFor('EV', now),
+      const eventInput = {
         customerId: user.id,
         title: input.event.title,
         eventType: input.event.event_type ?? null,
@@ -382,7 +421,23 @@ export class BookingService {
         endDate: input.event.end_date,
         guestEstimate: input.event.guest_estimate ?? null,
         notes: input.event.notes ?? null
-      });
+      };
+
+      let event: { id: string; code: string } | null = null;
+      for (let attempt = 0; attempt < 3 && event === null; attempt += 1) {
+        try {
+          event = await this.repo.insertEvent(client, {
+            ...eventInput,
+            code: codeFor('EV', now)
+          });
+        } catch (err) {
+          if (attempt < 2 && isCodeCollision(err)) continue;
+          throw err;
+        }
+      }
+      if (event === null) {
+        throw new AppError('INTERNAL_ERROR', 'Gagal membuat kode event unik');
+      }
 
       const pricingSnapshot: Record<string, unknown> = {
         base_price_idr: basePriceIdr.toString(),
@@ -394,8 +449,7 @@ export class BookingService {
         dp_rate_percent: DP_RATE_PERCENT.toString()
       };
 
-      const booking = await this.repo.insertBooking(client, {
-        code: codeFor('BK', now),
+      const bookingInput = {
         customerId: user.id,
         vendorId: vendor.id,
         eventId: event.id,
@@ -418,7 +472,32 @@ export class BookingService {
         vendorEntitlementIdr,
         pricingSnapshot,
         policyVersionId: input.policy_version_id,
-        respondDeadline
+        respondDeadline,
+        clientGeneratedId
+      };
+
+      let booking: BookingRow | null = null;
+      for (let attempt = 0; attempt < 3 && booking === null; attempt += 1) {
+        try {
+          booking = await this.repo.insertBooking(client, {
+            ...bookingInput,
+            code: codeFor('BK', now)
+          });
+        } catch (err) {
+          if (attempt < 2 && isCodeCollision(err)) continue;
+          throw err;
+        }
+      }
+      if (booking === null) {
+        throw new AppError('INTERNAL_ERROR', 'Gagal membuat kode booking unik');
+      }
+
+      const terms = { code: policy.code, version: policy.version, body: policy.body };
+      await this.repo.insertTermsSnapshot(client, {
+        bookingId: booking.id,
+        policyVersionId: policy.id,
+        terms,
+        termsHash: hashRequest(terms)
       });
 
       await this.repo.insertBookingAddons(client, booking.id, addons);
@@ -447,6 +526,36 @@ export class BookingService {
 
     const slots = await this.repo.findSlotsByBooking(row.id);
     return this.toView(row, slots);
+  }
+
+  /**
+   * §7.5 / D-11: the HTTP entrypoint wraps creation in the idempotency store.
+   * A replay with the same key and payload returns the stored booking instead
+   * of creating a second row; the store hashes the parsed DTO.
+   */
+  async createBookingIdempotent(
+    input: CreateBookingDto,
+    user: AuthUser,
+    idempotency: { key: string; requestHash: string }
+  ): Promise<{ booking: BookingView; replayed: boolean }> {
+    if (!this.idempotencyStore) {
+      throw new AppError('INTERNAL_ERROR', 'Idempotency store tidak tersedia');
+    }
+
+    const service = new IdempotencyService(this.idempotencyStore, {
+      actorId: user.id,
+      ttlSeconds: IDEMPOTENCY_TTL_SECONDS
+    });
+
+    const result = await service.runWithMeta(
+      idempotency.key,
+      BOOKING_IDEMPOTENCY_SCOPE,
+      idempotency.requestHash,
+      () => this.createBooking(input, user, new Date(), uuidOrNull(idempotency.key)),
+      { responseStatus: 201 }
+    );
+
+    return { booking: result.value, replayed: result.replayed };
   }
 
   /** L-03: blocks the slot and starts the D-18 payment countdown. */

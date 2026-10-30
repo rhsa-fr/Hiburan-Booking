@@ -13,6 +13,7 @@ import { BookingModule } from '@tarlink/modules/booking';
 import { AuthModule } from '@tarlink/modules/auth';
 import { CatalogModule } from '@tarlink/modules/catalog';
 import { PaymentModule } from '@tarlink/modules/payment';
+import { VendorPortalModule } from '@tarlink/modules/vendor-portal';
 import { AuthGuard, JWT_SECRET, RolesGuard } from '@tarlink/platform/auth';
 import { IdempotencyService, PgIdempotencyStore } from '@tarlink/platform/idempotency';
 import { SystemClock } from '@tarlink/platform/clock';
@@ -54,6 +55,14 @@ class AllExceptionsFilter implements ExceptionFilter {
       code = status === 400 ? 'VALIDATION_ERROR' : status === 401 ? 'UNAUTHENTICATED' : status === 403 ? 'FORBIDDEN' : status === 404 ? 'NOT_FOUND' : status === 409 ? 'CONFLICT' : status === 429 ? 'RATE_LIMITED' : 'INTERNAL_ERROR';
       const body = exception.getResponse();
       message = typeof body === 'string' ? body : ((body as { message?: string })?.message ?? message);
+    } else if (exception instanceof Error && exception.name === 'MulterError') {
+      status = 400;
+      code = 'VALIDATION_ERROR';
+      const multerCode = (exception as Error & { code?: string }).code;
+      message =
+        multerCode === 'LIMIT_FILE_SIZE'
+          ? 'Ukuran gambar maksimal 5 MB'
+          : 'Upload gambar tidak valid';
     } else if (exception instanceof Error) {
       message = exception.message;
     }
@@ -70,7 +79,7 @@ class AllExceptionsFilter implements ExceptionFilter {
 }
 
 @Module({
-  imports: [AuthModule, AdminModule, CatalogModule, BookingModule, PaymentModule],
+  imports: [AuthModule, AdminModule, CatalogModule, BookingModule, PaymentModule, VendorPortalModule],
   controllers: [HealthController],
   providers: [
     RolesGuard,

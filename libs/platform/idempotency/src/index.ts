@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { AppError } from '@tarlink/core/errors';
 import { SystemClock, type Clock } from '@tarlink/platform/clock';
@@ -227,6 +228,31 @@ function validateHash(requestHash: string): void {
   }
 }
 
+/** Stable JSON (sorted object keys) so equal payloads hash equal. */
+export function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (Array.isArray(value)) return `[${value.map((item) => canonicalJson(item)).join(',')}]`;
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(',')}}`;
+}
+
+/** sha256 over the canonical JSON form of a request payload (§7.5 step 2). */
+export function hashRequest(payload: unknown): string {
+  return createHash('sha256').update(canonicalJson(payload)).digest('hex');
+}
+
+export interface IdempotencyRunOptions {
+  /** HTTP status persisted with the response; defaults to 200. */
+  responseStatus?: number;
+}
+
+export interface IdempotencyRunResult<T> {
+  value: T;
+  replayed: boolean;
+  responseStatus: number;
+}
+
 export class IdempotencyService {
   private readonly ttlSeconds: number;
   private readonly lockSeconds: number;
@@ -249,12 +275,29 @@ export class IdempotencyService {
     requestHash: string,
     fn: () => Promise<T>
   ): Promise<T> {
+    const result = await this.runWithMeta(key, endpoint, requestHash, fn);
+    return result.value;
+  }
+
+  /**
+   * Like `run`, but also reports whether the response was replayed and which
+   * HTTP status was persisted. Callers use this to set `Idempotency-Replayed`
+   * and to store 201 for create endpoints.
+   */
+  async runWithMeta<T>(
+    key: string,
+    endpoint: string,
+    requestHash: string,
+    fn: () => Promise<T>,
+    options: IdempotencyRunOptions = {}
+  ): Promise<IdempotencyRunResult<T>> {
     validateKey(key);
     validateHash(requestHash);
     if (typeof endpoint !== 'string' || endpoint.length === 0) {
       throw new AppError('VALIDATION_ERROR', 'Idempotency scope (endpoint) is required');
     }
 
+    const responseStatus = options.responseStatus ?? DEFAULT_RESPONSE_STATUS;
     const now = this.clock.now();
     const claimed = await this.store.tryClaim({
       scope: endpoint,
@@ -283,7 +326,11 @@ export class IdempotencyService {
 
       if (record.status === 'completed') {
         // Stored JSON response; the generic T is the handler's own result shape.
-        return record.responseBody as T;
+        return {
+          value: record.responseBody as T,
+          replayed: true,
+          responseStatus: record.responseStatus ?? responseStatus
+        };
       }
 
       if (record.status === 'in_progress') {
@@ -303,14 +350,8 @@ export class IdempotencyService {
 
     try {
       const result = await fn();
-      await this.store.complete(
-        endpoint,
-        key,
-        this.actorId,
-        DEFAULT_RESPONSE_STATUS,
-        result
-      );
-      return result;
+      await this.store.complete(endpoint, key, this.actorId, responseStatus, result);
+      return { value: result, replayed: false, responseStatus };
     } catch (err) {
       try {
         await this.store.fail(

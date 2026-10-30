@@ -2,14 +2,18 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   HttpCode,
   Param,
   Post,
   Query,
+  Res,
   UseGuards,
   UseInterceptors
 } from '@nestjs/common';
+import { AppError } from '../../../../apps/api/src/core/errors';
 import { AuthGuard, Roles, RolesGuard } from '../../../platform/auth/src/index';
+import { hashRequest } from '../../../platform/idempotency/src/index';
 import { BookingService } from './booking.service';
 import { CurrentUser, type AuthUser } from './current-user.decorator';
 import {
@@ -39,9 +43,26 @@ export class BookingController {
   @Post('bookings')
   @HttpCode(201)
   @Roles('customer')
-  async create(@Body() body: unknown, @CurrentUser() user: AuthUser) {
+  async create(
+    @Body() body: unknown,
+    @CurrentUser() user: AuthUser,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @Res({ passthrough: true }) res: { setHeader(name: string, value: string): void }
+  ) {
     const dto = parseInput(createBookingSchema, body);
-    return { data: await this.bookings.createBooking(dto, user) };
+    // §7.5: the header is preferred; the body field is the documented fallback
+    // so older clients can still get an idempotent create in this release.
+    const key = (idempotencyKey ?? '').trim() || dto.client_generated_id;
+    if (!key) {
+      throw new AppError('VALIDATION_ERROR', 'Idempotency-Key wajib (16–80 karakter)');
+    }
+
+    const result = await this.bookings.createBookingIdempotent(dto, user, {
+      key,
+      requestHash: hashRequest(dto)
+    });
+    if (result.replayed) res.setHeader('Idempotency-Replayed', 'true');
+    return { data: result.booking };
   }
 
   /**

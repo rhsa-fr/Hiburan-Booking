@@ -9,8 +9,10 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
 import { z } from 'zod';
 import { AppError } from '@tarlink/core/errors';
+import { isIsoDate } from './calendar-plan';
 import type {
   PolicyDocument,
+  PublicCategoryList,
   PublicVendorList,
   PublicVendorProfile,
   PublicVendorQuery
@@ -45,6 +47,30 @@ const VENDOR_LIST_QUERY = z
         .regex(/^[0-9]{1,10}$/, 'region harus kode wilayah angka')
         .optional()
     ),
+    category: z.preprocess(
+      (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+      z
+        .string()
+        .trim()
+        .regex(/^[a-z0-9-]{1,50}$/, 'category harus slug')
+        .optional()
+    ),
+    date: z.preprocess(
+      (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+      z
+        .string()
+        .trim()
+        .refine((value) => isIsoDate(value), 'date harus YYYY-MM-DD')
+        .optional()
+    ),
+    session: z.preprocess(
+      (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+      z.enum(['day', 'night', 'full']).optional()
+    ),
+    sort: z.preprocess(
+      (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+      z.enum(['rating', 'price_asc', 'name_asc']).default('rating')
+    ),
     page: pageNumber(1),
     page_size: pageNumber(20, 50)
   })
@@ -64,6 +90,10 @@ function parseListQuery(query: unknown): PublicVendorQuery {
   return {
     q: parsed.data.q === undefined ? null : parsed.data.q,
     region: parsed.data.region === undefined ? null : parsed.data.region,
+    category: parsed.data.category === undefined ? null : parsed.data.category,
+    date: parsed.data.date === undefined ? null : parsed.data.date,
+    session: parsed.data.session === undefined ? null : parsed.data.session,
+    sort: parsed.data.sort,
     page: parsed.data.page,
     page_size: parsed.data.page_size
   };
@@ -76,6 +106,11 @@ export class PublicCatalogController {
   @Get('vendors')
   async vendors(@Query() query: unknown): Promise<PublicVendorList> {
     return this.catalog.listPublicVendors(parseListQuery(query));
+  }
+
+  @Get('categories')
+  async categories(): Promise<PublicCategoryList> {
+    return this.catalog.listPublicCategories();
   }
 
   @Get('vendors/:idOrSlug')
