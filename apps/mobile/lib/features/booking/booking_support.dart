@@ -4,13 +4,9 @@ import 'package:flutter/material.dart';
 
 import '../../app/theme.dart';
 import '../../core/api_exception.dart';
+import '../../core/ui.dart';
 
-/// Reads a money field only when the API actually sent one.
-int? moneyValue(Map<String, dynamic> source, String key) {
-  final value = source[key];
-  if (value is num) return value.toInt();
-  return int.tryParse('$value');
-}
+export '../../core/format.dart' show moneyValue;
 
 /// Plain Indonesian API error: server wording for 4xx, safe copy otherwise.
 String apiMessage(ApiException error) => switch (error.statusCode) {
@@ -43,7 +39,8 @@ String lifecycleText(String status) => switch (status.toLowerCase()) {
 /// Backend money states: `fully_paid` means the remainder was settled too.
 bool isFullySettled(String? status) => status == 'fully_paid';
 
-bool isDpSettled(String? status) => status == 'dp_paid' || isFullySettled(status);
+bool isDpSettled(String? status) =>
+    status == 'dp_paid' || isFullySettled(status);
 
 String paymentText(String status) => switch (status.toLowerCase()) {
   'unpaid' => 'Belum bayar',
@@ -56,100 +53,34 @@ String paymentText(String status) => switch (status.toLowerCase()) {
   _ => _humanize(status),
 };
 
-enum BookingChipKind { lifecycle, payment }
-
-/// Status chip for booking pages. The shared chip has no booking-lifecycle
-/// labels, and English status names would leak into an Indonesian screen.
-class BookingStatusChip extends StatelessWidget {
-  const BookingStatusChip(
-    this.status, {
-    super.key,
-    this.kind = BookingChipKind.lifecycle,
-  });
-
-  final String status;
-  final BookingChipKind kind;
-
-  @override
-  Widget build(BuildContext context) {
-    final tone = _tone(status);
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: Sp.md,
-        vertical: Sp.xs + 2,
-      ),
-      decoration: BoxDecoration(
-        color: tone.bg,
-        borderRadius: BorderRadius.circular(Radii.pill),
-      ),
-      child: Text(
-        kind == BookingChipKind.payment
-            ? paymentText(status)
-            : lifecycleText(status),
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(color: tone.fg),
-      ),
-    );
-  }
-}
-
-({Color fg, Color bg}) _tone(String status) => switch (status.toLowerCase()) {
+/// Maps any booking/lifecycle/payment code onto the shared [StatusPill] tones.
+PillTone bookingPillTone(String status) => switch (status.toLowerCase()) {
   'confirmed' ||
   'completed' ||
   'dp_paid' ||
   'fully_paid' ||
   'available' ||
-  'settled' => (fg: AppColors.accent, bg: AppColors.accentSoft),
+  'settled' => PillTone.success,
   'unconfirmed' ||
   'pending' ||
   'requested' ||
   'in_progress' ||
   'countered' ||
   'awaiting_payment' ||
-  'waiting_payment' => (fg: AppColors.warning, bg: AppColors.warningSoft),
+  'waiting_payment' => PillTone.warning,
   'cancelled' ||
   'canceled' ||
   'rejected' ||
   'failed' ||
-  'expired' => (fg: AppColors.danger, bg: AppColors.dangerSoft),
-  'booked' || 'accepted' => (fg: AppColors.primary, bg: AppColors.primarySoft),
-  _ => (fg: AppColors.inkMuted, bg: AppColors.neutralSoft),
+  'expired' => PillTone.danger,
+  'booked' || 'accepted' => PillTone.brand,
+  _ => PillTone.neutral,
 };
 
 String _humanize(String value) {
   if (value.isEmpty) return 'Tidak diketahui';
   final words = value.replaceAll('_', ' ');
   return words[0].toUpperCase() + words.substring(1);
-}
-
-/// Heading + supporting sentence; sections are separated by space, not cards.
-class BookingSection extends StatelessWidget {
-  const BookingSection({
-    super.key,
-    required this.title,
-    this.hint,
-    required this.child,
-  });
-
-  final String title;
-  final String? hint;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Text(title, style: text.titleLarge),
-        if (hint != null) ...[
-          const SizedBox(height: Sp.xs),
-          Text(hint!, style: text.bodySmall),
-        ],
-        const SizedBox(height: Sp.md),
-        child,
-      ],
-    );
-  }
 }
 
 /// One bordered surface per idea. Never nest these.
@@ -173,49 +104,15 @@ class BookingPanel extends StatelessWidget {
         color: color,
         borderRadius: BorderRadius.circular(Radii.lg),
         border: Border.all(color: borderColor),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x060F172A),
+            blurRadius: 8,
+            offset: Offset(0, 2),
+          ),
+        ],
       ),
       child: child,
-    );
-  }
-}
-
-/// Label/value money line. The value is always printed exactly as sent.
-class MoneyLine extends StatelessWidget {
-  const MoneyLine({
-    super.key,
-    required this.label,
-    required this.value,
-    this.emphasis = false,
-    this.muted = false,
-  });
-
-  final String label;
-  final String value;
-  final bool emphasis;
-  final bool muted;
-
-  @override
-  Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    final labelStyle = emphasis
-        ? text.titleMedium
-        : text.bodyMedium?.copyWith(
-            color: muted ? AppColors.inkMuted : AppColors.ink,
-          );
-    final valueStyle = emphasis
-        ? text.titleLarge?.copyWith(color: AppColors.accent)
-        : text.bodyMedium?.copyWith(
-            fontWeight: FontWeight.w600,
-            color: muted ? AppColors.inkMuted : AppColors.ink,
-            fontFeatures: const [FontFeature.tabularFigures()],
-          );
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(child: Text(label, style: labelStyle)),
-        const SizedBox(width: Sp.sm),
-        Text(value, style: valueStyle, textAlign: TextAlign.end),
-      ],
     );
   }
 }

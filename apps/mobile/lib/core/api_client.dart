@@ -52,6 +52,75 @@ class ApiClient {
     auth: auth,
   );
 
+  Future<dynamic> patch(
+    String path, {
+    Map<String, String?>? query,
+    Object? body,
+    Map<String, String>? headers,
+    bool auth = true,
+  }) => _send(
+    'PATCH',
+    path,
+    query: query,
+    body: body,
+    headers: headers,
+    auth: auth,
+  );
+
+  Future<dynamic> put(
+    String path, {
+    Map<String, String?>? query,
+    Object? body,
+    Map<String, String>? headers,
+    bool auth = true,
+  }) => _send(
+    'PUT',
+    path,
+    query: query,
+    body: body,
+    headers: headers,
+    auth: auth,
+  );
+
+  Future<dynamic> delete(
+    String path, {
+    Map<String, String?>? query,
+    Map<String, String>? headers,
+    bool auth = true,
+  }) => _send('DELETE', path, query: query, headers: headers, auth: auth);
+
+  /// Multipart upload (vendor media). Rebuilds the request on a 401 retry
+  /// because a sent multipart stream cannot be reused.
+  Future<dynamic> uploadFile(
+    String path, {
+    required String filename,
+    required List<int> bytes,
+    bool auth = true,
+  }) async {
+    var response = await _attemptUpload(
+      path,
+      filename: filename,
+      bytes: bytes,
+      auth: auth,
+    );
+
+    if (response.statusCode == 401 && auth) {
+      final refreshed = await refreshSession();
+      if (refreshed) {
+        response = await _attemptUpload(
+          path,
+          filename: filename,
+          bytes: bytes,
+          auth: auth,
+        );
+      } else {
+        await session.clear();
+      }
+    }
+
+    return _decode(response);
+  }
+
   /// Refreshes once and shares the in-flight attempt between callers.
   Future<bool> refreshSession() {
     final running = _refreshing;
@@ -98,9 +167,16 @@ class ApiClient {
   }
 
   Future<bool> _refresh() async {
-    if (session.token == null) return false;
+    final refreshToken = session.refreshToken;
+    // Legacy clients with only an access token still use the Bearer path.
+    if (refreshToken == null && session.token == null) return false;
     try {
-      final response = await _attempt('POST', _refreshPath);
+      final response = await _attempt(
+        'POST',
+        _refreshPath,
+        body: refreshToken == null ? null : {'refresh_token': refreshToken},
+        auth: refreshToken == null,
+      );
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final decoded = _decode(response);
         if (decoded is Map && decoded['access_token'] is String) {
@@ -136,6 +212,41 @@ class ApiClient {
       request.headers['Authorization'] = 'Bearer $token';
     }
     if (body != null) request.body = jsonEncode(body);
+
+    try {
+      final streamed = await _client.send(request).timeout(timeout);
+      return await http.Response.fromStream(streamed).timeout(timeout);
+    } on TimeoutException {
+      throw const ApiException(
+        code: 'TIMEOUT',
+        message: 'Server tidak menjawab. Periksa sinyal, lalu coba lagi.',
+      );
+    } on ApiException {
+      rethrow;
+    } catch (_) {
+      throw const ApiException(
+        code: 'NETWORK_ERROR',
+        message:
+            'Tidak bisa terhubung ke server. Periksa sinyal internet, lalu coba lagi.',
+      );
+    }
+  }
+
+  Future<http.Response> _attemptUpload(
+    String path, {
+    required String filename,
+    required List<int> bytes,
+    required bool auth,
+  }) async {
+    final request = http.MultipartRequest('POST', _uri(path, null));
+    request.headers['Accept'] = 'application/json';
+    final token = session.token;
+    if (auth && token != null) {
+      request.headers['Authorization'] = 'Bearer $token';
+    }
+    request.files.add(
+      http.MultipartFile.fromBytes('file', bytes, filename: filename),
+    );
 
     try {
       final streamed = await _client.send(request).timeout(timeout);

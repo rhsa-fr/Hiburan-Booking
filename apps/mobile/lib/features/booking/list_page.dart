@@ -6,22 +6,31 @@ import '../../app/theme.dart';
 import '../../core/api_exception.dart';
 import '../../core/format.dart';
 import '../../core/models.dart';
+import '../../core/ui.dart';
 import '../../core/widgets.dart';
 import 'booking_support.dart';
 
 enum _BookingFilter {
-  all('Semua', null),
-  waiting('Menunggu', 'requested'),
-  scheduled('Terjadwal', 'confirmed'),
-  done('Selesai', 'completed'),
-  cancelled('Batal', 'cancelled');
+  all('Semua'),
+  active('Aktif'),
+  done('Selesai');
 
-  const _BookingFilter(this.label, this.status);
+  const _BookingFilter(this.label);
 
   final String label;
-  final String? status;
 }
 
+const _closedLifecycles = {
+  'completed',
+  'cancelled',
+  'canceled',
+  'rejected',
+  'expired',
+};
+
+/// Booking tab body, embedded by `AppShell`: no Scaffold, no bottom nav.
+/// The status segmented control filters the pages already loaded, because the
+/// list endpoint only understands one lifecycle value at a time.
 class BookingListPage extends StatefulWidget {
   const BookingListPage({super.key});
 
@@ -51,6 +60,26 @@ class _BookingListPageState extends State<BookingListPage> {
     });
   }
 
+  List<BookingSummary> get _visible => switch (_filter) {
+    _BookingFilter.all => _items,
+    _BookingFilter.active =>
+      _items
+          .where(
+            (booking) => !_closedLifecycles.contains(
+              booking.lifecycleStatus.toLowerCase(),
+            ),
+          )
+          .toList(growable: false),
+    _BookingFilter.done =>
+      _items
+          .where(
+            (booking) => _closedLifecycles.contains(
+              booking.lifecycleStatus.toLowerCase(),
+            ),
+          )
+          .toList(growable: false),
+  };
+
   Future<void> _load({required bool reset}) async {
     if (_fetching) return;
     _fetching = true;
@@ -71,11 +100,7 @@ class _BookingListPageState extends State<BookingListPage> {
     try {
       final raw = await AppScope.of(context).api.get(
         '/bookings',
-        query: {
-          'status': _filter.status,
-          'page': '$_nextPage',
-          'page_size': '$_pageSize',
-        },
+        query: {'page': '$_nextPage', 'page_size': '$_pageSize'},
       );
       final page = PageResult.fromJson(
         raw is Map ? raw.cast<String, dynamic>() : const {},
@@ -104,82 +129,37 @@ class _BookingListPageState extends State<BookingListPage> {
           _moreError = message;
         }
       });
-      if (_items.isNotEmpty) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(message)));
-      }
     } finally {
       _fetching = false;
     }
   }
 
-  void _selectFilter(_BookingFilter filter) {
-    if (filter == _filter || _loading || _fetching) return;
-    setState(() {
-      _filter = filter;
-      _items.clear();
-      _total = 0;
-      _error = null;
-      _moreError = null;
-      _loading = true;
-    });
-    _load(reset: true);
-  }
-
   @override
   Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-
-    return Scaffold(
-      appBar: AppBar(title: const Text('Booking saya')),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 560),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.sm, Sp.lg, 0),
-                child: Row(
-                  children: [
-                    for (final filter in _BookingFilter.values) ...[
-                      ChoiceChip(
-                        label: Text(filter.label),
-                        selected: filter == _filter,
-                        showCheckmark: false,
-                        onSelected: _loading
-                            ? null
-                            : (_) => _selectFilter(filter),
-                        selectedColor: AppColors.primary,
-                        backgroundColor: AppColors.card,
-                        side: BorderSide(
-                          color: filter == _filter
-                              ? AppColors.primary
-                              : AppColors.line,
-                        ),
-                        labelStyle: text.labelMedium?.copyWith(
-                          color: filter == _filter
-                              ? AppColors.onPrimary
-                              : AppColors.ink,
-                        ),
-                      ),
-                      const SizedBox(width: Sp.sm),
-                    ],
-                  ],
-                ),
-              ),
-              const SizedBox(height: Sp.md),
-              Expanded(child: _content(text)),
-            ],
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const StageHeader(
+          title: 'Booking Saya',
+          subtitle: 'Daftar transaksi dan jadwal acara',
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.lg, Sp.lg, Sp.md),
+          child: SegmentBar(
+            items: [for (final filter in _BookingFilter.values) filter.label],
+            index: _filter.index,
+            onChanged: (index) =>
+                setState(() => _filter = _BookingFilter.values[index]),
           ),
         ),
-      ),
+        Expanded(child: _content()),
+      ],
     );
   }
 
-  Widget _content(TextTheme text) {
+  Widget _content() {
+    final visible = _visible;
+
     if (_loading && _items.isEmpty) {
       return ListView(
         padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.sm, Sp.lg, Sp.xl),
@@ -206,20 +186,31 @@ class _BookingListPageState extends State<BookingListPage> {
       );
     }
 
-    if (_items.isEmpty) {
+    if (visible.isEmpty) {
       return RefreshIndicator(
         onRefresh: () => _load(reset: true),
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.xl, Sp.lg, Sp.xl),
           children: [
-            AppEmpty(
-              message: 'Belum ada booking. Cari tarling dulu, yuk.',
-              icon: Icons.confirmation_number_outlined,
-              action: PrimaryButton(
-                label: 'Cari tarling',
-                icon: Icons.search,
-                onPressed: () => Navigator.pushNamed(context, Routes.home),
+            SizedBox(
+              height: 300,
+              child: AppEmpty(
+                message: _emptyMessage,
+                icon: Icons.confirmation_number_outlined,
+                action: _items.length < _total
+                    ? TextButton(
+                        onPressed: _loadingMore
+                            ? null
+                            : () => _load(reset: false),
+                        child: Text(
+                          _loadingMore ? 'Memuat…' : 'Muat lebih banyak',
+                        ),
+                      )
+                    : TextButton(
+                        onPressed: () => _load(reset: true),
+                        child: const Text('Muat ulang'),
+                      ),
               ),
             ),
           ],
@@ -232,17 +223,18 @@ class _BookingListPageState extends State<BookingListPage> {
       child: ListView.builder(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(Sp.lg, 0, Sp.lg, Sp.xl),
-        itemCount: _items.length + 1,
+        itemCount: visible.length + 1,
         itemBuilder: (context, index) {
-          if (index == _items.length) return _footer(text);
+          if (index == visible.length) return _footer(visible.length);
+          final booking = visible[index];
           return Padding(
             padding: const EdgeInsets.only(bottom: Sp.md),
             child: _BookingCard(
-              booking: _items[index],
+              booking: booking,
               onTap: () => Navigator.pushNamed(
                 context,
                 Routes.bookingStatus,
-                arguments: _items[index].id,
+                arguments: booking.id,
               ),
             ),
           );
@@ -251,15 +243,21 @@ class _BookingListPageState extends State<BookingListPage> {
     );
   }
 
-  Widget _footer(TextTheme text) {
+  String get _emptyMessage => switch (_filter) {
+    _BookingFilter.all => 'Belum ada booking. Mulai dari melihat vendor.',
+    _BookingFilter.active => 'Tidak ada booking yang sedang berjalan.',
+    _BookingFilter.done => 'Belum ada booking yang selesai.',
+  };
+
+  Widget _footer(int visibleCount) {
     final hasMore = _items.length < _total;
     if (!hasMore && _moreError == null) {
       return Padding(
         padding: const EdgeInsets.only(top: Sp.sm),
         child: Text(
-          '${_items.length} booking',
+          '$visibleCount booking',
           textAlign: TextAlign.center,
-          style: text.bodySmall,
+          style: Theme.of(context).textTheme.bodySmall,
         ),
       );
     }
@@ -272,10 +270,10 @@ class _BookingListPageState extends State<BookingListPage> {
             AppError(message: _moreError!, compact: true),
             const SizedBox(height: Sp.sm),
             TextButton(
-              onPressed: () => _load(reset: true),
+              onPressed: () => _load(reset: false),
               child: const Text('Coba lagi'),
             ),
-          ] else if (hasMore)
+          ] else
             TextButton(
               onPressed: _loadingMore ? null : () => _load(reset: false),
               child: Text(_loadingMore ? 'Memuat…' : 'Muat lebih banyak'),
@@ -295,16 +293,38 @@ class _BookingCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
-    final paid = isFullySettled(booking.paymentStatus)
-        ? booking.totalCustomerIdr
-        : isDpSettled(booking.paymentStatus)
-        ? booking.dpAmountIdr
-        : 0;
-    final remaining = booking.outstandingIdr;
     final slot = booking.firstSlot;
+    final lifecycle = booking.lifecycleStatus.toLowerCase();
+    final fullyPaid = isFullySettled(booking.paymentStatus);
+    final refunded = booking.paymentStatus.toLowerCase() == 'refunded';
+    final closed =
+        _closedLifecycles.contains(lifecycle) && lifecycle != 'completed';
 
-    return Card(
+    final ({String label, Color color}) money = fullyPaid
+        ? (label: 'Lunas', color: AppColors.accent)
+        : refunded
+        ? (label: 'Dikembalikan', color: AppColors.inkMuted)
+        : closed
+        ? (label: 'Tidak ditagih', color: AppColors.inkMuted)
+        : (
+            label: 'Sisa ${rupiah(booking.outstandingIdr)}',
+            color: AppColors.ink,
+          );
+
+    final detail = fullyPaid
+        ? 'Dibayar ${rupiah(booking.totalCustomerIdr)} · '
+              'Sisa ${rupiah(booking.outstandingIdr)}'
+        : isDpSettled(booking.paymentStatus)
+        ? 'Dibayar ${rupiah(booking.dpAmountIdr)} (DP)'
+        : 'Belum ada pembayaran';
+
+    return Material(
+      color: AppColors.card,
       clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(Radii.lg),
+        side: const BorderSide(color: AppColors.line),
+      ),
       child: InkWell(
         onTap: onTap,
         child: Padding(
@@ -323,54 +343,62 @@ class _BookingCard extends StatelessWidget {
                       ),
                     ),
                   ),
+                  const SizedBox(width: Sp.sm),
+                  StatusPill(
+                    label: lifecycleText(booking.lifecycleStatus),
+                    tone: bookingPillTone(booking.lifecycleStatus),
+                  ),
+                ],
+              ),
+              const SizedBox(height: Sp.sm),
+              Text(
+                booking.vendor.displayName,
+                style: text.titleLarge,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 2),
+              Row(
+                children: [
+                  const Icon(
+                    Icons.event_outlined,
+                    size: 15,
+                    color: AppColors.inkMuted,
+                  ),
+                  const SizedBox(width: Sp.xs),
+                  Expanded(
+                    child: Text(
+                      slot == null
+                          ? 'Jadwal menyusul'
+                          : '${formatDateIso(slot.date)} · '
+                                '${sessionText(slot.session)}',
+                      style: text.bodySmall,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: Sp.md),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Expanded(child: Text(detail, style: text.bodySmall)),
+                  const SizedBox(width: Sp.sm),
+                  Text(
+                    money.label,
+                    style: text.titleMedium?.copyWith(
+                      color: money.color,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                  const SizedBox(width: Sp.xs),
                   const Icon(
                     Icons.chevron_right,
                     size: 20,
                     color: AppColors.inkMuted,
                   ),
                 ],
-              ),
-              const SizedBox(height: Sp.sm),
-              Text(booking.vendor.displayName, style: text.titleMedium),
-              const SizedBox(height: Sp.xs),
-              Text(booking.package.name, style: text.bodySmall),
-              const SizedBox(height: Sp.md),
-              Wrap(
-                spacing: Sp.sm,
-                runSpacing: Sp.sm,
-                children: [
-                  BookingStatusChip(booking.lifecycleStatus),
-                  BookingStatusChip(
-                    booking.paymentStatus,
-                    kind: BookingChipKind.payment,
-                  ),
-                ],
-              ),
-              const SizedBox(height: Sp.md),
-              Row(
-                children: [
-                  const Icon(
-                    Icons.event_outlined,
-                    size: 18,
-                    color: AppColors.inkMuted,
-                  ),
-                  const SizedBox(width: Sp.sm),
-                  Expanded(
-                    child: Text(
-                      slot == null
-                          ? 'Jadwal menyusul'
-                          : '${formatDateIso(slot.date)} · ${sessionText(slot.session)}',
-                      style: text.bodyMedium,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: Sp.md),
-              const Divider(height: 1),
-              const SizedBox(height: Sp.md),
-              Text(
-                'Dibayar ${rupiah(paid)} · Sisa ${rupiah(remaining)}',
-                style: text.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
               ),
             ],
           ),

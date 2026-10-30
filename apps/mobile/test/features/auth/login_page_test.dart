@@ -74,6 +74,12 @@ http.Response _json(Object body, int status) => http.Response(
   headers: {'content-type': 'application/json'},
 );
 
+/// Consent is unchecked by default (opt-in, not opt-out).
+Future<void> _acceptConsent(WidgetTester tester) async {
+  await tester.tap(find.byType(Checkbox));
+  await tester.pump();
+}
+
 const _sessionPayload = {
   'data': {
     'access_token': 'token-123',
@@ -102,11 +108,32 @@ void main() {
       await tester.pumpWidget(
         _app(session: h.session, api: h.api, home: const LoginPage()),
       );
-      await tester.tap(find.widgetWithText(FilledButton, 'Masuk'));
+      await _acceptConsent(tester);
+      await tester.tap(find.widgetWithText(FilledButton, 'Masuk ke Akun'));
       await tester.pump();
 
       expect(find.text('Email wajib diisi.'), findsOneWidget);
       expect(find.text('Kata sandi wajib diisi.'), findsOneWidget);
+      expect(h.requests, isEmpty);
+    });
+
+    testWidgets('tanpa centang persetujuan: tidak memanggil API', (
+      tester,
+    ) async {
+      final h = _setup((_) async => _json(_sessionPayload, 200));
+
+      await tester.pumpWidget(
+        _app(session: h.session, api: h.api, home: const LoginPage()),
+      );
+      await tester.enterText(find.byType(TextFormField).at(0), 'budi@email.com');
+      await tester.enterText(find.byType(TextFormField).at(1), 'rahasia123');
+      await tester.tap(find.widgetWithText(FilledButton, 'Masuk ke Akun'));
+      await tester.pump();
+
+      expect(
+        find.text('Centang persetujuan Syarat & Ketentuan dulu.'),
+        findsOneWidget,
+      );
       expect(h.requests, isEmpty);
     });
 
@@ -130,7 +157,8 @@ void main() {
         find.byType(TextFormField).at(1),
         'kata-salah-123',
       );
-      await tester.tap(find.widgetWithText(FilledButton, 'Masuk'));
+      await _acceptConsent(tester);
+      await tester.tap(find.widgetWithText(FilledButton, 'Masuk ke Akun'));
       await tester.pumpAndSettle();
 
       expect(find.text('Email atau kata sandi salah.'), findsOneWidget);
@@ -152,7 +180,8 @@ void main() {
         '  budi@email.com  ',
       );
       await tester.enterText(find.byType(TextFormField).at(1), 'rahasia123');
-      await tester.tap(find.widgetWithText(FilledButton, 'Masuk'));
+      await _acceptConsent(tester);
+      await tester.tap(find.widgetWithText(FilledButton, 'Masuk ke Akun'));
       // Push happens after the awaited signIn; let the route transition finish.
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 600));
@@ -185,7 +214,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(tester.takeException(), isNull);
-      expect(find.text('Daftar'), findsOneWidget);
+      expect(find.text('Daftar akun'), findsOneWidget);
     });
   });
 

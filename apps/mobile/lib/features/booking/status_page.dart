@@ -10,16 +10,11 @@ import '../../app/theme.dart';
 import '../../core/api_exception.dart';
 import '../../core/format.dart';
 import '../../core/models.dart';
+import '../../core/ui.dart';
 import '../../core/widgets.dart';
 import 'booking_support.dart';
 
-const _terminalStatuses = {
-  'completed',
-  'cancelled',
-  'canceled',
-  'rejected',
-  'expired',
-};
+const _closedLifecycles = {'cancelled', 'canceled', 'rejected', 'expired'};
 
 const _paymentMethods = <({String value, String label})>[
   (value: 'qris', label: 'QRIS'),
@@ -29,22 +24,7 @@ const _paymentMethods = <({String value, String label})>[
   (value: 'va_mandiri', label: 'Mandiri Virtual Account'),
 ];
 
-const _steps = <({String title, String body})>[
-  (
-    title: 'Menunggu vendor menerima',
-    body: 'Vendor menjawab permintaanmu dulu. Kamu belum perlu membayar.',
-  ),
-  (
-    title: 'Vendor menerima — bayar DP',
-    body: 'Bayar DP supaya tanggal dan sesi dikunci untukmu.',
-  ),
-  (
-    title: 'DP dibayar, jadwal dikunci',
-    body:
-        'Acara sudah pasti. Sisa tagihan dibayar ke vendor sesuai kesepakatan.',
-  ),
-  (title: 'Acara selesai', body: 'Booking ditutup setelah acara berjalan.'),
-];
+const _tabularFigures = <FontFeature>[FontFeature.tabularFigures()];
 
 Map<String, dynamic> _asMap(dynamic value) =>
     value is Map ? value.cast<String, dynamic>() : const <String, dynamic>{};
@@ -83,6 +63,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
   String? _cancelError;
 
   Timer? _pollTimer;
+  Timer? _tickTimer;
 
   @override
   void initState() {
@@ -96,6 +77,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
   @override
   void dispose() {
     _pollTimer?.cancel();
+    _tickTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -127,7 +109,8 @@ class _BookingStatusPageState extends State<BookingStatusPage>
         _weakSignal = false;
         if (isDpSettled(next.paymentStatus) ||
             next.paymentStatus == 'refunded' ||
-            _terminalStatuses.contains(next.lifecycleStatus)) {
+            _closedLifecycles.contains(next.lifecycleStatus) ||
+            next.lifecycleStatus == 'completed') {
           _payment = null;
         }
       });
@@ -148,7 +131,10 @@ class _BookingStatusPageState extends State<BookingStatusPage>
       }
     } finally {
       _fetching = false;
-      if (mounted) _syncPolling();
+      if (mounted) {
+        _syncPolling();
+        _syncTick();
+      }
     }
   }
 
@@ -173,6 +159,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
       }
     } finally {
       _restoring = false;
+      _syncTick();
     }
   }
 
@@ -180,7 +167,8 @@ class _BookingStatusPageState extends State<BookingStatusPage>
     final booking = _booking;
     final shouldPoll =
         booking != null &&
-        !_terminalStatuses.contains(booking.lifecycleStatus) &&
+        !_closedLifecycles.contains(booking.lifecycleStatus) &&
+        booking.lifecycleStatus != 'completed' &&
         !isDpSettled(booking.paymentStatus) &&
         booking.paymentStatus != 'refunded';
     if (!shouldPoll) {
@@ -189,6 +177,24 @@ class _BookingStatusPageState extends State<BookingStatusPage>
       return;
     }
     _pollTimer ??= Timer.periodic(const Duration(seconds: 15), (_) => _poll());
+  }
+
+  /// A one-second tick only while a live payment instruction is on screen.
+  void _syncTick() {
+    final booking = _booking;
+    final needsTick =
+        _payment?.instruction != null &&
+        booking != null &&
+        booking.paymentStatus == 'unpaid';
+    if (!needsTick) {
+      _tickTimer?.cancel();
+      _tickTimer = null;
+      return;
+    }
+    _tickTimer ??= Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      setState(() {});
+    });
   }
 
   Future<void> _poll() async {
@@ -258,6 +264,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
         _keyMethod = null;
         _weakSignal = false;
       });
+      _syncTick();
     } on ApiException catch (error) {
       if (!mounted) return;
       setState(() {
@@ -270,9 +277,15 @@ class _BookingStatusPageState extends State<BookingStatusPage>
   Future<void> _cancel() async {
     final booking = _booking;
     if (booking == null || _cancelBusy) return;
-    final reason = await showDialog<String>(
+    final reason = await showModalBottomSheet<String>(
       context: context,
-      builder: (_) => const _CancelDialog(),
+      isScrollControlled: true,
+      backgroundColor: AppColors.card,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(Radii.lg)),
+      ),
+      builder: (_) =>
+          _CancelSheet(booking: booking, consequence: _cancelConsequence()),
     );
     if (reason == null || !mounted) return;
     final api = AppScope.of(context).api;
@@ -293,6 +306,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
         _payment = null;
       });
       _syncPolling();
+      _syncTick();
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Booking dibatalkan.')));
@@ -303,6 +317,28 @@ class _BookingStatusPageState extends State<BookingStatusPage>
         _cancelError = error.message;
       });
     }
+  }
+
+  /// The truth as the API writes it: cancelling never refunds by itself.
+  String _cancelConsequence() {
+    final booking = _booking!;
+    final total =
+        moneyValue(booking.pricing, 'total_customer_idr') ??
+        booking.totalCustomerIdr;
+    final dp =
+        moneyValue(booking.pricing, 'dp_amount_idr') ?? booking.dpAmountIdr;
+    final paid = isFullySettled(booking.paymentStatus)
+        ? total
+        : isDpSettled(booking.paymentStatus)
+        ? dp
+        : 0;
+    if (paid <= 0) {
+      return 'Kamu belum membayar DP, jadi tidak ada dana yang perlu '
+          'dikembalikan.';
+    }
+    return 'Pembayaran ${rupiah(paid)} yang sudah masuk tidak otomatis kembali '
+        'kalau booking dibatalkan. Hubungi vendor atau Tarlink untuk mengurus '
+        'pengembaliannya.';
   }
 
   Future<void> _openWhatsApp() async {
@@ -342,95 +378,131 @@ class _BookingStatusPageState extends State<BookingStatusPage>
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final booking = _booking;
+
+    if (booking == null) {
+      return Scaffold(
+        body: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 560),
+            child: Column(
+              children: [
+                StageHeader.back(
+                  context: context,
+                  title: 'Detail pesanan',
+                ),
+                Expanded(
+                  child: _loading
+                      ? const Padding(
+                          padding: EdgeInsets.all(Sp.lg),
+                          child: AppLoading(rows: 3, label: 'Memuat status booking'),
+                        )
+                      : AppError(
+                          message: _loadError ?? 'Booking belum bisa dimuat.',
+                          onRetry: () {
+                            setState(() => _loading = true);
+                            _fetch();
+                          },
+                        ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Status booking')),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 560),
-          child: _loading
-              ? const Padding(
-                  padding: EdgeInsets.all(Sp.lg),
-                  child: AppLoading(rows: 3, label: 'Memuat status booking'),
-                )
-              : _loadError != null
-              ? AppError(
-                  message: _loadError!,
-                  onRetry: () {
-                    setState(() => _loading = true);
-                    _fetch();
-                  },
-                )
-              : _body(text),
-        ),
-      ),
-    );
-  }
-
-  Widget _body(TextTheme text) {
-    final booking = _booking!;
-    final terminal = _terminalStatuses.contains(booking.lifecycleStatus);
-    return RefreshIndicator(
-      onRefresh: _refresh,
-      child: ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.sm, Sp.lg, Sp.xl),
-        children: [
-          if (_weakSignal) ...[
-            _WeakSignalBanner(onRetry: _refresh),
-            const SizedBox(height: Sp.md),
-          ],
-          Text(_headline(booking), style: text.displaySmall),
-          const SizedBox(height: Sp.sm),
-          Row(
+          child: Column(
             children: [
+              _header(booking, text),
               Expanded(
-                child: Text(
-                  'Kode ${booking.code}',
-                  style: text.bodyMedium?.copyWith(
-                    color: AppColors.inkMuted,
-                    letterSpacing: 0.3,
+                child: RefreshIndicator(
+                  onRefresh: _refresh,
+                  child: ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(
+                      Sp.lg,
+                      Sp.lg,
+                      Sp.lg,
+                      160,
+                    ),
+                    children: _body(booking, text),
                   ),
                 ),
               ),
-              IconButton(
-                onPressed: _copyCode,
-                tooltip: 'Salin kode booking',
-                icon: const Icon(Icons.copy, size: 20),
-              ),
             ],
           ),
-          const SizedBox(height: Sp.xs),
-          Wrap(
-            spacing: Sp.sm,
-            runSpacing: Sp.sm,
-            children: [
-              BookingStatusChip(booking.lifecycleStatus),
-              BookingStatusChip(
-                booking.paymentStatus,
-                kind: BookingChipKind.payment,
-              ),
-            ],
-          ),
-          const SizedBox(height: Sp.xl),
-          if (terminal)
-            _terminalPanel(booking, text)
-          else
-            BookingSection(
-              title: 'Apa yang terjadi',
-              child: BookingPanel(child: _timeline(booking, text)),
+        ),
+      ),
+      bottomNavigationBar: _actionBar(booking, text),
+    );
+  }
+
+  Widget _header(BookingView booking, TextTheme text) {
+    return StageHeader.back(
+      context: context,
+      title: 'Detail Pesanan',
+      subtitle: booking.vendor.displayName,
+      trailing: Material(
+        color: AppColors.card,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(Radii.sm),
+          side: const BorderSide(color: AppColors.line),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: _copyCode,
+          child: const SizedBox(
+            width: 38,
+            height: 38,
+            child: Center(
+              child: Icon(Icons.copy_rounded, size: 18, color: AppColors.ink),
             ),
-          const SizedBox(height: Sp.xl),
-          _moneySection(booking, text),
-          if (isDpSettled(booking.paymentStatus)) ...[
-            const SizedBox(height: Sp.xl),
-            _paidPanel(booking, text),
-          ] else if (_canPay || _payment != null) ...[
-            const SizedBox(height: Sp.xl),
-            _paymentSection(booking, text),
-          ],
-          const SizedBox(height: Sp.xl),
-          _actionSection(booking, text),
+          ),
+        ),
+      ),
+      bottom: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: Sp.sm,
+              vertical: 5,
+            ),
+            decoration: BoxDecoration(
+              color: AppColors.surfaceTint,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                Text(
+                  booking.code,
+                  style: text.labelSmall?.copyWith(
+                    letterSpacing: 0.4,
+                    fontFeatures: _tabularFigures,
+                    color: AppColors.inkMuted,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                GestureDetector(
+                  onTap: _copyCode,
+                  child: const Icon(
+                    Icons.copy,
+                    size: 14,
+                    color: AppColors.inkMuted,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Spacer(),
+          StatusPill(
+            label: paymentText(booking.paymentStatus),
+            tone: bookingPillTone(booking.paymentStatus),
+          ),
         ],
       ),
     );
@@ -449,322 +521,309 @@ class _BookingStatusPageState extends State<BookingStatusPage>
     _ => lifecycleText(booking.lifecycleStatus),
   };
 
-  Widget _timeline(BookingView booking, TextTheme text) {
-    final current = switch (booking.lifecycleStatus) {
-      'requested' || 'countered' => 0,
-      'accepted' => 1,
-      'confirmed' || 'in_progress' => 2,
-      'completed' => 3,
-      _ => 0,
-    };
-    return Column(
-      children: [
-        for (var i = 0; i < _steps.length; i++)
-          IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                SizedBox(
-                  width: 24,
-                  child: Column(
-                    children: [
-                      _StepDot(
-                        done:
-                            i < current ||
-                            booking.lifecycleStatus == 'completed',
-                        current:
-                            i == current &&
-                            booking.lifecycleStatus != 'completed',
-                      ),
-                      if (i < _steps.length - 1)
-                        Expanded(
-                          child: Container(width: 2, color: AppColors.line),
-                        ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: Sp.md),
-                Expanded(
-                  child: Padding(
-                    padding: EdgeInsets.only(
-                      bottom: i < _steps.length - 1 ? Sp.lg : 0,
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _steps[i].title,
-                          style: text.titleMedium?.copyWith(
-                            color: i == current
-                                ? AppColors.primary
-                                : i < current
-                                ? AppColors.ink
-                                : AppColors.inkMuted,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(_steps[i].body, style: text.bodySmall),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-      ],
-    );
-  }
-
-  Widget _terminalPanel(BookingView booking, TextTheme text) {
-    final (message, tone, icon) = switch (booking.lifecycleStatus) {
-      'rejected' => (
-        'Vendor menolak booking ini. Cari vendor lain untuk tanggal yang sama.',
-        AppColors.warningSoft,
-        Icons.info_outline,
-      ),
-      'expired' => (
-        'Batas waktu booking ini sudah lewat. Silakan buat booking baru.',
-        AppColors.dangerSoft,
-        Icons.schedule,
-      ),
-      _ => (
-        'Booking ini sudah dibatalkan. Kalau ada pembayaran, hubungi vendor atau Tarlink.',
-        AppColors.dangerSoft,
-        Icons.cancel_outlined,
-      ),
-    };
-    return BookingPanel(
-      color: tone,
-      child: Row(
+  List<Widget> _body(BookingView booking, TextTheme text) {
+    final digits = whatsappDigits(booking.vendor.whatsapp);
+    return [
+      Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 22, color: AppColors.ink),
-          const SizedBox(width: Sp.md),
-          Expanded(child: Text(message, style: text.bodyMedium)),
-        ],
-      ),
-    );
-  }
-
-  Widget _moneySection(BookingView booking, TextTheme text) {
-    final total = moneyValue(booking.pricing, 'total_customer_idr');
-    final dp = moneyValue(booking.pricing, 'dp_amount_idr');
-    final outstanding = booking.outstandingIdr;
-    return BookingSection(
-      title: 'Rincian biaya',
-      child: BookingPanel(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (total != null)
-              MoneyLine(label: 'Total acara', value: rupiah(total)),
-            if (dp != null) ...[
-              const SizedBox(height: Sp.sm),
-              MoneyLine(
-                label: isDpSettled(booking.paymentStatus)
-                    ? 'DP sudah dibayar'
-                    : booking.lifecycleStatus == 'requested'
-                    ? 'DP setelah vendor menerima'
-                    : 'DP yang harus dibayar',
-                value: rupiah(dp),
-              ),
-            ],
-            const SizedBox(height: Sp.md),
-            const Divider(height: 1),
-            const SizedBox(height: Sp.md),
-            // `outstanding_idr` mengikuti status: belum bayar = total penuh,
-            // DP lunas = total dikurangi DP, lunas = 0. Labelnya harus ikut,
-            // kalau tidak "setelah DP" menampilkan angka total.
-            if (outstanding > 0)
-              MoneyLine(
-                label: booking.paymentStatus == 'unpaid'
-                    ? 'Total yang harus dibayar'
-                    : 'Sisa tagihan setelah DP',
-                value: rupiah(outstanding),
-                emphasis: true,
-              ),
-            if (isFullySettled(booking.paymentStatus)) ...[
-              const SizedBox(height: Sp.sm),
-              MoneyLine(
-                label: 'Lunas',
-                value: rupiah(total ?? booking.totalCustomerIdr),
-                emphasis: true,
-              ),
-            ],
-            if (outstanding > 0) ...[
-              const SizedBox(height: Sp.sm),
-              Text(
-                'Sisa dibayar ke vendor sesuai kesepakatan.',
-                style: text.bodySmall,
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _paidPanel(BookingView booking, TextTheme text) {
-    final fullyPaid = isFullySettled(booking.paymentStatus);
-    final outstanding = booking.outstandingIdr;
-    return BookingPanel(
-      color: AppColors.accentSoft,
-      borderColor: AppColors.accentSoft,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(
-            Icons.check_circle_outline,
-            size: 26,
-            color: AppColors.accent,
-          ),
-          const SizedBox(width: Sp.md),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  fullyPaid ? 'Pembayaran lunas' : 'DP diterima',
-                  style: text.titleLarge?.copyWith(color: AppColors.accent),
-                ),
-                const SizedBox(height: Sp.xs),
-                Text(
-                  fullyPaid
-                      ? 'Booking ${booking.code} sudah dibayar penuh.'
-                      : 'Booking ${booking.code} sudah dikunci.',
-                  style: text.bodyMedium,
-                ),
-                if (!fullyPaid && outstanding > 0) ...[
-                  const SizedBox(height: Sp.xs),
-                  Text(
-                    'Sisa ${rupiah(outstanding)} dibayar ke vendor sesuai kesepakatan.',
-                    style: text.bodySmall,
-                  ),
-                ],
-              ],
+            child: Text(
+              _headline(booking),
+              style: text.headlineSmall?.copyWith(
+                fontSize: 22,
+                fontWeight: FontWeight.w700,
+                letterSpacing: -0.3,
+              ),
             ),
+          ),
+          const SizedBox(width: Sp.sm),
+          StatusPill(
+            label: lifecycleText(booking.lifecycleStatus),
+            tone: bookingPillTone(booking.lifecycleStatus),
           ),
         ],
       ),
+      const SizedBox(height: Sp.md),
+      if (_weakSignal) ...[
+        InfoStrip(
+          message: 'Sinyal lemah — mencoba lagi.',
+          icon: Icons.wifi_off_outlined,
+          tone: InfoTone.warning,
+          actionLabel: 'Coba lagi',
+          onAction: _refresh,
+        ),
+        const SizedBox(height: Sp.md),
+      ],
+      _moneyBlock(booking),
+      const SizedBox(height: Sp.lg),
+      if (booking.lifecycleStatus == 'requested') ...[
+        const InfoStrip(
+          message: 'Menunggu vendor menerima. Kamu belum perlu membayar.',
+          icon: Icons.schedule,
+          tone: InfoTone.primary,
+        ),
+        const SizedBox(height: Sp.lg),
+      ],
+      if (_terminalMessage(booking) != null) ...[
+        InfoStrip(
+          message: _terminalMessage(booking)!,
+          icon: Icons.info_outline,
+          tone: booking.lifecycleStatus == 'rejected'
+              ? InfoTone.warning
+              : InfoTone.danger,
+        ),
+        const SizedBox(height: Sp.lg),
+      ],
+      if (_canPay || _payment != null) ...[
+        _paymentSection(booking, text),
+        const SizedBox(height: Sp.xl),
+      ],
+      SectionHeader(
+        title: 'Perjalanan booking',
+        caption: 'Diperbarui mengikuti status dari sistem.',
+      ),
+      const SizedBox(height: Sp.md),
+      BookingPanel(child: _timeline(booking, text)),
+      const SizedBox(height: Sp.xl),
+      const SectionHeader(title: 'Detail acara'),
+      const SizedBox(height: Sp.md),
+      BookingPanel(child: _detail(booking, text)),
+      if (digits == null) ...[
+        const SizedBox(height: Sp.md),
+        const InfoStrip(
+          message: 'Nomor WhatsApp vendor belum tersedia.',
+          icon: Icons.chat_outlined,
+          tone: InfoTone.neutral,
+        ),
+      ],
+      if (_cancelError != null) ...[
+        const SizedBox(height: Sp.md),
+        Semantics(
+          liveRegion: true,
+          child: AppError(message: _cancelError!, compact: true),
+        ),
+      ],
+    ];
+  }
+
+  String? _terminalMessage(
+    BookingView booking,
+  ) => switch (booking.lifecycleStatus) {
+    'cancelled' || 'canceled' =>
+      'Booking ini sudah dibatalkan. Kalau ada pembayaran, hubungi vendor '
+          'atau Tarlink.',
+    'rejected' =>
+      'Vendor menolak booking ini. Cari vendor lain untuk tanggal yang sama.',
+    'expired' =>
+      'Batas waktu booking ini sudah lewat. Buat booking baru untuk '
+          'tanggal lain.',
+    _ => null,
+  };
+
+  Widget _moneyBlock(BookingView booking) {
+    final total =
+        moneyValue(booking.pricing, 'total_customer_idr') ??
+        booking.totalCustomerIdr;
+    final dp =
+        moneyValue(booking.pricing, 'dp_amount_idr') ?? booking.dpAmountIdr;
+    final status = booking.paymentStatus;
+
+    if (isFullySettled(status)) {
+      return MoneyBlock(
+        rows: [MoneyRow('Total acara', total)],
+        totalLabel: 'Lunas',
+        totalIdr: total,
+        tone: MoneyTone.accent,
+        footnote: 'Pembayaran lunas',
+      );
+    }
+
+    if (status == 'refunded') {
+      return MoneyBlock(
+        rows: [MoneyRow('Total acara', total)],
+        totalLabel: 'Dana dikembalikan',
+        totalIdr: dp > 0 ? dp : total,
+        tone: MoneyTone.ink,
+        footnote: 'Tidak ada tagihan sisa untuk booking ini.',
+      );
+    }
+
+    if (_closedLifecycles.contains(booking.lifecycleStatus)) {
+      return MoneyBlock(
+        rows: const [],
+        totalLabel: 'Total acara',
+        totalIdr: total,
+      );
+    }
+
+    final paid = isDpSettled(status);
+    return MoneyBlock(
+      rows: [
+        if (paid) MoneyRow('Total acara', total),
+        if (paid) MoneyRow('Sudah dibayar (DP)', -dp),
+      ],
+      totalLabel: paid ? 'Sisa yang harus dibayar' : 'Total yang harus dibayar',
+      totalIdr: paid ? booking.outstandingIdr : total,
+      footnote: paid
+          ? 'DP sudah masuk'
+          : 'Sisa dibayar ke vendor sesuai kesepakatan.',
     );
   }
 
   Widget _paymentSection(BookingView booking, TextTheme text) {
-    final pending = _payment;
-    if (pending != null) {
-      return BookingSection(
-        title: 'Instruksi pembayaran',
-        child: BookingPanel(child: _instructionView(pending, text)),
-      );
-    }
-    return BookingSection(
-      title: 'Bayar DP',
-      hint: 'Pilih cara bayar. Setelah DP masuk, jadwal langsung dikunci.',
-      child: BookingPanel(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            for (final method in _paymentMethods) ...[
-              _MethodOption(
-                label: method.label,
-                selected: _method == method.value,
-                onTap: _paying
-                    ? null
-                    : () => setState(() {
-                        _method = method.value;
-                        _payError = null;
-                        _idempotencyKey = null;
-                        _keyMethod = null;
-                      }),
-              ),
-              const SizedBox(height: Sp.sm),
-            ],
-            if (_payError != null) ...[
-              const SizedBox(height: Sp.xs),
-              Semantics(
-                liveRegion: true,
-                child: AppError(message: _payError!, compact: true),
-              ),
-              const SizedBox(height: Sp.md),
-            ],
-            PrimaryButton(
-              label: 'Bayar DP',
-              loadingLabel: 'Membuat tagihan…',
-              loading: _paying,
-              onPressed: _pay,
-            ),
-            const SizedBox(height: Sp.sm),
-            Text(
-              'Jangan tutup layar ini saat tagihan dibuat.',
-              style: text.bodySmall,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _instructionView(PaymentView payment, TextTheme text) {
-    final instruction = payment.instruction;
-    if (instruction == null) {
+    final view = _payment;
+    final instruction = view?.instruction;
+    if (view != null && instruction != null) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            'Instruksi pembayaran belum tersedia. Muat ulang sebentar lagi.',
-            style: text.bodyMedium,
+          SectionHeader(
+            title: 'Instruksi pembayaran',
+            caption: 'Booking ${booking.code}',
           ),
           const SizedBox(height: Sp.md),
-          TextButton.icon(
-            onPressed: _refresh,
-            icon: const Icon(Icons.refresh),
-            label: const Text('Muat ulang'),
+          BookingPanel(child: _instructionView(view, text)),
+        ],
+      );
+    }
+
+    if (view != null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SectionHeader(title: 'Instruksi pembayaran'),
+          const SizedBox(height: Sp.md),
+          BookingPanel(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Instruksi pembayaran belum tersedia. Muat ulang sebentar '
+                  'lagi.',
+                  style: text.bodyMedium,
+                ),
+                const SizedBox(height: Sp.md),
+                TextButton.icon(
+                  onPressed: _refresh,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Muat ulang'),
+                ),
+              ],
+            ),
           ),
         ],
       );
     }
-    final expiry = _expiryText(
-      instruction.expiresAt ?? payment.payment.expiresAt,
-    );
+
+    final dp =
+        moneyValue(booking.pricing, 'dp_amount_idr') ?? booking.dpAmountIdr;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          'Bayar ${rupiah(payment.payment.amountIdr)}',
-          style: text.titleLarge,
+        const SectionHeader(
+          title: 'Bayar DP',
+          caption: 'Setelah DP masuk, jadwal langsung dikunci.',
         ),
-        const SizedBox(height: Sp.xs),
-        Text('DP untuk booking ${_booking?.code ?? ''}', style: text.bodySmall),
-        const SizedBox(height: Sp.lg),
-        if (instruction.type == 'qris' && instruction.qrString != null)
-          _qrisView(instruction.qrString!, text)
-        else if (instruction.type == 'va' && instruction.vaNumber != null)
-          _vaView(instruction, text)
-        else
-          Text(
-            'Instruksi pembayaran tidak dikenali. Muat ulang atau pilih metode lain.',
-            style: text.bodyMedium,
-          ),
-        if (expiry != null) ...[
-          const SizedBox(height: Sp.md),
-          Row(
+        const SizedBox(height: Sp.md),
+        BookingPanel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Icon(Icons.schedule, size: 18, color: AppColors.warning),
-              const SizedBox(width: Sp.sm),
-              Expanded(
-                child: Text(
-                  expiry,
-                  style: text.bodyMedium?.copyWith(color: AppColors.warning),
+              Row(
+                children: [
+                  Text('DP', style: text.bodySmall),
+                  const Spacer(),
+                  Text(
+                    rupiah(dp),
+                    style: text.titleLarge?.copyWith(
+                      fontFeatures: _tabularFigures,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: Sp.md),
+              for (final method in _paymentMethods) ...[
+                _MethodOption(
+                  label: method.label,
+                  selected: _method == method.value,
+                  onTap: _paying
+                      ? null
+                      : () => setState(() {
+                          _method = method.value;
+                          _payError = null;
+                          _idempotencyKey = null;
+                          _keyMethod = null;
+                        }),
                 ),
+                const SizedBox(height: Sp.sm),
+              ],
+              if (_payError != null) ...[
+                const SizedBox(height: Sp.xs),
+                Semantics(
+                  liveRegion: true,
+                  child: AppError(message: _payError!, compact: true),
+                ),
+                const SizedBox(height: Sp.md),
+              ],
+              PrimaryButton(
+                label: 'Bayar DP',
+                loadingLabel: 'Membuat tagihan…',
+                loading: _paying,
+                onPressed: _pay,
+              ),
+              const SizedBox(height: Sp.sm),
+              Text(
+                'Jangan tutup layar ini saat tagihan dibuat.',
+                style: text.bodySmall,
               ),
             ],
           ),
-        ],
+        ),
       ],
     );
   }
 
-  Widget _qrisView(String qrString, TextTheme text) {
+  Widget _instructionView(PaymentView view, TextTheme text) {
+    final instruction = view.instruction!;
+    final expires = _expiryMoment(view);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text('Bayar DP', style: text.bodySmall),
+        const SizedBox(height: 2),
+        Text(
+          rupiah(view.payment.amountIdr),
+          style: text.titleLarge?.copyWith(fontFeatures: _tabularFigures),
+        ),
+        if (expires != null) ...[
+          const SizedBox(height: Sp.md),
+          _Countdown(expires: expires),
+        ],
+        const SizedBox(height: Sp.lg),
+        const Divider(height: 1),
+        const SizedBox(height: Sp.lg),
+        if (instruction.type == 'qris' && instruction.qrString != null)
+          _qrisBlock(instruction.qrString!, text)
+        else if (instruction.type == 'va' && instruction.vaNumber != null)
+          _vaBlock(instruction, text)
+        else
+          Text(
+            'Instruksi pembayaran tidak dikenali. Muat ulang atau pilih metode '
+            'lain.',
+            style: text.bodyMedium,
+          ),
+      ],
+    );
+  }
+
+  DateTime? _expiryMoment(PaymentView view) {
+    final iso = view.instruction?.expiresAt ?? view.payment.expiresAt;
+    if (iso == null) return null;
+    return DateTime.tryParse(iso)?.toLocal();
+  }
+
+  Widget _qrisBlock(String qrString, TextTheme text) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -795,154 +854,422 @@ class _BookingStatusPageState extends State<BookingStatusPage>
         ),
         const SizedBox(height: Sp.sm),
         Text(
-          'Scan dengan aplikasi bank atau e-wallet yang mendukung QRIS.',
+          'Scan pakai aplikasi bank yang mendukung QRIS.',
           textAlign: TextAlign.center,
           style: text.bodySmall,
         ),
-        ExpansionTile(
-          tilePadding: EdgeInsets.zero,
-          childrenPadding: const EdgeInsets.only(bottom: Sp.sm),
-          title: Text('Kode cadangan', style: text.labelMedium),
-          children: [
-            SelectableText(
-              qrString,
-              style: text.bodySmall?.copyWith(fontFamily: 'monospace'),
-            ),
-          ],
+        const SizedBox(height: Sp.md),
+        OutlinedButton.icon(
+          onPressed: () => _showQrSheet(qrString, text),
+          icon: const Icon(Icons.download_outlined, size: 20),
+          label: const Text('Simpan kode QR'),
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size.fromHeight(48),
+            foregroundColor: AppColors.primary,
+            side: const BorderSide(color: AppColors.line),
+          ),
         ),
       ],
     );
   }
 
-  Widget _vaView(PaymentInstruction instruction, TextTheme text) {
+  Widget _vaBlock(PaymentInstruction instruction, TextTheme text) {
     final number = instruction.vaNumber!;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
           (instruction.bank ?? 'Virtual Account').toUpperCase(),
-          style: text.bodySmall,
+          style: text.labelSmall?.copyWith(color: AppColors.inkMuted),
         ),
         const SizedBox(height: Sp.xs),
-        Text(
+        SelectableText(
           number,
-          textAlign: TextAlign.center,
           style: text.titleLarge?.copyWith(
             fontFamily: 'monospace',
-            letterSpacing: 0.5,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 1.1,
+            fontFeatures: _tabularFigures,
           ),
         ),
-        const SizedBox(height: Sp.sm),
-        Center(
-          child: TextButton.icon(
-            onPressed: () => _copyText(number, 'Nomor VA disalin.'),
-            icon: const Icon(Icons.copy, size: 18),
-            label: const Text('Salin nomor VA'),
+        const SizedBox(height: Sp.md),
+        OutlinedButton.icon(
+          onPressed: () => _copyText(number, 'Nomor VA disalin.'),
+          icon: const Icon(Icons.copy, size: 20),
+          label: const Text('Salin nomor VA'),
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size.fromHeight(48),
+            foregroundColor: AppColors.primary,
+            side: const BorderSide(color: AppColors.line),
           ),
         ),
       ],
     );
   }
 
-  String? _expiryText(String? iso) {
-    if (iso == null) return null;
-    final parsed = DateTime.tryParse(iso)?.toLocal();
-    if (parsed == null) return null;
-    final now = DateTime.now();
-    final sameDay =
-        parsed.year == now.year &&
-        parsed.month == now.month &&
-        parsed.day == now.day;
-    final date = sameDay ? '' : '${formatDayMonth(parsed)} ';
-    return 'Berlaku sampai $date${formatTime(parsed)}';
+  Future<void> _showQrSheet(String qrString, TextTheme text) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.card,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(Radii.lg)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(Sp.xl),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('Simpan kode QR', style: text.titleLarge),
+              const SizedBox(height: Sp.lg),
+              Center(
+                child: Container(
+                  padding: const EdgeInsets.all(Sp.sm),
+                  decoration: BoxDecoration(
+                    color: AppColors.card,
+                    borderRadius: BorderRadius.circular(Radii.sm),
+                    border: Border.all(color: AppColors.line),
+                  ),
+                  child: QrImageView(
+                    data: qrString,
+                    version: QrVersions.auto,
+                    size: 240,
+                    backgroundColor: AppColors.card,
+                    eyeStyle: const QrEyeStyle(
+                      eyeShape: QrEyeShape.square,
+                      color: AppColors.ink,
+                    ),
+                    dataModuleStyle: const QrDataModuleStyle(
+                      dataModuleShape: QrDataModuleShape.square,
+                      color: AppColors.ink,
+                    ),
+                    semanticsLabel: 'Kode QRIS pembayaran DP',
+                  ),
+                ),
+              ),
+              const SizedBox(height: Sp.lg),
+              Text(
+                'Screenshot layar ini untuk menyimpan kode QR. Kode ini dipakai '
+                'sekali untuk membayar DP.',
+                textAlign: TextAlign.center,
+                style: text.bodyMedium,
+              ),
+              const SizedBox(height: Sp.lg),
+              PrimaryButton(
+                label: 'Tutup',
+                onPressed: () => Navigator.pop(sheetContext),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
-  Widget _actionSection(BookingView booking, TextTheme text) {
-    final digits = whatsappDigits(booking.vendor.whatsapp);
-    return BookingSection(
-      title: 'Butuh bantuan?',
-      child: BookingPanel(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (digits != null) ...[
-              OutlinedButton.icon(
-                onPressed: _openWhatsApp,
-                icon: const Icon(Icons.chat_outlined, size: 20),
-                label: const Text('Chat vendor di WhatsApp'),
-                style: OutlinedButton.styleFrom(
-                  minimumSize: const Size.fromHeight(48),
-                  foregroundColor: AppColors.primary,
-                  side: const BorderSide(color: AppColors.line),
+  Widget _timeline(BookingView booking, TextTheme text) {
+    final lifecycle = booking.lifecycleStatus;
+    final dpDone = isDpSettled(booking.paymentStatus);
+    final confirmed = {
+      'confirmed',
+      'in_progress',
+      'completed',
+    }.contains(lifecycle);
+    final eventDone = lifecycle == 'completed';
+    final closed = _closedLifecycles.contains(lifecycle);
+
+    final steps = <({String title, String? caption, _StepState state})>[
+      (
+        title: 'Booking dibuat',
+        caption: formatDateIso(booking.createdAt),
+        state: _StepState.done,
+      ),
+      (
+        title: 'DP diterima',
+        caption: null,
+        state: dpDone
+            ? _StepState.done
+            : closed
+            ? _StepState.pending
+            : _StepState.active,
+      ),
+      (
+        title: 'Dikonfirmasi vendor',
+        caption: null,
+        state: confirmed
+            ? _StepState.done
+            : dpDone && !closed
+            ? _StepState.active
+            : _StepState.pending,
+      ),
+      (
+        title: 'Acara',
+        caption: null,
+        state: eventDone
+            ? _StepState.done
+            : confirmed && !closed
+            ? _StepState.active
+            : _StepState.pending,
+      ),
+    ];
+
+    return Column(
+      children: [
+        for (var index = 0; index < steps.length; index++)
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SizedBox(
+                  width: 24,
+                  child: Column(
+                    children: [
+                      _StepDot(state: steps[index].state),
+                      if (index < steps.length - 1)
+                        Expanded(
+                          child: Container(
+                            width: 2,
+                            color: steps[index].state == _StepState.done
+                                ? AppColors.accent
+                                : AppColors.line,
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
-              ),
-              const SizedBox(height: Sp.sm),
-            ],
-            TextButton.icon(
-              onPressed: _copyCode,
-              icon: const Icon(Icons.copy, size: 18),
-              label: const Text('Salin kode booking'),
+                const SizedBox(width: Sp.md),
+                Expanded(
+                  child: Padding(
+                    padding: EdgeInsets.only(
+                      bottom: index < steps.length - 1 ? Sp.lg : 0,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                steps[index].title,
+                                style: text.titleMedium?.copyWith(
+                                  color: switch (steps[index].state) {
+                                    _StepState.active => AppColors.primary,
+                                    _StepState.done => AppColors.ink,
+                                    _StepState.pending => AppColors.inkMuted,
+                                  },
+                                ),
+                              ),
+                            ),
+                            if (steps[index].state == _StepState.active) ...[
+                              const SizedBox(width: Sp.sm),
+                              const StatusPill(
+                                label: 'Sekarang',
+                                tone: PillTone.brand,
+                              ),
+                            ],
+                          ],
+                        ),
+                        if (steps[index].caption != null) ...[
+                          const SizedBox(height: 2),
+                          Text(steps[index].caption!, style: text.bodySmall),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ),
-            if (_canCancel) ...[
-              const SizedBox(height: Sp.xs),
-              const Divider(height: 1),
-              const SizedBox(height: Sp.xs),
-              TextButton.icon(
-                onPressed: _cancelBusy ? null : _cancel,
-                icon: const Icon(Icons.close, size: 18),
-                label: Text(_cancelBusy ? 'Membatalkan…' : 'Batalkan booking'),
-                style: TextButton.styleFrom(foregroundColor: AppColors.danger),
+          ),
+      ],
+    );
+  }
+
+  Widget _detail(BookingView booking, TextTheme text) {
+    final slot = booking.slots.isEmpty ? null : booking.slots.first;
+    final rows = <({IconData icon, String label, String value})>[
+      (
+        icon: Icons.storefront_outlined,
+        label: 'Vendor',
+        value: booking.vendor.displayName,
+      ),
+      (
+        icon: Icons.event_outlined,
+        label: 'Tanggal',
+        value: formatDateIso(booking.event.startDate),
+      ),
+      if (slot != null)
+        (icon: Icons.schedule, label: 'Sesi', value: sessionText(slot.session)),
+      if (booking.event.venueAddress.trim().isNotEmpty)
+        (
+          icon: Icons.place_outlined,
+          label: 'Alamat',
+          value: booking.event.venueAddress,
+        ),
+    ];
+
+    return Column(
+      children: [
+        for (var index = 0; index < rows.length; index++) ...[
+          if (index > 0)
+            const Divider(height: Sp.xl, color: AppColors.line, thickness: 1),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(rows[index].icon, size: 18, color: AppColors.inkMuted),
+              const SizedBox(width: Sp.md),
+              SizedBox(
+                width: 64,
+                child: Text(rows[index].label, style: text.bodySmall),
               ),
-            ],
-            if (_cancelError != null) ...[
-              const SizedBox(height: Sp.sm),
-              Semantics(
-                liveRegion: true,
-                child: AppError(message: _cancelError!, compact: true),
-              ),
-            ],
-            if (digits == null)
-              Padding(
-                padding: const EdgeInsets.only(top: Sp.sm),
+              const SizedBox(width: Sp.sm),
+              Expanded(
                 child: Text(
-                  'Nomor WhatsApp vendor belum tersedia.',
-                  style: text.bodySmall,
+                  rows[index].value,
+                  style: text.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
                 ),
               ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _actionBar(BookingView booking, TextTheme text) {
+    final digits = whatsappDigits(booking.vendor.whatsapp);
+    return StickyActionBar(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          PrimaryButton(
+            label: 'Hubungi vendor (WhatsApp)',
+            icon: Icons.chat_outlined,
+            onPressed: digits == null ? null : _openWhatsApp,
+          ),
+          if (_canCancel) ...[
+            const SizedBox(height: Sp.sm),
+            OutlinedButton.icon(
+              onPressed: _cancelBusy ? null : _cancel,
+              icon: const Icon(Icons.close, size: 20),
+              label: Text(_cancelBusy ? 'Membatalkan…' : 'Batalkan booking'),
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size.fromHeight(52),
+                foregroundColor: AppColors.danger,
+                side: const BorderSide(color: AppColors.danger),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(Radii.sm),
+                ),
+                textStyle: text.labelLarge?.copyWith(color: AppColors.danger),
+              ),
+            ),
           ],
-        ),
+        ],
       ),
     );
   }
 }
 
-class _StepDot extends StatelessWidget {
-  const _StepDot({required this.done, required this.current});
+enum _StepState { done, active, pending }
 
-  final bool done;
-  final bool current;
+class _StepDot extends StatelessWidget {
+  const _StepDot({required this.state});
+
+  final _StepState state;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 24,
-      height: 24,
-      decoration: BoxDecoration(
-        color: done
-            ? AppColors.accentSoft
-            : current
-            ? AppColors.primary
-            : AppColors.neutralSoft,
-        shape: BoxShape.circle,
+    final (background, child) = switch (state) {
+      _StepState.done => (
+        AppColors.accent,
+        const Icon(Icons.check, size: 14, color: AppColors.onPrimary),
       ),
-      child: Icon(
-        done ? Icons.check : Icons.circle,
-        size: done ? 15 : 8,
-        color: done
-            ? AppColors.accent
-            : current
-            ? AppColors.onPrimary
-            : AppColors.inkMuted,
+      _StepState.active => (
+        AppColors.primary,
+        Container(
+          width: 8,
+          height: 8,
+          decoration: const BoxDecoration(
+            color: AppColors.onPrimary,
+            shape: BoxShape.circle,
+          ),
+        ),
+      ),
+      _StepState.pending => (
+        AppColors.neutralSoft,
+        Container(
+          width: 8,
+          height: 8,
+          decoration: const BoxDecoration(
+            color: AppColors.line,
+            shape: BoxShape.circle,
+          ),
+        ),
+      ),
+    };
+    return Container(
+      width: 22,
+      height: 22,
+      decoration: BoxDecoration(color: background, shape: BoxShape.circle),
+      child: Center(child: child),
+    );
+  }
+}
+
+class _Countdown extends StatelessWidget {
+  const _Countdown({required this.expires});
+
+  final DateTime expires;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final left = expires.difference(DateTime.now());
+    final expired = left <= Duration.zero;
+    final remaining = expired
+        ? 'Waktu pembayaran sudah lewat.'
+        : '${left.inHours.toString().padLeft(2, '0')}:'
+              '${(left.inMinutes % 60).toString().padLeft(2, '0')}:'
+              '${(left.inSeconds % 60).toString().padLeft(2, '0')} lagi';
+
+    return Container(
+      padding: const EdgeInsets.all(Sp.md),
+      decoration: BoxDecoration(
+        color: AppColors.warningSoft,
+        borderRadius: BorderRadius.circular(Radii.sm),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.only(top: 1),
+            child: Icon(Icons.schedule, size: 18, color: AppColors.warning),
+          ),
+          const SizedBox(width: Sp.sm),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Selesaikan sebelum ${formatTime(expires)}',
+                  style: text.bodyMedium?.copyWith(
+                    color: AppColors.warning,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  remaining,
+                  style: text.labelSmall?.copyWith(
+                    color: AppColors.warning,
+                    fontFeatures: _tabularFigures,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1000,49 +1327,17 @@ class _MethodOption extends StatelessWidget {
   }
 }
 
-class _WeakSignalBanner extends StatelessWidget {
-  const _WeakSignalBanner({required this.onRetry});
+class _CancelSheet extends StatefulWidget {
+  const _CancelSheet({required this.booking, required this.consequence});
 
-  final Future<void> Function() onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    return Container(
-      padding: const EdgeInsets.fromLTRB(Sp.md, Sp.xs, Sp.xs, Sp.xs),
-      decoration: BoxDecoration(
-        color: AppColors.warningSoft,
-        borderRadius: BorderRadius.circular(Radii.sm),
-      ),
-      child: Row(
-        children: [
-          const Icon(
-            Icons.wifi_off_outlined,
-            size: 20,
-            color: AppColors.warning,
-          ),
-          const SizedBox(width: Sp.sm),
-          Expanded(
-            child: Text(
-              'Sinyal lemah — mencoba lagi',
-              style: text.bodyMedium?.copyWith(color: AppColors.warning),
-            ),
-          ),
-          TextButton(onPressed: onRetry, child: const Text('Coba lagi')),
-        ],
-      ),
-    );
-  }
-}
-
-class _CancelDialog extends StatefulWidget {
-  const _CancelDialog();
+  final BookingView booking;
+  final String consequence;
 
   @override
-  State<_CancelDialog> createState() => _CancelDialogState();
+  State<_CancelSheet> createState() => _CancelSheetState();
 }
 
-class _CancelDialogState extends State<_CancelDialog> {
+class _CancelSheetState extends State<_CancelSheet> {
   final _reason = TextEditingController();
   String? _error;
 
@@ -1064,45 +1359,73 @@ class _CancelDialogState extends State<_CancelDialog> {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
-    return AlertDialog(
-      scrollable: true,
-      title: const Text('Batalkan booking?'),
-      content: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            'Vendor akan melihat alasan ini. Tulis alasan minimal 10 karakter.',
-            style: text.bodyMedium,
-          ),
-          const SizedBox(height: Sp.md),
-          TextField(
-            controller: _reason,
-            autofocus: true,
-            minLines: 2,
-            maxLines: 4,
-            maxLength: 500,
-            decoration: InputDecoration(
-              labelText: 'Alasan pembatalan',
-              errorText: _error,
-              counterText: '',
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(Sp.xl, Sp.xl, Sp.xl, Sp.xl + bottomInset),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('Batalkan booking?', style: text.titleLarge),
+            const SizedBox(height: Sp.xs),
+            Text(
+              '${widget.booking.code} · ${widget.booking.vendor.displayName}',
+              style: text.bodySmall,
             ),
-          ),
-        ],
+            const SizedBox(height: Sp.lg),
+            InfoStrip(
+              message: widget.consequence,
+              icon: Icons.info_outline,
+              tone: InfoTone.warning,
+            ),
+            const SizedBox(height: Sp.lg),
+            TextField(
+              controller: _reason,
+              autofocus: true,
+              minLines: 2,
+              maxLines: 4,
+              maxLength: 500,
+              decoration: InputDecoration(
+                labelText: 'Alasan pembatalan',
+                hintText: 'Tulis alasan minimal 10 karakter',
+                errorText: _error,
+                counterText: '',
+              ),
+              onChanged: (_) {
+                if (_error != null) setState(() => _error = null);
+              },
+            ),
+            const SizedBox(height: Sp.sm),
+            Row(
+              children: [
+                Expanded(
+                  child: TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    style: TextButton.styleFrom(
+                      minimumSize: const Size.fromHeight(48),
+                    ),
+                    child: const Text('Kembali'),
+                  ),
+                ),
+                const SizedBox(width: Sp.sm),
+                Expanded(
+                  flex: 2,
+                  child: FilledButton(
+                    onPressed: _submit,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppColors.danger,
+                      foregroundColor: AppColors.onPrimary,
+                      minimumSize: const Size.fromHeight(48),
+                    ),
+                    child: const Text('Batalkan booking'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Kembali'),
-        ),
-        FilledButton(
-          onPressed: _submit,
-          style: FilledButton.styleFrom(
-            backgroundColor: AppColors.danger,
-            foregroundColor: AppColors.onPrimary,
-          ),
-          child: const Text('Batalkan booking'),
-        ),
-      ],
     );
   }
 }

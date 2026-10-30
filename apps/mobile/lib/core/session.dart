@@ -13,12 +13,14 @@ class Session extends ChangeNotifier {
     : _storage = storage ?? const FlutterSecureStorage();
 
   static const _tokenKey = 'access_token';
+  static const _refreshKey = 'refresh_token';
   static const _expiryKey = 'expires_at';
   static const _userKey = 'user';
 
   final FlutterSecureStorage _storage;
 
   String? _token;
+  String? _refreshToken;
   DateTime? _expiresAt;
   Map<String, dynamic>? _user;
   bool _restored = false;
@@ -30,6 +32,8 @@ class Session extends ChangeNotifier {
   bool get authorized => _token != null;
   bool get restored => _restored;
   String? get token => _token;
+  /// Opaque token used to refresh after the access token expired.
+  String? get refreshToken => _refreshToken;
   DateTime? get expiresAt => _expiresAt;
   AppUser? get user => _user == null ? null : AppUser.fromJson(_user!);
 
@@ -50,9 +54,11 @@ class Session extends ChangeNotifier {
   Future<void> restore() async {
     try {
       final token = await _storage.read(key: _tokenKey);
+      final refreshToken = await _storage.read(key: _refreshKey);
       final expiry = await _storage.read(key: _expiryKey);
       final userJson = await _storage.read(key: _userKey);
       _token = token == null || token.isEmpty ? null : token;
+      _refreshToken = refreshToken == null || refreshToken.isEmpty ? null : refreshToken;
       _expiresAt = expiry == null ? null : DateTime.tryParse(expiry);
       _user = userJson == null ? null : _decodeUser(userJson);
     } catch (_) {
@@ -60,9 +66,11 @@ class Session extends ChangeNotifier {
       await clear();
     }
 
-    if (_token != null && _isExpired) {
+    // A persisted refresh token keeps the session alive across cold starts even
+    // after the 15-minute access token expired.
+    if ((_token == null || _isExpired) && _refreshToken != null) {
       await _refreshNow();
-      if (_token != null && _isExpired) {
+      if (_token == null || _isExpired) {
         await clear();
         _notice = 'Sesi berakhir atau server tidak terjangkau. Silakan masuk lagi.';
       }
@@ -93,6 +101,10 @@ class Session extends ChangeNotifier {
         : 3600;
 
     _token = token;
+    final refreshToken = data['refresh_token'];
+    if (refreshToken is String && refreshToken.isNotEmpty) {
+      _refreshToken = refreshToken;
+    }
     _expiresAt = DateTime.now().toUtc().add(Duration(seconds: seconds));
     final user = data['user'];
     if (user is Map) _user = user.cast<String, dynamic>();
@@ -109,10 +121,12 @@ class Session extends ChangeNotifier {
     _refreshTimer?.cancel();
     _refreshTimer = null;
     _token = null;
+    _refreshToken = null;
     _expiresAt = null;
     _user = null;
     try {
       await _storage.delete(key: _tokenKey);
+      await _storage.delete(key: _refreshKey);
       await _storage.delete(key: _expiryKey);
       await _storage.delete(key: _userKey);
     } catch (_) {
@@ -152,6 +166,7 @@ class Session extends ChangeNotifier {
   Future<void> _persist() async {
     try {
       await _storage.write(key: _tokenKey, value: _token);
+      await _storage.write(key: _refreshKey, value: _refreshToken);
       await _storage.write(key: _expiryKey, value: _expiresAt?.toIso8601String());
       final user = _user;
       await _storage.write(key: _userKey, value: user == null ? null : jsonEncode(user));

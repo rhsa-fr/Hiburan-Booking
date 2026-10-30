@@ -1,0 +1,1829 @@
+<!doctype html>
+<html lang="id">
+<head><script type="application/json" data-od-external-dependencies>["https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap"]</script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Tarlink Vendor — Enam Layar Vendor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0B1220;
+    --canvas:#EEEEE9;
+    --card:#FAFAF7;
+    --card-2:#FFFFFF;
+    --line:#DDDDD7;
+    --muted:#606870;
+    --lime:#D9FB4F;
+    --lime-dk:#BDDB2C;
+    --amber:#9A4208;
+    --green:#076C48;
+  }
+  *,*::before,*::after{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    color:var(--ink);min-height:100vh;
+    font-family:"Plus Jakarta Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+    /* outer board: warm neutral + big lime glow top-centre */
+    background:
+      radial-gradient(ellipse 900px 500px at 50% -5%,rgba(217,251,79,.28),transparent 60%),
+      radial-gradient(ellipse 700px 500px at 90% 110%,rgba(11,18,32,.10),transparent 65%),
+      #E4E5E0;
+  }
+  /* outer board grid */
+  body::before{
+    content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+    background-image:
+      linear-gradient(rgba(11,18,32,.05) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(11,18,32,.05) 1px,transparent 1px);
+    background-size:28px 28px;
+    -webkit-mask-image:radial-gradient(ellipse 70% 65% at 50% 40%,#000 10%,transparent 75%);
+    mask-image:radial-gradient(ellipse 70% 65% at 50% 40%,#000 10%,transparent 75%);
+  }
+  ::selection{background:var(--ink);color:var(--lime)}
+  :focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+
+  /* ── presentation wrapper ── */
+  .page{position:relative;z-index:1;display:flex;flex-direction:column;min-height:100vh}
+
+  /* top bar */
+  .topbar{border-bottom:1px solid rgba(11,18,32,.11);background:rgba(228,229,224,.82);backdrop-filter:blur(8px)}
+  .topbar-in{
+    max-width:1200px;margin:0 auto;padding:16px 32px;
+    display:flex;align-items:center;justify-content:space-between;gap:20px;
+  }
+  .brand{display:flex;align-items:center;gap:10px}
+  .bmark{
+    width:30px;height:30px;display:grid;place-items:center;
+    background:var(--ink);color:var(--lime);border-radius:6px;
+    font-size:12.5px;font-weight:800;letter-spacing:.02em;
+  }
+  .bname{font-size:13px;font-weight:800;letter-spacing:-.01em;color:var(--ink)}
+  .bsub{font-size:11px;color:var(--muted);margin-top:1px}
+  .tcenter{text-align:center}
+  .tkicker{font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:#747D82;margin:0 0 2px}
+  .ttitle{font-size:14.5px;font-weight:700;letter-spacing:-.012em;margin:0}
+  .chips{display:flex;gap:7px}
+  .chip{
+    padding:4px 9px;border:1px solid rgba(11,18,32,.14);border-radius:5px;
+    background:rgba(255,255,255,.5);font-size:11px;font-weight:600;color:#414C5C;
+  }
+
+  /* stage */
+  .stage{
+    flex:1;display:flex;flex-wrap:wrap;justify-content:center;align-items:flex-start;gap:52px 60px;
+    padding:44px 32px 40px;max-width:1160px;width:100%;margin:0 auto;
+  }
+  .stage figure{margin:0;flex:0 0 auto}
+
+  figcaption{
+    display:flex;align-items:baseline;gap:8px;margin-top:13px;padding-top:9px;
+    border-top:1px solid rgba(11,18,32,.13);
+  }
+  .fno{font-size:11px;font-weight:800;color:#818894;font-variant-numeric:tabular-nums}
+  .fname{font-size:12.5px;font-weight:700}
+  .fnote{margin-left:auto;font-size:11px;color:var(--muted)}
+
+  /* footer */
+  .footbar{border-top:1px solid rgba(11,18,32,.11);margin-top:auto}
+  .footbar-in{
+    max-width:1200px;margin:0 auto;padding:13px 32px 16px;
+    display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;
+  }
+  .toks{display:flex;gap:14px;flex-wrap:wrap}
+  .tok{display:flex;align-items:center;gap:6px;font-size:11px;color:#4E5660}
+  .tok i{width:12px;height:12px;border-radius:3px;border:1px solid rgba(11,18,32,.13);display:block;flex:0 0 auto}
+  .fnl{font-size:11px;color:var(--muted)}
+
+  /* ── device shell ── */
+  .device{
+    width:390px;height:844px;flex:0 0 auto;
+    background:#131E32;
+    border-radius:48px;
+    padding:10px;
+    box-shadow:
+      0 0 0 1px rgba(255,255,255,.08) inset,
+      0 0 0 1px rgba(0,0,0,.55),
+      0 36px 72px -36px rgba(11,18,32,.65),
+      0 12px 24px -16px rgba(11,18,32,.35);
+  }
+  .screen{
+    position:relative;
+    width:100%;height:100%;
+    border-radius:40px;
+    overflow:hidden;
+    display:flex;flex-direction:column;
+    /* screen bg: warm tinted, slightly different per zone via sections */
+    background:#EEEEE9;
+  }
+
+  /* ── dark header ── */
+  .apphead{
+    flex:0 0 auto;z-index:2;position:relative;
+    background:
+      radial-gradient(rgba(255,255,255,.08) 1px,transparent 1px) 0 0/9px 9px,
+      linear-gradient(165deg,#182540 0%,#0B1220 100%);
+    color:#fff;
+  }
+  .apphead::after{
+    content:"";position:absolute;left:0;right:0;bottom:0;height:2px;
+    background:var(--lime);
+  }
+  .sbar{
+    height:42px;display:flex;align-items:center;justify-content:space-between;
+    padding:0 20px;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums;
+  }
+  .sbar-r{display:flex;align-items:center;gap:6px}
+  .head-row{
+    display:flex;align-items:center;justify-content:space-between;
+    gap:12px;padding:0 18px 10px;
+  }
+  .vnd{display:flex;align-items:center;gap:10px;min-width:0}
+  .vmark{
+    width:34px;height:34px;flex:0 0 auto;display:grid;place-items:center;
+    border:1px solid rgba(217,251,79,.4);border-radius:7px;
+    background:rgba(217,251,79,.08);color:var(--lime);
+    font-size:11px;font-weight:800;letter-spacing:.05em;
+  }
+  .vname{font-size:14px;font-weight:800;letter-spacing:-.012em;color:#fff;margin:0;line-height:1.25}
+  .vsub{font-size:11px;color:rgba(255,255,255,.55);margin:2px 0 0}
+  .hbtn{
+    width:34px;height:34px;flex:0 0 auto;display:grid;place-items:center;
+    border:1px solid rgba(255,255,255,.16);border-radius:7px;
+    background:rgba(255,255,255,.04);color:#fff;cursor:pointer;
+    transition:background .14s,border-color .14s;
+  }
+  .hbtn:hover{background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.28)}
+
+  /* money strip in header */
+  .money-strip{
+    display:flex;align-items:flex-end;justify-content:space-between;gap:12px;
+    padding:8px 18px 11px;border-top:1px solid rgba(255,255,255,.10);
+  }
+  .ms-main .ms-lbl{
+    display:block;font-size:11px;font-weight:600;letter-spacing:.11em;
+    text-transform:uppercase;color:rgba(255,255,255,.48);
+  }
+  .ms-main .ms-val{
+    display:block;margin-top:1px;font-size:22px;font-weight:800;letter-spacing:-.03em;
+    line-height:1.05;color:var(--lime);font-variant-numeric:tabular-nums;
+  }
+  .ms-side{text-align:right}
+  .ms-side .ms-date{font-size:11px;color:rgba(255,255,255,.45);font-variant-numeric:tabular-nums}
+  .ms-side .ms-next{
+    display:block;margin-top:2px;font-size:11.5px;font-weight:600;
+    color:rgba(255,255,255,.78);font-variant-numeric:tabular-nums;
+  }
+
+  /* ── scroll body ── */
+  .body{
+    flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;
+    padding:0 16px 24px;
+    scrollbar-width:thin;scrollbar-color:#C5C7C0 transparent;
+    background-image:radial-gradient(circle,rgba(11,18,32,.055) 1px,transparent 1px);
+    background-size:22px 22px;
+    background-color:#EEEEE9;
+  }
+  .body::-webkit-scrollbar{width:3px}
+  .body::-webkit-scrollbar-thumb{background:#C5C7C0;border-radius:2px}
+
+  /* lead */
+  .lead{padding:18px 0 12px}
+  .lead h1{margin:0;font-size:25px;font-weight:800;letter-spacing:-.032em;line-height:1.08}
+  .lead p{margin:7px 0 0;font-size:12.5px;line-height:1.5;color:var(--muted);max-width:33ch}
+  .lead b{font-weight:800;color:var(--ink);font-variant-numeric:tabular-nums}
+
+  /* ── queue cards ── */
+  .queue{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+
+  .job{
+    background:var(--card-2);
+    border:1px solid var(--line);
+    border-radius:10px;
+    overflow:hidden;
+    box-shadow:0 2px 10px -4px rgba(11,18,32,.14),0 1px 2px rgba(11,18,32,.06);
+    animation:rise .45s cubic-bezier(.16,1,.3,1) both;
+    transition:box-shadow .16s,transform .16s;
+  }
+  .job:hover{box-shadow:0 10px 28px -10px rgba(11,18,32,.24),0 2px 4px rgba(11,18,32,.07);transform:translateY(-1px)}
+  .job:nth-child(1){animation-delay:.04s}
+  .job:nth-child(2){animation-delay:.10s}
+  .job:nth-child(3){animation-delay:.16s}
+
+  /* top part of card: date + content */
+  .job-inner{display:flex;gap:0}
+
+  /* date column — distinct bg */
+  .job-cal{
+    flex:0 0 52px;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:1px;padding:12px 0 10px;
+    background:#F4F4EF;border-right:1px solid var(--line);
+  }
+  .job-cal .jdow{font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);line-height:1.2}
+  .job-cal .jdom{font-size:21px;font-weight:800;letter-spacing:-.025em;font-variant-numeric:tabular-nums;line-height:1.1;color:var(--ink)}
+  .job-cal .jmon{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);line-height:1.2}
+
+  /* content column */
+  .job-content{flex:1 1 auto;min-width:0;padding:12px 12px 0}
+  .job-title{margin:0;font-size:14px;font-weight:700;letter-spacing:-.014em;line-height:1.3}
+  .job-who{margin:3px 0 0;font-size:11.5px;color:var(--muted)}
+  .job-time{margin:2px 0 0;font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+
+  /* bottom strip: money + actions */
+  .job-foot{
+    display:flex;align-items:center;justify-content:space-between;gap:8px;
+    padding:8px 12px 10px;
+    border-top:1px solid #EAEAE4;
+    background:#F7F7F3;
+  }
+  .job-val{font-size:14px;font-weight:700;letter-spacing:-.014em;font-variant-numeric:tabular-nums;color:var(--ink)}
+  .job-timer{
+    display:inline-flex;align-items:center;gap:4px;
+    font-size:11px;font-weight:700;color:var(--amber);font-variant-numeric:tabular-nums;
+    margin-top:2px;
+  }
+  .job-timer::before{content:"";width:4px;height:4px;border-radius:50%;background:var(--amber);flex:0 0 auto}
+  .job-timer.calm{color:var(--muted)}
+  .job-timer.calm::before{background:#A0A8B0}
+  .job-acts{display:flex;gap:5px}
+
+  .btn{
+    height:32px;padding:0 12px;border-radius:6px;border:1px solid transparent;
+    font:inherit;font-size:12px;font-weight:700;cursor:pointer;
+    transition:background .14s,border-color .14s,transform .1s;
+  }
+  .btn:active{transform:translateY(1px)}
+  .btn-p{background:var(--lime);border-color:var(--lime-dk);color:var(--ink)}
+  .btn-p:hover{background:var(--lime-dk)}
+  .btn-s{background:#fff;border-color:#D4D6D0;color:var(--ink)}
+  .btn-s:hover{background:#F4F4F0;border-color:#BBBDB7}
+
+  /* accepted / declined states */
+  .job-done{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;color:var(--green)}
+  .job-done::before{content:"";width:6px;height:6px;background:var(--green)}
+  .job-declined{display:inline-flex;align-items:center;gap:8px;font-size:11.5px;font-weight:600;color:var(--muted)}
+  .job-declined::before{content:"";width:6px;height:6px;background:#B0B4B8}
+  .undo{padding:0;border:0;background:none;font:inherit;font-size:11.5px;font-weight:600;color:var(--ink);text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+
+  /* ── sections ── */
+  .sec{
+    display:flex;align-items:baseline;justify-content:space-between;gap:12px;
+    padding:20px 0 9px;
+  }
+  .sec h2{margin:0;font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#3F4A58}
+  .sec small{font-size:11px;color:var(--muted)}
+
+  /* week grid — inside a card surface */
+  .week-wrap{
+    padding:11px 12px 10px;
+    background:var(--card-2);border:1px solid var(--line);border-radius:10px;
+    box-shadow:0 1px 4px rgba(11,18,32,.06);
+  }
+  .week{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+  .day{display:flex;flex-direction:column;align-items:center;gap:5px}
+  .day .wd{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+  .day .dn{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--ink)}
+  .day.cur .dn{color:var(--ink);text-decoration:underline;text-decoration-color:var(--lime-dk);text-underline-offset:2px;text-decoration-thickness:2px}
+  .slots{display:flex;flex-direction:column;width:100%}
+  .slot{height:7px;border-radius:2px;background:#DDDDD7}
+  .slot.on{background:var(--ink)}
+  .wleg{display:flex;gap:12px;margin-top:9px;padding-top:7px;border-top:1px solid #EBEBE5}
+  .wleg span{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--muted)}
+  .wleg i{display:block;width:10px;height:4px;border-radius:1px}
+
+  /* saldo ledger */
+  .panel{
+    background:var(--card-2);border:1px solid var(--line);border-radius:10px;
+    box-shadow:0 1px 4px rgba(11,18,32,.06);overflow:hidden;
+  }
+  .ledger{margin:0;padding:0 14px}
+  .ledger>div{
+    display:flex;align-items:baseline;justify-content:space-between;gap:16px;
+    padding:10px 0;border-bottom:1px solid #EBEBE5;
+  }
+  .ledger>div:last-child{border-bottom:0}
+  .ledger dt{margin:0;font-size:12.5px;color:var(--muted)}
+  .ledger dd{margin:0;font-size:13px;font-weight:700;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+  .ledger .dimm dd{color:#485060;font-weight:600}
+  .ledger .hi dt{color:var(--ink);font-weight:600}
+  .ledger .hi dd{font-size:14.5px;color:var(--green)}
+  .note{margin:8px 0 0;font-size:11px;line-height:1.5;color:#7A8290}
+
+  /* ── bottom nav ── */
+  .nav{
+    flex:0 0 auto;display:grid;grid-template-columns:repeat(4,1fr);
+    padding:8px 2px 10px;
+    background:var(--card-2);border-top:1px solid var(--line);
+    position:relative;z-index:2;
+  }
+  .ntab{
+    position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;padding:5px 0 0;
+    border:0;background:none;font:inherit;font-size:11px;font-weight:600;color:#88929C;cursor:pointer;
+    transition:color .14s;
+  }
+  .ntab svg{width:20px;height:20px}
+  .ntab:hover{color:#3F4A58}
+  .ntab[aria-current]{color:var(--ink);font-weight:700}
+  .ntab[aria-current]::before{
+    content:"";position:absolute;top:-8px;width:20px;height:2px;
+    background:var(--lime-dk);border-radius:1px;
+  }
+
+  /* ── sheet ── */
+  .sheet-bg{
+    position:absolute;inset:0;z-index:20;display:none;align-items:flex-end;
+    background:rgba(11,18,32,.38);
+  }
+  .sheet-bg.open{display:flex}
+  .sheet-box{
+    width:100%;padding:16px 18px 20px;
+    background:var(--card-2);border-top:2px solid var(--lime);border-radius:14px 14px 0 0;
+    transform:translateY(8px);opacity:0;
+    transition:transform .28s cubic-bezier(.16,1,.3,1),opacity .18s;
+  }
+  .sheet-bg.open .sheet-box{transform:none;opacity:1}
+  .sheet-hd{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:4px}
+  .sheet-hd p{margin:0;font-size:14.5px;font-weight:800;letter-spacing:-.012em}
+  .sheet-hd small{display:block;margin-top:2px;font-size:11.5px;color:var(--muted)}
+  .sheet-hd .hbtn{border-color:var(--line);background:#F4F4F0;color:var(--ink)}
+  .sheet-close{width:100%;height:38px;margin-top:12px;font-size:13px}
+
+  /* ── DETAIL SCREEN ── */
+  .det-head .head-row{padding:0 18px 13px}
+  .back{
+    width:32px;height:32px;flex:0 0 auto;display:grid;place-items:center;margin-left:-6px;
+    border:1px solid rgba(255,255,255,.16);border-radius:7px;
+    background:rgba(255,255,255,.04);color:#fff;cursor:pointer;
+    transition:background .14s;
+  }
+  .back:hover{background:rgba(255,255,255,.1)}
+  .det-h1{flex:1 1 auto;margin:0;font-size:15px;font-weight:700;letter-spacing:-.012em;color:#fff}
+  .badge-wait{
+    flex:0 0 auto;display:inline-flex;align-items:center;gap:5px;
+    font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--lime);
+  }
+  .badge-wait::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--lime)}
+
+  /* event card — floats over the dark-to-light transition */
+  .evt-card{
+    margin:14px 0 0;
+    background:var(--card-2);border:1px solid var(--line);border-radius:10px;
+    box-shadow:0 6px 20px -10px rgba(11,18,32,.38);
+    overflow:hidden;
+  }
+  .evt-top{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:10px 14px 8px;border-bottom:1px solid #EBEBE5;
+    background:#F7F7F3;
+  }
+  .evt-kicker{font-size:11px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:var(--muted)}
+  .pill-dp{
+    display:inline-flex;align-items:center;gap:4px;padding:3px 7px;
+    border-radius:4px;background:#EAFAF3;color:#076C48;font-size:11px;font-weight:700;
+  }
+  .pill-dp::before{content:"";width:4px;height:4px;border-radius:50%;background:#076C48}
+  .evt-body{padding:12px 14px 14px}
+  .evt-day{margin:0;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+  .evt-date{margin:5px 0 0;font-size:25px;font-weight:800;letter-spacing:-.034em;line-height:1.04}
+  .evt-time{margin:7px 0 0;font-size:14.5px;font-weight:600;font-variant-numeric:tabular-nums}
+  .evt-sep{height:1px;margin:11px 0;background:#EBEBE5}
+  .evt-kind{margin:0;font-size:13px;font-weight:700}
+  .evt-place{margin:3px 0 0;font-size:11.5px;color:var(--muted)}
+
+  /* stepper */
+  .stepper{
+    position:relative;display:grid;grid-template-columns:repeat(3,1fr);
+    list-style:none;margin:0;padding:11px 0 9px;
+  }
+  .stepper::before{
+    content:"";position:absolute;left:16.67%;right:16.67%;top:16px;height:1px;background:#DDDDD7;
+  }
+  .step-prog{position:absolute;left:16.67%;top:16px;height:1px;width:33.33%;background:var(--ink)}
+  .stepper li{display:flex;flex-direction:column;align-items:center;gap:7px;text-align:center}
+  .snode{width:9px;height:9px;border:1.5px solid #C0C3BC;background:var(--card-2);position:relative;z-index:1}
+  .stepper li.done .snode{background:var(--ink);border-color:var(--ink)}
+  .stepper li.now .snode{background:var(--lime);border-color:var(--lime-dk);box-shadow:0 0 0 3px rgba(217,251,79,.28)}
+  .sk{font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);font-variant-numeric:tabular-nums}
+  .st{font-size:11.5px;font-weight:600;color:var(--ink)}
+  .stepper li:not(.done):not(.now) .st{color:var(--muted)}
+
+  /* pay bar */
+  .paybar{padding:12px 14px 11px;border-bottom:1px solid #EBEBE5}
+  .pb-row{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:7px}
+  .pb-row span{font-size:11.5px;color:var(--muted)}
+  .pb-row b{font-size:11.5px;font-weight:700;font-variant-numeric:tabular-nums}
+  .pb-track{height:4px;border-radius:2px;background:#DDDDD7;overflow:hidden}
+  .pb-fill{height:100%;width:30%;background:var(--lime-dk)}
+  .pb-note{margin:5px 0 0;font-size:11px;color:#8A929C;font-variant-numeric:tabular-nums}
+
+  /* person row */
+  .person{display:flex;align-items:center;gap:10px;padding:12px 14px}
+  .avatar{
+    width:34px;height:34px;flex:0 0 auto;display:grid;place-items:center;
+    background:#EEEEE9;border:1px solid var(--line);border-radius:7px;
+    font-size:11px;font-weight:800;color:#3F4A58;letter-spacing:.04em;
+  }
+  .pid{flex:1 1 auto;min-width:0}
+  .pname{margin:0;font-size:13px;font-weight:700}
+  .pphone{margin:2px 0 0;font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .wa{
+    display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 10px;
+    border:1px solid #D4D6D0;border-radius:6px;background:#fff;color:var(--ink);
+    font-size:11.5px;font-weight:700;text-decoration:none;white-space:nowrap;
+    transition:background .14s,border-color .14s;
+  }
+  .wa:hover{background:#F4F4F0;border-color:#BBBDB7}
+
+  /* action bar */
+  .actbar{
+    flex:0 0 auto;z-index:2;position:relative;
+    padding:10px 18px 15px;
+    background:var(--ink);
+  }
+  .actbar::before{content:"";position:absolute;left:0;right:0;top:0;height:2px;background:var(--lime)}
+  .actbar .hint{
+    display:flex;align-items:center;gap:6px;margin:0 0 9px;
+    font-size:11.5px;font-weight:500;color:rgba(255,255,255,.65);font-variant-numeric:tabular-nums;
+  }
+  .actbar .hint::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--lime);flex:0 0 auto}
+  .actbar .hint b{font-weight:700;color:var(--lime)}
+  .actbar-row{display:flex;gap:8px}
+  .abtn{height:42px;font-size:13px;min-width:0}
+  .abtn.pri{flex:2 1 0}
+  .abtn.sec{
+    flex:1 1 0;background:transparent;border-color:rgba(255,255,255,.24);color:#fff;
+  }
+  .abtn.sec:hover{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.4)}
+  .settle-line{
+    display:flex;align-items:center;gap:7px;margin:0;padding:8px 0 2px;
+    font-size:12.5px;font-weight:600;color:var(--lime);
+  }
+  .settle-line::before{content:"";width:6px;height:6px;background:var(--lime)}
+
+  /* ── shared tab head ── */
+  [hidden]:not([hidden="until-found" i]){display:none!important}
+  .tabhead .head-row{align-items:flex-end;padding:2px 18px 14px}
+  .tab-kicker{margin:0 0 3px;font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:rgba(255,255,255,.6)}
+  .tab-title{margin:0;font-size:21px;font-weight:800;letter-spacing:-.03em;line-height:1.12;color:#fff}
+  .tab-tools{display:flex;align-items:center;gap:6px;padding-bottom:1px}
+  .head-pill{display:inline-flex;align-items:center;gap:5px;padding:4px 8px;border-radius:4px;background:rgba(217,251,79,.12);color:var(--lime);font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap}
+  .head-pill::before{content:"";width:4px;height:4px;border-radius:50%;background:currentColor;flex:0 0 auto}
+  .head-pill.muted{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.16);color:rgba(255,255,255,.78);letter-spacing:.02em}
+  .head-pill.muted::before{display:none}
+  .prof-avatar{width:42px;height:42px;flex:0 0 auto;display:grid;place-items:center;border:1px solid rgba(217,251,79,.42);border-radius:8px;background:rgba(217,251,79,.09);color:var(--lime);font-size:12.5px;font-weight:800;letter-spacing:.05em}
+  .body > section:first-child .sec{padding-top:14px}
+  .lead-links{display:flex;gap:8px;margin-top:10px}
+  .all-link{flex:1 1 0;display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:40px;padding:0 10px;border:1px solid #D4D6D0;border-radius:8px;background:var(--card-2);font:inherit;font-size:11.5px;font-weight:700;color:var(--ink);cursor:pointer;white-space:nowrap;transition:background .14s,border-color .14s}
+  .all-link:hover{background:#F4F4F0;border-color:#BBBDB7}
+  .all-link svg{width:13px;height:13px;flex:0 0 auto;color:#7A828C}
+
+  /* ── status pills ── */
+  .pill{display:inline-flex;align-items:center;gap:4px;padding:3px 7px;border-radius:4px;font-size:10.5px;font-weight:700;letter-spacing:.02em;white-space:nowrap}
+  .pill::before{content:"";width:4px;height:4px;border-radius:50%;background:currentColor;flex:0 0 auto}
+  .pill.wait{background:#FCEFE2;color:#8C3D05}
+  .pill.ok{background:#E7F8F0;color:#076C48}
+  .pill.done{background:#EDEFF2;color:#414C5C}
+  .pill.no{background:#F2F2ED;color:#626A74}
+
+  /* ── kalender ── */
+  .cal-card{padding:12px 10px 10px;background:var(--card-2);border:1px solid var(--line);border-radius:10px;box-shadow:0 1px 4px rgba(11,18,32,.06)}
+  .cal-dows{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;padding:0 0 6px;border-bottom:1px solid #EDEDE7}
+  .cal-dow{text-align:center;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#6E7783}
+  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-top:5px}
+  .cal-day{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:44px;padding:2px 0;border:0;border-radius:7px;background:none;font:inherit;font-size:12.5px;font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums;cursor:pointer;transition:background .14s,color .14s}
+  .cal-day:hover{background:#F2F2EC}
+  .cal-day.out{color:#B7BBB3}
+  .cal-day[aria-pressed="true"]{background:var(--ink);color:#fff;font-weight:700;box-shadow:0 2px 6px -2px rgba(11,18,32,.4)}
+  .cal-n{display:block;line-height:1}
+  .cal-dot{width:4px;height:4px;border-radius:50%;background:transparent}
+  .cal-day.has .cal-dot{background:var(--ink)}
+  .cal-day[aria-pressed="true"] .cal-dot{background:var(--lime)}
+  .cal-sum{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px;padding-top:10px;border-top:1px solid #EDEDE7}
+  .cal-sum-b{flex:1 1 auto;min-width:0}
+  .cal-sum-l{margin:0;font-size:11.5px;font-weight:700;font-variant-numeric:tabular-nums}
+  .cal-bar{height:4px;margin-top:6px;border-radius:2px;background:#E3E4DE;overflow:hidden}
+  .cal-bar span{display:block;height:100%;background:var(--ink)}
+  .cal-sum .pill{flex:0 0 auto}
+
+  /* ── agenda ── */
+  .agenda{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+  .ag{display:flex;align-items:flex-start;gap:11px;padding:11px 12px;background:var(--card-2);border:1px solid var(--line);border-radius:10px;box-shadow:0 1px 4px rgba(11,18,32,.06)}
+  .ag-time{flex:0 0 48px;font-size:12.5px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.3}
+  .ag-time small{display:block;margin-top:1px;font-size:10.5px;font-weight:500;color:var(--muted);line-height:1.3}
+  .ag-body{flex:1 1 auto;min-width:0}
+  .ag-name{margin:0;font-size:13.5px;font-weight:700;letter-spacing:-.012em}
+  .ag-meta{margin:2px 0 0;font-size:11.5px;line-height:1.4;color:var(--muted)}
+  .ag-val{margin:6px 0 0;font-size:12.5px;font-weight:700;font-variant-numeric:tabular-nums}
+  .ag .pill{flex:0 0 auto;margin-top:1px}
+  .empty{padding:18px 14px;text-align:center;background:var(--card-2);border:1px dashed #D5D7D0;border-radius:10px}
+  .empty p{margin:0;font-size:12.5px;font-weight:700}
+  .empty small{display:block;margin-top:4px;font-size:11.5px;line-height:1.5;color:var(--muted)}
+
+  /* ── saldo ── */
+  .bal-hero{margin-top:14px;padding:14px;border-radius:10px;background:linear-gradient(160deg,#1B2946 0%,#0B1220 100%);color:#fff;box-shadow:0 10px 26px -16px rgba(11,18,32,.55)}
+  .bal-lbl{display:block;font-size:10.5px;font-weight:600;letter-spacing:.13em;text-transform:uppercase;color:rgba(255,255,255,.58)}
+  .bal-val{display:block;margin-top:4px;font-size:27px;font-weight:800;letter-spacing:-.035em;line-height:1.05;color:var(--lime);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .bal-split{display:flex;gap:14px;margin-top:12px;padding-top:11px;border-top:1px solid rgba(255,255,255,.13)}
+  .bal-split > div{flex:1 1 0;min-width:0}
+  .bal-k{display:block;font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,.56)}
+  .bal-v{display:block;margin-top:3px;font-size:12px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .rows{list-style:none;margin:0;padding:0}
+  .row{display:flex;align-items:center;gap:11px;padding:11px 14px;border-bottom:1px solid #EBEBE5}
+  .row:last-child{border-bottom:0}
+  .row-date{flex:0 0 42px;font-size:11.5px;font-weight:700;line-height:1.35;font-variant-numeric:tabular-nums}
+  .row-date small{display:block;font-size:10.5px;font-weight:500;color:var(--muted)}
+  .row-main{flex:1 1 auto;min-width:0}
+  .row-t{margin:0;font-size:12.5px;font-weight:700;letter-spacing:-.008em;line-height:1.35}
+  .row-s{margin:2px 0 0;font-size:11px;color:var(--muted);line-height:1.35}
+  .row-v{margin:0;font-size:12.5px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .row-v.in{color:var(--green)}
+  .row-amt{flex:0 0 auto;text-align:right}
+  .row-amt .pill{margin-top:4px}
+
+  /* ── pesanan ── */
+  .filters{display:flex;gap:6px;overflow-x:auto;margin:14px -16px 0;padding:0 16px 2px;scrollbar-width:none}
+  .filters::-webkit-scrollbar{display:none}
+  .fchip{flex:0 0 auto;height:36px;padding:0 13px;border:1px solid #D4D6D0;border-radius:16px;background:var(--card-2);font:inherit;font-size:11.5px;font-weight:700;color:#414C5C;cursor:pointer;transition:background .14s,border-color .14s,color .14s}
+  .fchip:hover{background:#F2F2EC}
+  .fchip[aria-pressed="true"]{background:var(--ink);border-color:var(--ink);color:var(--lime)}
+  .ord-list{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+  .ord{display:flex;background:var(--card-2);border:1px solid var(--line);border-radius:10px;overflow:hidden;box-shadow:0 1px 4px rgba(11,18,32,.06)}
+  .ord-body{flex:1 1 auto;min-width:0;padding:11px 12px}
+  .ord-top{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+  .ord-name{margin:0;font-size:13.5px;font-weight:700;letter-spacing:-.012em;line-height:1.3}
+  .ord-meta{margin:2px 0 0;font-size:11px;color:var(--muted);line-height:1.4}
+  .ord-val{margin:7px 0 0;font-size:13px;font-weight:700;font-variant-numeric:tabular-nums}
+  .ord .pill{flex:0 0 auto}
+
+  /* ── profil ── */
+  .prof-stats{display:grid;grid-template-columns:repeat(3,1fr);margin-top:14px;background:var(--card-2);border:1px solid var(--line);border-radius:10px;overflow:hidden;box-shadow:0 1px 4px rgba(11,18,32,.06)}
+  .prof-stat{padding:11px 6px 10px;text-align:center;border-right:1px solid #EBEBE5}
+  .prof-stat:last-child{border-right:0}
+  .prof-stat b{display:block;font-size:16px;font-weight:800;letter-spacing:-.025em;font-variant-numeric:tabular-nums}
+  .prof-stat span{display:block;margin-top:2px;font-size:10.5px;color:var(--muted);line-height:1.3}
+  .setrow{display:flex;align-items:center;gap:12px;width:100%;min-height:48px;padding:11px 14px;border:0;border-bottom:1px solid #EBEBE5;background:none;font:inherit;color:var(--ink);text-align:left;text-decoration:none;cursor:pointer;transition:background .14s}
+  .setrow:hover{background:#F7F7F3}
+  .set-l{display:block;font-size:12.5px;font-weight:700;letter-spacing:-.008em;line-height:1.35}
+  .set-s{display:block;margin-top:2px;font-size:11px;color:var(--muted);line-height:1.4}
+  .chev{width:15px;height:15px;flex:0 0 auto;color:#9AA1A9;transition:transform .18s}
+  .setrow[aria-expanded="true"] .chev{transform:rotate(90deg)}
+  .acc{padding:0 14px 12px;background:#F7F7F3;border-bottom:1px solid #EBEBE5}
+  .acc p{margin:0;font-size:11.5px;line-height:1.55;color:#4B5563}
+  .setrow:last-child,.acc:last-child{border-bottom:0}
+  .sw{position:relative;width:40px;height:24px;flex:0 0 auto;border-radius:12px;border:1px solid #C9CCC6;background:#E7E7E1;transition:background .16s,border-color .16s}
+  .sw::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(11,18,32,.25);transition:transform .16s}
+  .setrow[aria-checked="true"] .sw{background:var(--ink);border-color:var(--ink)}
+  .setrow[aria-checked="true"] .sw::after{transform:translateX(16px);background:var(--lime)}
+
+  /* animations */
+  @keyframes rise{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
+  @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+
+  /* responsive */
+  @media (max-width:1100px){
+    .stage{gap:40px;padding:36px 20px 32px}
+    .chips{display:none}
+    .topbar-in{padding:14px 20px}
+  }
+  @media (max-width:900px){
+    .stage{flex-direction:column;align-items:center;padding:24px 0 32px;gap:36px}
+    .device{width:min(390px,100vw);height:844px;border-radius:min(48px,8vw);padding:min(10px,2.5vw)}
+    .screen{border-radius:calc(min(48px,8vw) - min(10px,2.5vw))}
+    figcaption{width:min(390px,100vw);padding:0 16px}
+    .tcenter,.chips{display:none}
+    .footbar-in{padding:12px 20px 14px}
+  }
+  @media (max-width:440px){
+    .device{border-radius:0;padding:0;box-shadow:none}
+    .screen{border-radius:0}
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- top bar -->
+  <header class="topbar">
+    <div class="topbar-in">
+      <div class="brand">
+        <span class="bmark">TL</span>
+        <div><p class="bname">Tarlink</p><p class="bsub">Vendor app &middot; mobile UI</p></div>
+      </div>
+      <div class="tcenter">
+        <p class="tkicker">Sisi vendor / 2026</p>
+        <h1 class="ttitle">Enam Layar Vendor</h1>
+      </div>
+      <div class="chips">
+        <span class="chip">390 &times; 844</span>
+        <span class="chip">6 layar</span>
+        <span class="chip">27 Okt 2026</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="stage">
+
+    <!-- ══ SCREEN 1: BERANDA ══ -->
+    <figure id="screen-beranda">
+      <div class="device">
+        <section class="screen" aria-label="Beranda vendor">
+
+          <header class="apphead">
+            <div class="sbar">
+              <span>19.42</span>
+              <span class="sbar-r" aria-hidden="true">
+                <svg width="17" height="11" viewBox="0 0 17 11" fill="none"><rect x="0" y="7" width="3" height="4" rx=".6" fill="currentColor"/><rect x="4.5" y="5" width="3" height="6" rx=".6" fill="currentColor"/><rect x="9" y="2.5" width="3" height="8.5" rx=".6" fill="currentColor"/><rect x="13.5" y="0" width="3" height="11" rx=".6" fill="currentColor"/></svg>
+                <svg width="16" height="11" viewBox="0 0 16 11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1 3.3a10.6 10.6 0 0 1 14 0"/><path d="M3.7 6a6.8 6.8 0 0 1 8.6 0"/><path d="M6.3 8.6a2.9 2.9 0 0 1 3.4 0"/></svg>
+                <svg width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x=".5" y=".5" width="21" height="11" rx="3" stroke="currentColor" opacity=".35"/><rect x="2" y="2" width="14" height="8" rx="2" fill="currentColor"/><path d="M23 4.2v3.6a2 2 0 0 0 0-3.6Z" fill="currentColor" opacity=".35"/></svg>
+              </span>
+            </div>
+            <div class="head-row">
+              <div class="vnd">
+                <span class="vmark" aria-hidden="true">SJ</span>
+                <div>
+                  <p class="vname">Sinar Jaya</p>
+                  <p class="vsub">Tarling &middot; Indramayu</p>
+                </div>
+              </div>
+              <button class="hbtn" type="button" data-open-sheet aria-label="Profil">
+                <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="6.8" r="3.1"/><path d="M4.2 16.4c.7-2.7 3-4.2 5.8-4.2s5.1 1.5 5.8 4.2"/></svg>
+              </button>
+            </div>
+            <div class="money-strip">
+              <div class="ms-main">
+                <span class="ms-lbl">Ditahan PJP</span>
+                <span class="ms-val">Rp4.200.000</span>
+              </div>
+              <div class="ms-side">
+                <span class="ms-date">Jumat, 27 Okt</span>
+                <span class="ms-next">Cair 10 Nov &middot; Rp1.950.000</span>
+              </div>
+            </div>
+          </header>
+
+          <div class="body" id="b1">
+            <div class="lead">
+              <h1>Perlu jawaban</h1>
+              <p><b data-count>3</b> pesanan menunggu. Batas 24 jam sejak DP masuk, lewat dari itu batal otomatis.</p>
+            </div>
+
+            <ul class="queue">
+              <li class="job">
+                <div class="job-inner">
+                  <div class="job-cal">
+                    <span class="jdow">Sab</span>
+                    <span class="jdom">07</span>
+                    <span class="jmon">Nov</span>
+                  </div>
+                  <div class="job-content">
+                    <p class="job-title">Ibu Narti</p>
+                    <p class="job-who">Jatibarang, Indramayu</p>
+                    <p class="job-time">07.00 &ndash; dini hari &middot; 7 Nov</p>
+                  </div>
+                </div>
+                <div class="job-foot">
+                  <div>
+                    <div class="job-val">Rp6.500.000</div>
+                    <div class="job-timer">sisa 4 jam</div>
+                  </div>
+                  <div class="job-acts" data-actions>
+                    <button class="btn btn-s" type="button" data-decline>Tolak</button>
+                    <button class="btn btn-p" type="button" data-accept>Terima</button>
+                  </div>
+                </div>
+              </li>
+
+              <li class="job">
+                <div class="job-inner">
+                  <div class="job-cal">
+                    <span class="jdow">Min</span>
+                    <span class="jdom">15</span>
+                    <span class="jmon">Nov</span>
+                  </div>
+                  <div class="job-content">
+                    <p class="job-title">Pak Darto</p>
+                    <p class="job-who">Karangampel, Indramayu</p>
+                    <p class="job-time">07.00 &ndash; dini hari &middot; 15 Nov</p>
+                  </div>
+                </div>
+                <div class="job-foot">
+                  <div>
+                    <div class="job-val">Rp9.200.000</div>
+                    <div class="job-timer">sisa 9 jam</div>
+                  </div>
+                  <div class="job-acts" data-actions>
+                    <button class="btn btn-s" type="button" data-decline>Tolak</button>
+                    <button class="btn btn-p" type="button" data-accept>Terima</button>
+                  </div>
+                </div>
+              </li>
+
+              <li class="job">
+                <div class="job-inner">
+                  <div class="job-cal">
+                    <span class="jdow">Rab</span>
+                    <span class="jdom">18</span>
+                    <span class="jmon">Nov</span>
+                  </div>
+                  <div class="job-content">
+                    <p class="job-title">H. Marzuki</p>
+                    <p class="job-who">Losarang, Indramayu</p>
+                    <p class="job-time">08.00 &ndash; 17.00 &middot; 18 Nov</p>
+                  </div>
+                </div>
+                <div class="job-foot">
+                  <div>
+                    <div class="job-val">Rp4.750.000</div>
+                    <div class="job-timer calm">sisa 21 jam</div>
+                  </div>
+                  <div class="job-acts" data-actions>
+                    <button class="btn btn-s" type="button" data-decline>Tolak</button>
+                    <button class="btn btn-p" type="button" data-accept>Terima</button>
+                  </div>
+                </div>
+              </li>
+            </ul>
+
+            <div class="lead-links">
+              <button class="all-link" type="button" data-screen="screen-pesanan">
+                Semua pesanan
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.6 4.4 13.2 10l-5.6 5.6"/></svg>
+              </button>
+              <button class="all-link" type="button" data-screen="screen-detail">
+                Detail pesanan
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.6 4.4 13.2 10l-5.6 5.6"/></svg>
+              </button>
+            </div>
+
+            <section id="jadwal">
+              <div class="sec"><h2>Jadwal 7 hari</h2><small>6&ndash;12 Nov</small></div>
+              <div class="week-wrap">
+                <div class="week">
+                  <div class="day"><span class="wd">Kam</span><span class="dn">06</span><span class="slots"><span class="slot on"></span></span></div>
+                  <div class="day"><span class="wd">Jum</span><span class="dn">07</span><span class="slots"><span class="slot on"></span></span></div>
+                  <div class="day cur"><span class="wd">Sab</span><span class="dn">08</span><span class="slots"><span class="slot on"></span></span></div>
+                  <div class="day"><span class="wd">Min</span><span class="dn">09</span><span class="slots"><span class="slot"></span></span></div>
+                  <div class="day"><span class="wd">Sen</span><span class="dn">10</span><span class="slots"><span class="slot"></span></span></div>
+                  <div class="day"><span class="wd">Sel</span><span class="dn">11</span><span class="slots"><span class="slot on"></span></span></div>
+                  <div class="day"><span class="wd">Rab</span><span class="dn">12</span><span class="slots"><span class="slot"></span></span></div>
+                </div>
+                <div class="wleg">
+                  <span><i style="background:var(--ink)"></i>Terisi</span>
+                  <span><i style="background:#DDDDD7"></i>Kosong</span>
+                </div>
+              </div>
+            </section>
+
+            <section id="saldo">
+              <div class="sec"><h2>Uang</h2><small>Oktober</small></div>
+              <div class="panel">
+                <dl class="ledger">
+                  <div><dt>Omzet bulan ini</dt><dd>Rp18.450.000</dd></div>
+                  <div class="dimm"><dt>Sudah cair</dt><dd>Rp14.250.000</dd></div>
+                  <div class="dimm"><dt>Cair berikutnya</dt><dd>10 Nov &middot; Rp1.950.000</dd></div>
+                </dl>
+              </div>
+              <p class="note">Dana pelanggan ditahan PJP berizin. Pencairan H+3 setelah acara selesai dan jendela sengketa tutup.</p>
+            </section>
+          </div>
+
+          <nav class="nav" aria-label="Navigasi utama">
+            <button class="ntab" type="button" data-target="top" aria-current="page">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M3.4 8.3 10 3.1l6.6 5.2V16a1 1 0 0 1-1 1h-3.9v-4.6H8.3V17H4.4a1 1 0 0 1-1-1V8.3Z"/></svg>
+              Beranda
+            </button>
+            <button class="ntab" type="button" data-screen="screen-kalender">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="3" y="4.5" width="14" height="12.5" rx="1.4"/><path d="M3 8.4h14M7 3v3M13 3v3"/></svg>
+              Kalender
+            </button>
+            <button class="ntab" type="button" data-screen="screen-saldo">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M3 6.2a1.7 1.7 0 0 1 1.7-1.7h9.1A1.7 1.7 0 0 1 15.5 6v1.2"/><rect x="3" y="6.2" width="14" height="9.6" rx="1.6"/><path d="M12.6 11h2.6"/></svg>
+              Saldo
+            </button>
+            <button class="ntab" type="button" data-screen="screen-profil">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="6.8" r="3.1"/><path d="M4.2 16.4c.7-2.7 3-4.2 5.8-4.2s5.1 1.5 5.8 4.2"/></svg>
+              Profil
+            </button>
+          </nav>
+
+          <div class="sheet-bg" id="sheet" role="dialog" aria-modal="true" aria-label="Profil vendor">
+            <div class="sheet-box">
+              <div class="sheet-hd">
+                <div><p>Sinar Jaya</p><small>Tarling &middot; Indramayu, Jawa Barat</small></div>
+                <button class="hbtn sheet-hd" type="button" data-close-sheet aria-label="Tutup">
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M2.5 2.5l9 9M11.5 2.5l-9 9"/></svg>
+                </button>
+              </div>
+              <dl class="ledger">
+                <div><dt>Status</dt><dd>Terverifikasi</dd></div>
+                <div class="dimm"><dt>Rekening pencairan</dt><dd>BCA &middot;&middot;&middot; 8842</dd></div>
+                <div class="dimm"><dt>Komisi</dt><dd>10% &middot; lantai Rp25.000</dd></div>
+              </dl>
+              <button class="btn btn-s sheet-close" type="button" data-close-sheet>Tutup</button>
+            </div>
+          </div>
+        </section>
+      </div>
+      <figcaption>
+        <span class="fno">01</span>
+        <span class="fname">Beranda</span>
+        <span class="fnote">Antrean &middot; jadwal &middot; saldo</span>
+      </figcaption>
+    </figure>
+
+    <!-- ══ SCREEN 2: DETAIL ══ -->
+    <figure id="screen-detail">
+      <div class="device">
+        <section class="screen" aria-label="Detail pesanan">
+
+          <header class="apphead det-head">
+            <div class="sbar">
+              <span>19.42</span>
+              <span class="sbar-r" aria-hidden="true">
+                <svg width="17" height="11" viewBox="0 0 17 11" fill="none"><rect x="0" y="7" width="3" height="4" rx=".6" fill="currentColor"/><rect x="4.5" y="5" width="3" height="6" rx=".6" fill="currentColor"/><rect x="9" y="2.5" width="3" height="8.5" rx=".6" fill="currentColor"/><rect x="13.5" y="0" width="3" height="11" rx=".6" fill="currentColor"/></svg>
+                <svg width="16" height="11" viewBox="0 0 16 11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1 3.3a10.6 10.6 0 0 1 14 0"/><path d="M3.7 6a6.8 6.8 0 0 1 8.6 0"/><path d="M6.3 8.6a2.9 2.9 0 0 1 3.4 0"/></svg>
+                <svg width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x=".5" y=".5" width="21" height="11" rx="3" stroke="currentColor" opacity=".35"/><rect x="2" y="2" width="14" height="8" rx="2" fill="currentColor"/><path d="M23 4.2v3.6a2 2 0 0 0 0-3.6Z" fill="currentColor" opacity=".35"/></svg>
+              </span>
+            </div>
+            <div class="head-row">
+              <button class="back" type="button" aria-label="Kembali" data-screen="screen-beranda">
+                <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12.4 4.4 6.8 10l5.6 5.6"/></svg>
+              </button>
+              <h2 class="det-h1">Detail Pesanan</h2>
+              <span class="badge-wait">Menunggu</span>
+            </div>
+          </header>
+
+          <div class="body">
+            <div class="evt-card">
+              <div class="evt-top">
+                <span class="evt-kicker">Pesanan masuk</span>
+                <span class="pill-dp">DP lunas</span>
+              </div>
+              <div class="evt-body">
+                <p class="evt-day">Sabtu</p>
+                <p class="evt-date">7 November 2026</p>
+                <p class="evt-time">07.00 &ndash; dini hari</p>
+                <div class="evt-sep"></div>
+                <p class="evt-kind">Organ / Tarling &mdash; Sinar Jaya</p>
+                <p class="evt-place">Ibu Narti &middot; Jatibarang, Indramayu</p>
+              </div>
+            </div>
+
+            <section>
+              <div class="sec"><h2>Status dana</h2><small>H+3</small></div>
+              <div class="panel">
+                <ol class="stepper">
+                  <span class="step-prog" aria-hidden="true"></span>
+                  <li class="done"><span class="snode" aria-hidden="true"></span><span class="sk">27 Okt</span><span class="st">DP masuk</span></li>
+                  <li class="now"><span class="snode" aria-hidden="true"></span><span class="sk">Sekarang</span><span class="st">Ditahan PJP</span></li>
+                  <li><span class="snode" aria-hidden="true"></span><span class="sk">10 Nov</span><span class="st">Cair</span></li>
+                </ol>
+              </div>
+            </section>
+
+            <section>
+              <div class="sec"><h2>Rincian uang</h2><small>DP 30% dibayar</small></div>
+              <div class="panel">
+                <div class="paybar">
+                  <div class="pb-row"><span>Dibayar pelanggan</span><b>Rp1.950.000</b></div>
+                  <div class="pb-track"><div class="pb-fill"></div></div>
+                  <p class="pb-note">Sisa pelunasan Rp4.550.000 sebelum hari H</p>
+                </div>
+                <dl class="ledger">
+                  <div><dt>Total pesanan</dt><dd>Rp6.500.000</dd></div>
+                  <div class="dimm"><dt>Komisi Tarlink 10%</dt><dd>&minus;Rp650.000</dd></div>
+                  <div class="hi"><dt>Hak vendor</dt><dd>Rp5.850.000</dd></div>
+                </dl>
+              </div>
+              <p class="note">Komisi bertingkat: lantai Rp25.000, 10% sampai Rp10 juta, 5% di atasnya.</p>
+            </section>
+
+            <section>
+              <div class="sec"><h2>Pemesan</h2><small>Terverifikasi</small></div>
+              <div class="panel">
+                <div class="person">
+                  <span class="avatar" aria-hidden="true">IN</span>
+                  <div class="pid">
+                    <p class="pname">Ibu Narti</p>
+                    <p class="pphone">+62 812 &middot;&middot;&middot;&middot; 4471</p>
+                  </div>
+                  <a class="wa" href="https://wa.me/6281200004471" target="_blank" rel="noopener">
+                    <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M3.2 6.6A3.4 3.4 0 0 1 6.6 3.2h6.8a3.4 3.4 0 0 1 3.4 3.4v3.6a3.4 3.4 0 0 1-3.4 3.4H8.4l-3.5 3v-3.2a3.4 3.4 0 0 1-1.7-2.9V6.6Z"/></svg>
+                    WhatsApp
+                  </a>
+                </div>
+              </div>
+              <p class="note">Data contoh untuk pratinjau desain. Nominal mengikuti skema komisi Tarlink.</p>
+            </section>
+          </div>
+
+          <div class="actbar">
+            <p class="hint"><b>4 jam 12 menit</b> lagi untuk menjawab</p>
+            <div class="actbar-row">
+              <button class="btn abtn sec" type="button" data-decline-det>Tolak</button>
+              <button class="btn btn-p abtn pri" type="button" data-accept-det>Terima pesanan</button>
+            </div>
+          </div>
+
+        </section>
+      </div>
+      <figcaption>
+        <span class="fno">02</span>
+        <span class="fname">Detail Pesanan</span>
+        <span class="fnote">Keputusan &middot; uang &middot; pencairan</span>
+      </figcaption>
+    </figure>
+
+    <!-- ══ SCREEN 3: KALENDER ══ -->
+    <figure id="screen-kalender">
+      <div class="device">
+        <section class="screen" aria-label="Kalender vendor">
+
+          <header class="apphead tabhead">
+            <div class="sbar">
+              <span>19.42</span>
+              <span class="sbar-r" aria-hidden="true">
+                <svg width="17" height="11" viewBox="0 0 17 11" fill="none"><rect x="0" y="7" width="3" height="4" rx=".6" fill="currentColor"/><rect x="4.5" y="5" width="3" height="6" rx=".6" fill="currentColor"/><rect x="9" y="2.5" width="3" height="8.5" rx=".6" fill="currentColor"/><rect x="13.5" y="0" width="3" height="11" rx=".6" fill="currentColor"/></svg>
+                <svg width="16" height="11" viewBox="0 0 16 11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1 3.3a10.6 10.6 0 0 1 14 0"/><path d="M3.7 6a6.8 6.8 0 0 1 8.6 0"/><path d="M6.3 8.6a2.9 2.9 0 0 1 3.4 0"/></svg>
+                <svg width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x=".5" y=".5" width="21" height="11" rx="3" stroke="currentColor" opacity=".35"/><rect x="2" y="2" width="14" height="8" rx="2" fill="currentColor"/><path d="M23 4.2v3.6a2 2 0 0 0 0-3.6Z" fill="currentColor" opacity=".35"/></svg>
+              </span>
+            </div>
+            <div class="head-row">
+              <div>
+                <p class="tab-kicker">Jadwal</p>
+                <h2 class="tab-title" id="calMonth">November 2026</h2>
+              </div>
+              <div class="tab-tools">
+                <button class="hbtn" type="button" data-month="-1" aria-label="Bulan sebelumnya">
+                  <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12.4 4.4 6.8 10l5.6 5.6"/></svg>
+                </button>
+                <button class="hbtn" type="button" data-month="1" aria-label="Bulan berikutnya">
+                  <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7.6 4.4 13.2 10l-5.6 5.6"/></svg>
+                </button>
+              </div>
+            </div>
+          </header>
+
+          <div class="body" id="b3">
+            <section>
+              <div class="sec"><h2>Kalender</h2><small>Hari terisi bertanda</small></div>
+              <div class="cal-card">
+                <div class="cal-dows" aria-hidden="true">
+                  <span class="cal-dow">Sen</span>
+                  <span class="cal-dow">Sel</span>
+                  <span class="cal-dow">Rab</span>
+                  <span class="cal-dow">Kam</span>
+                  <span class="cal-dow">Jum</span>
+                  <span class="cal-dow">Sab</span>
+                  <span class="cal-dow">Min</span>
+                </div>
+                <div class="cal-grid" id="calGrid" role="group" aria-label="Pilih tanggal">
+                  <button class="cal-day out" type="button" data-date="2026-10-26" aria-pressed="false"><span class="cal-n">26</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day out" type="button" data-date="2026-10-27" aria-pressed="false"><span class="cal-n">27</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day out" type="button" data-date="2026-10-28" aria-pressed="false"><span class="cal-n">28</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day out" type="button" data-date="2026-10-29" aria-pressed="false"><span class="cal-n">29</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day out" type="button" data-date="2026-10-30" aria-pressed="false"><span class="cal-n">30</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day out" type="button" data-date="2026-10-31" aria-pressed="false"><span class="cal-n">31</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day" type="button" data-date="2026-11-01" aria-pressed="false"><span class="cal-n">1</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day has" type="button" data-date="2026-11-02" aria-pressed="false"><span class="cal-n">2</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day" type="button" data-date="2026-11-03" aria-pressed="false"><span class="cal-n">3</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day" type="button" data-date="2026-11-04" aria-pressed="false"><span class="cal-n">4</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day" type="button" data-date="2026-11-05" aria-pressed="false"><span class="cal-n">5</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day" type="button" data-date="2026-11-06" aria-pressed="false"><span class="cal-n">6</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day has" type="button" data-date="2026-11-07" aria-pressed="true"><span class="cal-n">7</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day has" type="button" data-date="2026-11-08" aria-pressed="false"><span class="cal-n">8</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day" type="button" data-date="2026-11-09" aria-pressed="false"><span class="cal-n">9</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day" type="button" data-date="2026-11-10" aria-pressed="false"><span class="cal-n">10</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day has" type="button" data-date="2026-11-11" aria-pressed="false"><span class="cal-n">11</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day has" type="button" data-date="2026-11-12" aria-pressed="false"><span class="cal-n">12</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day" type="button" data-date="2026-11-13" aria-pressed="false"><span class="cal-n">13</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day" type="button" data-date="2026-11-14" aria-pressed="false"><span class="cal-n">14</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day has" type="button" data-date="2026-11-15" aria-pressed="false"><span class="cal-n">15</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day" type="button" data-date="2026-11-16" aria-pressed="false"><span class="cal-n">16</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day" type="button" data-date="2026-11-17" aria-pressed="false"><span class="cal-n">17</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day has" type="button" data-date="2026-11-18" aria-pressed="false"><span class="cal-n">18</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day" type="button" data-date="2026-11-19" aria-pressed="false"><span class="cal-n">19</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day" type="button" data-date="2026-11-20" aria-pressed="false"><span class="cal-n">20</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day" type="button" data-date="2026-11-21" aria-pressed="false"><span class="cal-n">21</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day" type="button" data-date="2026-11-22" aria-pressed="false"><span class="cal-n">22</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day" type="button" data-date="2026-11-23" aria-pressed="false"><span class="cal-n">23</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day" type="button" data-date="2026-11-24" aria-pressed="false"><span class="cal-n">24</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day" type="button" data-date="2026-11-25" aria-pressed="false"><span class="cal-n">25</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day" type="button" data-date="2026-11-26" aria-pressed="false"><span class="cal-n">26</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day" type="button" data-date="2026-11-27" aria-pressed="false"><span class="cal-n">27</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day" type="button" data-date="2026-11-28" aria-pressed="false"><span class="cal-n">28</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day" type="button" data-date="2026-11-29" aria-pressed="false"><span class="cal-n">29</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day" type="button" data-date="2026-11-30" aria-pressed="false"><span class="cal-n">30</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day out" type="button" data-date="2026-12-01" aria-pressed="false"><span class="cal-n">1</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day out" type="button" data-date="2026-12-02" aria-pressed="false"><span class="cal-n">2</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day out" type="button" data-date="2026-12-03" aria-pressed="false"><span class="cal-n">3</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day out" type="button" data-date="2026-12-04" aria-pressed="false"><span class="cal-n">4</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day out" type="button" data-date="2026-12-05" aria-pressed="false"><span class="cal-n">5</span><span class="cal-dot" aria-hidden="true"></span></button>
+                  <button class="cal-day out" type="button" data-date="2026-12-06" aria-pressed="false"><span class="cal-n">6</span><span class="cal-dot" aria-hidden="true"></span></button>
+                </div>
+                <div class="cal-sum">
+                  <div class="cal-sum-b">
+                    <p class="cal-sum-l" id="calSumLbl">7 dari 30 hari terisi</p>
+                    <div class="cal-bar"><span id="calBar" style="width:23%"></span></div>
+                  </div>
+                  <span class="pill ok" id="calPill">Terisi 7 hari</span>
+                </div>
+              </div>
+            </section>
+
+            <section>
+              <div class="sec"><h2>Agenda</h2><small id="agDate">Sabtu, 7 November 2026</small></div>
+              <div id="agWrap">
+                <ul class="agenda">
+                  <li class="ag">
+                    <span class="ag-time">07.00<small>dini hari</small></span>
+                    <div class="ag-body">
+                      <p class="ag-name">Ibu Narti</p>
+                      <p class="ag-meta">Jatibarang &middot; Organ / Tarling</p>
+                      <p class="ag-val">Rp6.500.000</p>
+                    </div>
+                    <span class="pill wait">Menunggu</span>
+                  </li>
+                </ul>
+              </div>
+              <p class="note">Agenda mengikuti pesanan yang DP-nya sudah masuk. Ketuk tanggal untuk melihat hari lain.</p>
+            </section>
+          </div>
+
+          <nav class="nav" aria-label="Navigasi utama">
+            <button class="ntab" type="button" data-screen="screen-beranda">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M3.4 8.3 10 3.1l6.6 5.2V16a1 1 0 0 1-1 1h-3.9v-4.6H8.3V17H4.4a1 1 0 0 1-1-1V8.3Z"/></svg>
+              Beranda
+            </button>
+            <button class="ntab" type="button" data-screen="screen-kalender" aria-current="page">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="3" y="4.5" width="14" height="12.5" rx="1.4"/><path d="M3 8.4h14M7 3v3M13 3v3"/></svg>
+              Kalender
+            </button>
+            <button class="ntab" type="button" data-screen="screen-saldo">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M3 6.2a1.7 1.7 0 0 1 1.7-1.7h9.1A1.7 1.7 0 0 1 15.5 6v1.2"/><rect x="3" y="6.2" width="14" height="9.6" rx="1.6"/><path d="M12.6 11h2.6"/></svg>
+              Saldo
+            </button>
+            <button class="ntab" type="button" data-screen="screen-profil">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="6.8" r="3.1"/><path d="M4.2 16.4c.7-2.7 3-4.2 5.8-4.2s5.1 1.5 5.8 4.2"/></svg>
+              Profil
+            </button>
+          </nav>
+        </section>
+      </div>
+      <figcaption>
+        <span class="fno">03</span>
+        <span class="fname">Kalender</span>
+        <span class="fnote">Bulan &middot; agenda &middot; okupansi</span>
+      </figcaption>
+    </figure>
+
+    <!-- ══ SCREEN 4: SALDO ══ -->
+    <figure id="screen-saldo">
+      <div class="device">
+        <section class="screen" aria-label="Saldo dan pencairan">
+
+          <header class="apphead tabhead">
+            <div class="sbar">
+              <span>19.42</span>
+              <span class="sbar-r" aria-hidden="true">
+                <svg width="17" height="11" viewBox="0 0 17 11" fill="none"><rect x="0" y="7" width="3" height="4" rx=".6" fill="currentColor"/><rect x="4.5" y="5" width="3" height="6" rx=".6" fill="currentColor"/><rect x="9" y="2.5" width="3" height="8.5" rx=".6" fill="currentColor"/><rect x="13.5" y="0" width="3" height="11" rx=".6" fill="currentColor"/></svg>
+                <svg width="16" height="11" viewBox="0 0 16 11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1 3.3a10.6 10.6 0 0 1 14 0"/><path d="M3.7 6a6.8 6.8 0 0 1 8.6 0"/><path d="M6.3 8.6a2.9 2.9 0 0 1 3.4 0"/></svg>
+                <svg width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x=".5" y=".5" width="21" height="11" rx="3" stroke="currentColor" opacity=".35"/><rect x="2" y="2" width="14" height="8" rx="2" fill="currentColor"/><path d="M23 4.2v3.6a2 2 0 0 0 0-3.6Z" fill="currentColor" opacity=".35"/></svg>
+              </span>
+            </div>
+            <div class="head-row">
+              <div>
+                <p class="tab-kicker">Uang</p>
+                <h2 class="tab-title">Saldo</h2>
+              </div>
+              <span class="head-pill muted">BCA &middot;&middot;&middot; 8842</span>
+            </div>
+          </header>
+
+          <div class="body" id="b4">
+            <div class="bal-hero">
+              <span class="bal-lbl">Ditahan PJP</span>
+              <span class="bal-val">Rp4.200.000</span>
+              <div class="bal-split">
+                <div>
+                  <span class="bal-k">Cair berikutnya</span>
+                  <span class="bal-v">10 Nov &middot; Rp1.950.000</span>
+                </div>
+                <div>
+                  <span class="bal-k">Omzet Oktober</span>
+                  <span class="bal-v">Rp18.450.000</span>
+                </div>
+              </div>
+            </div>
+            <p class="note">Tiga pesanan menunggu jawaban. Dana tetap ditahan sampai acara selesai dan jendela sengketa tutup.</p>
+
+            <section>
+              <div class="sec"><h2>Jadwal pencairan</h2><small>H+3</small></div>
+              <div class="panel">
+                <ul class="rows">
+                  <li class="row">
+                    <span class="row-date">10 Nov</span>
+                    <div class="row-main">
+                      <p class="row-t">Ibu Narti &middot; 7 Nov</p>
+                      <p class="row-s">BCA &middot;&middot;&middot; 8842</p>
+                    </div>
+                    <div class="row-amt">
+                      <p class="row-v">Rp1.950.000</p>
+                      <span class="pill wait">Mendatang</span>
+                    </div>
+                  </li>
+                  <li class="row">
+                    <span class="row-date">24 Okt</span>
+                    <div class="row-main">
+                      <p class="row-t">Ujang S. &middot; 21 Okt</p>
+                      <p class="row-s">BCA &middot;&middot;&middot; 8842</p>
+                    </div>
+                    <div class="row-amt">
+                      <p class="row-v">Rp1.400.000</p>
+                      <span class="pill ok">Cair</span>
+                    </div>
+                  </li>
+                  <li class="row">
+                    <span class="row-date">17 Okt</span>
+                    <div class="row-main">
+                      <p class="row-t">Warsito &middot; 14 Okt</p>
+                      <p class="row-s">BCA &middot;&middot;&middot; 8842</p>
+                    </div>
+                    <div class="row-amt">
+                      <p class="row-v">Rp2.300.000</p>
+                      <span class="pill ok">Cair</span>
+                    </div>
+                  </li>
+                  <li class="row">
+                    <span class="row-date">10 Okt</span>
+                    <div class="row-main">
+                      <p class="row-t">Neneng &middot; 7 Okt</p>
+                      <p class="row-s">BCA &middot;&middot;&middot; 8842</p>
+                    </div>
+                    <div class="row-amt">
+                      <p class="row-v">Rp1.100.000</p>
+                      <span class="pill ok">Cair</span>
+                    </div>
+                  </li>
+                </ul>
+              </div>
+            </section>
+
+            <section>
+              <div class="sec"><h2>Riwayat</h2><small>Oktober</small></div>
+              <div class="panel">
+                <ul class="rows">
+                  <li class="row">
+                    <div class="row-main">
+                      <p class="row-t">DP Ibu Narti</p>
+                      <p class="row-s">27 Okt &middot; pesanan masuk</p>
+                    </div>
+                    <p class="row-v in">+Rp1.950.000</p>
+                  </li>
+                  <li class="row">
+                    <div class="row-main">
+                      <p class="row-t">Pencairan ke BCA</p>
+                      <p class="row-s">24 Okt &middot; otomatis H+3</p>
+                    </div>
+                    <p class="row-v">&minus;Rp1.400.000</p>
+                  </li>
+                  <li class="row">
+                    <div class="row-main">
+                      <p class="row-t">DP Pak Darto</p>
+                      <p class="row-s">24 Okt &middot; pesanan masuk</p>
+                    </div>
+                    <p class="row-v in">+Rp2.760.000</p>
+                  </li>
+                  <li class="row">
+                    <div class="row-main">
+                      <p class="row-t">Pencairan ke BCA</p>
+                      <p class="row-s">17 Okt &middot; otomatis H+3</p>
+                    </div>
+                    <p class="row-v">&minus;Rp2.300.000</p>
+                  </li>
+                </ul>
+              </div>
+              <p class="note">Komisi 10% dengan lantai Rp25.000 dipotong saat pencairan. Tidak ada biaya transfer.</p>
+            </section>
+          </div>
+
+          <nav class="nav" aria-label="Navigasi utama">
+            <button class="ntab" type="button" data-screen="screen-beranda">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M3.4 8.3 10 3.1l6.6 5.2V16a1 1 0 0 1-1 1h-3.9v-4.6H8.3V17H4.4a1 1 0 0 1-1-1V8.3Z"/></svg>
+              Beranda
+            </button>
+            <button class="ntab" type="button" data-screen="screen-kalender">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="3" y="4.5" width="14" height="12.5" rx="1.4"/><path d="M3 8.4h14M7 3v3M13 3v3"/></svg>
+              Kalender
+            </button>
+            <button class="ntab" type="button" data-screen="screen-saldo" aria-current="page">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M3 6.2a1.7 1.7 0 0 1 1.7-1.7h9.1A1.7 1.7 0 0 1 15.5 6v1.2"/><rect x="3" y="6.2" width="14" height="9.6" rx="1.6"/><path d="M12.6 11h2.6"/></svg>
+              Saldo
+            </button>
+            <button class="ntab" type="button" data-screen="screen-profil">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="6.8" r="3.1"/><path d="M4.2 16.4c.7-2.7 3-4.2 5.8-4.2s5.1 1.5 5.8 4.2"/></svg>
+              Profil
+            </button>
+          </nav>
+        </section>
+      </div>
+      <figcaption>
+        <span class="fno">04</span>
+        <span class="fname">Saldo</span>
+        <span class="fnote">Ditahan &middot; pencairan &middot; riwayat</span>
+      </figcaption>
+    </figure>
+
+    <!-- ══ SCREEN 5: PESANAN ══ -->
+    <figure id="screen-pesanan">
+      <div class="device">
+        <section class="screen" aria-label="Semua pesanan">
+
+          <header class="apphead tabhead">
+            <div class="sbar">
+              <span>19.42</span>
+              <span class="sbar-r" aria-hidden="true">
+                <svg width="17" height="11" viewBox="0 0 17 11" fill="none"><rect x="0" y="7" width="3" height="4" rx=".6" fill="currentColor"/><rect x="4.5" y="5" width="3" height="6" rx=".6" fill="currentColor"/><rect x="9" y="2.5" width="3" height="8.5" rx=".6" fill="currentColor"/><rect x="13.5" y="0" width="3" height="11" rx=".6" fill="currentColor"/></svg>
+                <svg width="16" height="11" viewBox="0 0 16 11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1 3.3a10.6 10.6 0 0 1 14 0"/><path d="M3.7 6a6.8 6.8 0 0 1 8.6 0"/><path d="M6.3 8.6a2.9 2.9 0 0 1 3.4 0"/></svg>
+                <svg width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x=".5" y=".5" width="21" height="11" rx="3" stroke="currentColor" opacity=".35"/><rect x="2" y="2" width="14" height="8" rx="2" fill="currentColor"/><path d="M23 4.2v3.6a2 2 0 0 0 0-3.6Z" fill="currentColor" opacity=".35"/></svg>
+              </span>
+            </div>
+            <div class="head-row">
+              <div>
+                <p class="tab-kicker">Antrean</p>
+                <h2 class="tab-title">Semua pesanan</h2>
+              </div>
+              <span class="head-pill muted">7 total</span>
+            </div>
+          </header>
+
+          <div class="body" id="b5">
+            <div class="filters" id="ordFilters" role="group" aria-label="Filter status pesanan">
+              <button class="fchip" type="button" data-filter="all" aria-pressed="true">Semua</button>
+              <button class="fchip" type="button" data-filter="wait" aria-pressed="false">Menunggu</button>
+              <button class="fchip" type="button" data-filter="ok" aria-pressed="false">Diterima</button>
+              <button class="fchip" type="button" data-filter="done" aria-pressed="false">Selesai</button>
+              <button class="fchip" type="button" data-filter="no" aria-pressed="false">Ditolak</button>
+            </div>
+
+            <div class="ord-list" id="ordList">
+              <article class="ord" data-status="no">
+                <div class="job-cal">
+                  <span class="jdow">Min</span>
+                  <span class="jdom">25</span>
+                  <span class="jmon">Okt</span>
+                </div>
+                <div class="ord-body">
+                  <div class="ord-top">
+                    <div>
+                      <p class="ord-name">Toha</p>
+                      <p class="ord-meta">Sliyeg &middot; Organ / Tarling</p>
+                    </div>
+                    <span class="pill no">Ditolak</span>
+                  </div>
+                  <p class="ord-val">Rp5.400.000</p>
+                </div>
+              </article>
+
+              <article class="ord" data-status="done">
+                <div class="job-cal">
+                  <span class="jdow">Kam</span>
+                  <span class="jdom">29</span>
+                  <span class="jmon">Okt</span>
+                </div>
+                <div class="ord-body">
+                  <div class="ord-top">
+                    <div>
+                      <p class="ord-name">Endang S.</p>
+                      <p class="ord-meta">Losarang &middot; Organ / Tarling</p>
+                    </div>
+                    <span class="pill done">Selesai</span>
+                  </div>
+                  <p class="ord-val">Rp2.900.000</p>
+                </div>
+              </article>
+
+              <article class="ord" data-status="done">
+                <div class="job-cal">
+                  <span class="jdow">Sen</span>
+                  <span class="jdom">02</span>
+                  <span class="jmon">Nov</span>
+                </div>
+                <div class="ord-body">
+                  <div class="ord-top">
+                    <div>
+                      <p class="ord-name">Surya Atmaja</p>
+                      <p class="ord-meta">Balongan &middot; Organ / Tarling</p>
+                    </div>
+                    <span class="pill done">Selesai</span>
+                  </div>
+                  <p class="ord-val">Rp8.100.000</p>
+                </div>
+              </article>
+
+              <article class="ord" data-status="wait">
+                <div class="job-cal">
+                  <span class="jdow">Sab</span>
+                  <span class="jdom">07</span>
+                  <span class="jmon">Nov</span>
+                </div>
+                <div class="ord-body">
+                  <div class="ord-top">
+                    <div>
+                      <p class="ord-name">Ibu Narti</p>
+                      <p class="ord-meta">Jatibarang &middot; Organ / Tarling</p>
+                    </div>
+                    <span class="pill wait">Menunggu</span>
+                  </div>
+                  <p class="ord-val">Rp6.500.000</p>
+                </div>
+              </article>
+
+              <article class="ord" data-status="ok">
+                <div class="job-cal">
+                  <span class="jdow">Min</span>
+                  <span class="jdom">08</span>
+                  <span class="jmon">Nov</span>
+                </div>
+                <div class="ord-body">
+                  <div class="ord-top">
+                    <div>
+                      <p class="ord-name">Rina Wati</p>
+                      <p class="ord-meta">Karangampel &middot; Organ / Tarling</p>
+                    </div>
+                    <span class="pill ok">Diterima</span>
+                  </div>
+                  <p class="ord-val">Rp3.800.000</p>
+                </div>
+              </article>
+
+              <article class="ord" data-status="wait">
+                <div class="job-cal">
+                  <span class="jdow">Min</span>
+                  <span class="jdom">15</span>
+                  <span class="jmon">Nov</span>
+                </div>
+                <div class="ord-body">
+                  <div class="ord-top">
+                    <div>
+                      <p class="ord-name">Pak Darto</p>
+                      <p class="ord-meta">Karangampel &middot; Organ / Tarling</p>
+                    </div>
+                    <span class="pill wait">Menunggu</span>
+                  </div>
+                  <p class="ord-val">Rp9.200.000</p>
+                </div>
+              </article>
+
+              <article class="ord" data-status="wait">
+                <div class="job-cal">
+                  <span class="jdow">Rab</span>
+                  <span class="jdom">18</span>
+                  <span class="jmon">Nov</span>
+                </div>
+                <div class="ord-body">
+                  <div class="ord-top">
+                    <div>
+                      <p class="ord-name">H. Marzuki</p>
+                      <p class="ord-meta">Losarang &middot; Organ / Tarling</p>
+                    </div>
+                    <span class="pill wait">Menunggu</span>
+                  </div>
+                  <p class="ord-val">Rp4.750.000</p>
+                </div>
+              </article>
+            </div>
+
+            <div class="empty" id="ordEmpty" hidden>
+              <p>Tidak ada pesanan</p>
+              <small>Belum ada pesanan dengan status ini. Pilih &ldquo;Semua&rdquo; untuk melihat seluruh antrean.</small>
+            </div>
+
+            <p class="note">Ketuk filter untuk mempersempit daftar. Pesanan menunggu tetap bisa dijawab dari Beranda.</p>
+          </div>
+
+          <nav class="nav" aria-label="Navigasi utama">
+            <button class="ntab" type="button" data-screen="screen-beranda">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M3.4 8.3 10 3.1l6.6 5.2V16a1 1 0 0 1-1 1h-3.9v-4.6H8.3V17H4.4a1 1 0 0 1-1-1V8.3Z"/></svg>
+              Beranda
+            </button>
+            <button class="ntab" type="button" data-screen="screen-kalender">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="3" y="4.5" width="14" height="12.5" rx="1.4"/><path d="M3 8.4h14M7 3v3M13 3v3"/></svg>
+              Kalender
+            </button>
+            <button class="ntab" type="button" data-screen="screen-saldo">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M3 6.2a1.7 1.7 0 0 1 1.7-1.7h9.1A1.7 1.7 0 0 1 15.5 6v1.2"/><rect x="3" y="6.2" width="14" height="9.6" rx="1.6"/><path d="M12.6 11h2.6"/></svg>
+              Saldo
+            </button>
+            <button class="ntab" type="button" data-screen="screen-profil">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="6.8" r="3.1"/><path d="M4.2 16.4c.7-2.7 3-4.2 5.8-4.2s5.1 1.5 5.8 4.2"/></svg>
+              Profil
+            </button>
+          </nav>
+        </section>
+      </div>
+      <figcaption>
+        <span class="fno">05</span>
+        <span class="fname">Semua Pesanan</span>
+        <span class="fnote">Filter status &middot; riwayat</span>
+      </figcaption>
+    </figure>
+
+    <!-- ══ SCREEN 6: PROFIL ══ -->
+    <figure id="screen-profil">
+      <div class="device">
+        <section class="screen" aria-label="Profil vendor">
+
+          <header class="apphead tabhead">
+            <div class="sbar">
+              <span>19.42</span>
+              <span class="sbar-r" aria-hidden="true">
+                <svg width="17" height="11" viewBox="0 0 17 11" fill="none"><rect x="0" y="7" width="3" height="4" rx=".6" fill="currentColor"/><rect x="4.5" y="5" width="3" height="6" rx=".6" fill="currentColor"/><rect x="9" y="2.5" width="3" height="8.5" rx=".6" fill="currentColor"/><rect x="13.5" y="0" width="3" height="11" rx=".6" fill="currentColor"/></svg>
+                <svg width="16" height="11" viewBox="0 0 16 11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1 3.3a10.6 10.6 0 0 1 14 0"/><path d="M3.7 6a6.8 6.8 0 0 1 8.6 0"/><path d="M6.3 8.6a2.9 2.9 0 0 1 3.4 0"/></svg>
+                <svg width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x=".5" y=".5" width="21" height="11" rx="3" stroke="currentColor" opacity=".35"/><rect x="2" y="2" width="14" height="8" rx="2" fill="currentColor"/><path d="M23 4.2v3.6a2 2 0 0 0 0-3.6Z" fill="currentColor" opacity=".35"/></svg>
+              </span>
+            </div>
+            <div class="head-row">
+              <div class="vnd">
+                <span class="prof-avatar" aria-hidden="true">SJ</span>
+                <div>
+                  <p class="vname">Sinar Jaya</p>
+                  <p class="vsub">Tarling &middot; Indramayu, Jawa Barat</p>
+                </div>
+              </div>
+              <span class="head-pill">Terverifikasi</span>
+            </div>
+          </header>
+
+          <div class="body" id="b6">
+            <div class="prof-stats">
+              <div class="prof-stat"><b>34</b><span>Pesanan selesai</span></div>
+              <div class="prof-stat"><b>4,9</b><span>Rating vendor</span></div>
+              <div class="prof-stat"><b>98%</b><span>Tepat waktu</span></div>
+            </div>
+
+            <section>
+              <div class="sec"><h2>Akun</h2><small>Sejak 2023</small></div>
+              <div class="panel">
+                <button class="setrow" type="button" data-acc="acc-id" aria-expanded="false">
+                  <span class="row-main">
+                    <span class="set-l">Identitas &amp; verifikasi</span>
+                    <span class="set-s">KTP &amp; SK usaha terverifikasi</span>
+                  </span>
+                  <svg class="chev" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.6 4.4 13.2 10l-5.6 5.6"/></svg>
+                </button>
+                <div class="acc" id="acc-id" hidden>
+                  <p>KTP dan SK usaha terverifikasi 12 Agustus 2025, berlaku sampai 12 Agustus 2027. Perubahan nama atau alamat perlu verifikasi ulang.</p>
+                </div>
+
+                <button class="setrow" type="button" data-acc="acc-bank" aria-expanded="false">
+                  <span class="row-main">
+                    <span class="set-l">Rekening pencairan</span>
+                    <span class="set-s">BCA &middot;&middot;&middot; 8842 &middot; Sinar Jaya</span>
+                  </span>
+                  <svg class="chev" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.6 4.4 13.2 10l-5.6 5.6"/></svg>
+                </button>
+                <div class="acc" id="acc-bank" hidden>
+                  <p>Pencairan otomatis H+3 setelah acara selesai. Ganti rekening butuh verifikasi 1&times;24 jam dan pencairan berjalan dialihkan ke rekening lama.</p>
+                </div>
+
+                <button class="setrow" type="button" data-acc="acc-fee" aria-expanded="false">
+                  <span class="row-main">
+                    <span class="set-l">Komisi &amp; pajak</span>
+                    <span class="set-s">10% &middot; lantai Rp25.000</span>
+                  </span>
+                  <svg class="chev" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.6 4.4 13.2 10l-5.6 5.6"/></svg>
+                </button>
+                <div class="acc" id="acc-fee" hidden>
+                  <p>Komisi 10% dengan lantai Rp25.000, turun ke 5% untuk bagian nilai pesanan di atas Rp10 juta. PPh final ditanggung vendor.</p>
+                </div>
+              </div>
+            </section>
+
+            <section>
+              <div class="sec"><h2>Pengaturan</h2><small>Notifikasi</small></div>
+              <div class="panel">
+                <button class="setrow" type="button" role="switch" aria-checked="true" data-switch>
+                  <span class="row-main">
+                    <span class="set-l">Notifikasi pesanan</span>
+                    <span class="set-s">Bunyi dan getar saat pesanan masuk</span>
+                  </span>
+                  <span class="sw" aria-hidden="true"></span>
+                </button>
+                <button class="setrow" type="button" role="switch" aria-checked="true" data-switch>
+                  <span class="row-main">
+                    <span class="set-l">Pengingat jadwal</span>
+                    <span class="set-s">H-1 dan 2 jam sebelum acara</span>
+                  </span>
+                  <span class="sw" aria-hidden="true"></span>
+                </button>
+                <button class="setrow" type="button" role="switch" aria-checked="false" data-switch>
+                  <span class="row-main">
+                    <span class="set-l">Mode hemat data</span>
+                    <span class="set-s">Muat pratinjau lebih kecil di jaringan lambat</span>
+                  </span>
+                  <span class="sw" aria-hidden="true"></span>
+                </button>
+              </div>
+            </section>
+
+            <section>
+              <div class="sec"><h2>Bantuan</h2><small>Tanggapan &lt; 1 jam</small></div>
+              <div class="panel">
+                <button class="setrow" type="button" data-acc="acc-pjp" aria-expanded="false">
+                  <span class="row-main">
+                    <span class="set-l">Penahanan dana &amp; sengketa</span>
+                    <span class="set-s">Cara kerja PJP dan batas lapor</span>
+                  </span>
+                  <svg class="chev" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.6 4.4 13.2 10l-5.6 5.6"/></svg>
+                </button>
+                <div class="acc" id="acc-pjp" hidden>
+                  <p>Dana pelanggan ditahan PJP berizin. Sengketa bisa dilaporkan sampai 3 hari setelah acara; selama jendela itu dana belum dicairkan.</p>
+                </div>
+                <a class="setrow" href="https://wa.me/6281200004471" target="_blank" rel="noopener">
+                  <span class="row-main">
+                    <span class="set-l">Hubungi tim vendor</span>
+                    <span class="set-s">WhatsApp &middot; setiap hari 08.00&ndash;20.00</span>
+                  </span>
+                  <svg class="chev" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.6 4.4 13.2 10l-5.6 5.6"/></svg>
+                </a>
+              </div>
+              <p class="note">Data contoh untuk pratinjau desain. Nominal dan status mengikuti skema komisi Tarlink.</p>
+            </section>
+          </div>
+
+          <nav class="nav" aria-label="Navigasi utama">
+            <button class="ntab" type="button" data-screen="screen-beranda">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M3.4 8.3 10 3.1l6.6 5.2V16a1 1 0 0 1-1 1h-3.9v-4.6H8.3V17H4.4a1 1 0 0 1-1-1V8.3Z"/></svg>
+              Beranda
+            </button>
+            <button class="ntab" type="button" data-screen="screen-kalender">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="3" y="4.5" width="14" height="12.5" rx="1.4"/><path d="M3 8.4h14M7 3v3M13 3v3"/></svg>
+              Kalender
+            </button>
+            <button class="ntab" type="button" data-screen="screen-saldo">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M3 6.2a1.7 1.7 0 0 1 1.7-1.7h9.1A1.7 1.7 0 0 1 15.5 6v1.2"/><rect x="3" y="6.2" width="14" height="9.6" rx="1.6"/><path d="M12.6 11h2.6"/></svg>
+              Saldo
+            </button>
+            <button class="ntab" type="button" data-screen="screen-profil" aria-current="page">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="6.8" r="3.1"/><path d="M4.2 16.4c.7-2.7 3-4.2 5.8-4.2s5.1 1.5 5.8 4.2"/></svg>
+              Profil
+            </button>
+          </nav>
+        </section>
+      </div>
+      <figcaption>
+        <span class="fno">06</span>
+        <span class="fname">Profil</span>
+        <span class="fnote">Akun &middot; rekening &middot; pengaturan</span>
+      </figcaption>
+    </figure>
+
+  </main>
+
+  <footer class="footbar">
+    <div class="footbar-in">
+      <div class="toks">
+        <span class="tok"><i style="background:#0B1220"></i>Obsidian</span>
+        <span class="tok"><i style="background:#D9FB4F"></i>Lime</span>
+        <span class="tok"><i style="background:#EEEEE9"></i>Canvas</span>
+        <span class="tok"><i style="background:#E3E5DF"></i>Line</span>
+        <span class="tok"><i style="background:#606870"></i>Muted</span>
+      </div>
+      <span class="fnl">Plus Jakarta Sans &middot; radius 6/10 &middot; 6 layar &middot; data contoh</span>
+    </div>
+  </footer>
+</div>
+
+<script>
+(function(){
+  var reduce = window.matchMedia("(prefers-reduced-motion:reduce)").matches;
+  var countEl = document.querySelector("[data-count]");
+  function setCount(){
+    if(!countEl) return;
+    countEl.textContent = String(document.querySelectorAll(".job:not(.accepted):not(.declined)").length);
+  }
+  function doAccept(btn){
+    var job = btn.closest(".job"); if(!job) return;
+    job.classList.add("accepted");
+    var acts = job.querySelector("[data-actions]");
+    if(acts) acts.innerHTML = '<span class="job-done">Diterima &mdash; jadwal dikunci</span>';
+    setCount();
+  }
+  function doDecline(btn){
+    var job = btn.closest(".job"); if(!job) return;
+    job.classList.add("declined");
+    var acts = job.querySelector("[data-actions]");
+    if(acts){
+      acts.innerHTML = '<span class="job-declined">Ditolak<button class="undo" type="button">Batalkan</button></span>';
+      var u = acts.querySelector(".undo");
+      if(u) u.addEventListener("click",function(){
+        job.classList.remove("declined");
+        acts.innerHTML = '<button class="btn btn-s" type="button" data-decline>Tolak</button><button class="btn btn-p" type="button" data-accept>Terima</button>';
+        bindActs(acts); setCount();
+      });
+    }
+    setCount();
+  }
+  function bindActs(root){
+    root.querySelectorAll("[data-accept]").forEach(function(b){ b.addEventListener("click",function(){ doAccept(b); }); });
+    root.querySelectorAll("[data-decline]").forEach(function(b){ b.addEventListener("click",function(){ doDecline(b); }); });
+  }
+  bindActs(document);
+
+  // sheet
+  var sheet = document.getElementById("sheet");
+  document.querySelectorAll("[data-open-sheet]").forEach(function(b){ b.addEventListener("click",function(){ sheet && sheet.classList.add("open"); }); });
+  document.querySelectorAll("[data-close-sheet]").forEach(function(b){ b.addEventListener("click",function(){ sheet && sheet.classList.remove("open"); }); });
+  if(sheet){
+    sheet.addEventListener("click",function(e){ if(e.target===sheet) sheet.classList.remove("open"); });
+  }
+  document.addEventListener("keydown",function(e){ if(e.key==="Escape" && sheet) sheet.classList.remove("open"); });
+
+  // tab scroll
+  var scroller = document.getElementById("b1");
+  document.querySelectorAll(".ntab[data-target]").forEach(function(tab){
+    tab.addEventListener("click",function(){
+      var group = tab.closest(".nav");
+      if(group) group.querySelectorAll(".ntab").forEach(function(t){ t.removeAttribute("aria-current"); });
+      tab.setAttribute("aria-current","page");
+      var id = tab.getAttribute("data-target");
+      if(id==="top"){ scroller && scroller.scrollTo({top:0,behavior:reduce?"auto":"smooth"}); return; }
+      var el = document.getElementById(id);
+      if(el && scroller) scroller.scrollTo({top:el.offsetTop - 8, behavior:reduce?"auto":"smooth"});
+    });
+  });
+
+  // detail bar
+  var bar = document.querySelector(".actbar");
+  function settle(msg){ if(bar) bar.innerHTML = '<p class="settle-line">'+msg+'</p>'; }
+  var da = document.querySelector("[data-accept-det]");
+  var dd = document.querySelector("[data-decline-det]");
+  if(da) da.addEventListener("click",function(){ settle("Pesanan diterima. Jadwal 7 Nov dikunci."); });
+  if(dd) dd.addEventListener("click",function(){ settle("Pesanan ditolak. DP dikembalikan ke pelanggan."); });
+
+  // screen navigation across the board
+  document.querySelectorAll("[data-screen]").forEach(function(el){
+    el.addEventListener("click",function(){
+      var target = document.getElementById(el.getAttribute("data-screen"));
+      if(target) target.scrollIntoView({behavior:reduce?"auto":"smooth",block:"start"});
+    });
+  });
+
+  // kalender
+  var MONTHS=["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
+  var DAYNAMES=["Senin","Selasa","Rabu","Kamis","Jumat","Sabtu","Minggu"];
+  function pad2(n){ return n<10 ? "0"+n : String(n); }
+  function dayKey(y,m,d){ return y+"-"+pad2(m+1)+"-"+pad2(d); }
+
+  var booked={"2026-10-25":1,"2026-10-29":1,"2026-11-02":1,"2026-11-07":1,"2026-11-08":1,"2026-11-11":1,"2026-11-12":1,"2026-11-15":1,"2026-11-18":1};
+  var agendaData={
+    "2026-10-25":[{t:"09.00",e:"17.00",n:"Toha",m:"Sliyeg \u00B7 Organ / Tarling",v:"Rp5.400.000",s:"no",l:"Ditolak"}],
+    "2026-10-29":[{t:"07.30",e:"13.00",n:"Endang S.",m:"Losarang \u00B7 Organ / Tarling",v:"Rp2.900.000",s:"done",l:"Selesai"}],
+    "2026-11-02":[{t:"09.00",e:"15.00",n:"Surya Atmaja",m:"Balongan \u00B7 Organ / Tarling",v:"Rp8.100.000",s:"done",l:"Selesai"}],
+    "2026-11-07":[{t:"07.00",e:"dini hari",n:"Ibu Narti",m:"Jatibarang \u00B7 Organ / Tarling",v:"Rp6.500.000",s:"wait",l:"Menunggu"}],
+    "2026-11-08":[{t:"08.00",e:"16.00",n:"Rina Wati",m:"Karangampel \u00B7 Organ / Tarling",v:"Rp3.800.000",s:"ok",l:"Diterima"}],
+    "2026-11-11":[{t:"09.00",e:"15.00",n:"Surya Atmaja",m:"Balongan \u00B7 Organ / Tarling",v:"Rp4.100.000",s:"ok",l:"Diterima"}],
+    "2026-11-12":[{t:"07.30",e:"13.00",n:"Endang S.",m:"Losarang \u00B7 Organ / Tarling",v:"Rp2.900.000",s:"ok",l:"Diterima"}],
+    "2026-11-15":[{t:"07.00",e:"dini hari",n:"Pak Darto",m:"Karangampel \u00B7 Organ / Tarling",v:"Rp9.200.000",s:"wait",l:"Menunggu"}],
+    "2026-11-18":[{t:"08.00",e:"17.00",n:"H. Marzuki",m:"Losarang \u00B7 Organ / Tarling",v:"Rp4.750.000",s:"wait",l:"Menunggu"}]
+  };
+
+  var calGrid=document.getElementById("calGrid");
+  var calMonthEl=document.getElementById("calMonth");
+  var agWrap=document.getElementById("agWrap");
+  var agDate=document.getElementById("agDate");
+  var monthState={y:2026,m:10};
+  var selectedDay="2026-11-07";
+
+  function updateCalSummary(y,m){
+    var prefix=y+"-"+pad2(m+1);
+    var filled=0;
+    for(var k in booked){ if(k.indexOf(prefix)===0) filled++; }
+    var total=new Date(y,m+1,0).getDate();
+    var lbl=document.getElementById("calSumLbl");
+    var bar=document.getElementById("calBar");
+    var pill=document.getElementById("calPill");
+    if(lbl) lbl.textContent=filled+" dari "+total+" hari terisi";
+    if(bar) bar.style.width=Math.round(filled/total*100)+"%";
+    if(pill) pill.textContent="Terisi "+filled+" hari";
+  }
+
+  function renderMonth(){
+    if(!calGrid || !calMonthEl) return;
+    var y=monthState.y, m=monthState.m;
+    var startIdx=(new Date(y,m,1).getDay()+6)%7;
+    var daysInMonth=new Date(y,m+1,0).getDate();
+    var prevMonthDays=new Date(y,m,0).getDate();
+    var html="";
+    for(var i=0;i<42;i++){
+      var outside=false, dY=y, dM=m, dNum;
+      var offset=i-startIdx;
+      if(offset<0){ dNum=prevMonthDays+offset+1; dM=m-1; outside=true; if(dM<0){ dM=11; dY=y-1; } }
+      else if(offset>=daysInMonth){ dNum=offset-daysInMonth+1; dM=m+1; outside=true; if(dM>11){ dM=0; dY=y+1; } }
+      else { dNum=offset+1; }
+      var k=dayKey(dY,dM,dNum);
+      html+='<button class="cal-day'+(outside?" out":"")+(booked[k]?" has":"")+'" type="button" data-date="'+k+'" aria-pressed="'+(k===selectedDay?"true":"false")+'"><span class="cal-n">'+dNum+'</span><span class="cal-dot" aria-hidden="true"></span></button>';
+    }
+    calGrid.innerHTML=html;
+    calMonthEl.textContent=MONTHS[m]+" "+y;
+    updateCalSummary(y,m);
+  }
+
+  function renderAgenda(key){
+    if(!agWrap || !agDate) return;
+    var list=agendaData[key] || [];
+    var d=new Date(key+"T00:00:00");
+    if(!isNaN(d.getTime())){
+      agDate.textContent=DAYNAMES[(d.getDay()+6)%7]+", "+d.getDate()+" "+MONTHS[d.getMonth()]+" "+d.getFullYear();
+    }
+    if(!list.length){
+      agWrap.innerHTML='<div class="empty"><p>Belum ada acara</p><small>Tanggal ini masih kosong. Pesanan baru muncul di sini setelah DP masuk.</small></div>';
+      return;
+    }
+    var html='<ul class="agenda">';
+    list.forEach(function(a){
+      html+='<li class="ag">'+
+        '<span class="ag-time">'+a.t+'<small>'+a.e+'</small></span>'+
+        '<div class="ag-body">'+
+          '<p class="ag-name">'+a.n+'</p>'+
+          '<p class="ag-meta">'+a.m+'</p>'+
+          '<p class="ag-val">'+a.v+'</p>'+
+        '</div>'+
+        '<span class="pill '+a.s+'">'+a.l+'</span>'+
+      '</li>';
+    });
+    agWrap.innerHTML=html+'</ul>';
+  }
+
+  if(calGrid){
+    calGrid.addEventListener("click",function(e){
+      var btn=e.target.closest(".cal-day");
+      if(!btn) return;
+      calGrid.querySelectorAll(".cal-day").forEach(function(c){ c.setAttribute("aria-pressed","false"); });
+      btn.setAttribute("aria-pressed","true");
+      selectedDay=btn.getAttribute("data-date");
+      renderAgenda(selectedDay);
+    });
+  }
+
+  document.querySelectorAll("[data-month]").forEach(function(btn){
+    btn.addEventListener("click",function(){
+      var step=parseInt(btn.getAttribute("data-month"),10) || 0;
+      monthState.m+=step;
+      if(monthState.m<0){ monthState.m=11; monthState.y--; }
+      if(monthState.m>11){ monthState.m=0; monthState.y++; }
+      renderMonth();
+    });
+  });
+
+  // order filters
+  var filterRail=document.getElementById("ordFilters");
+  if(filterRail){
+    filterRail.addEventListener("click",function(e){
+      var chip=e.target.closest(".fchip");
+      if(!chip) return;
+      filterRail.querySelectorAll(".fchip").forEach(function(c){ c.setAttribute("aria-pressed","false"); });
+      chip.setAttribute("aria-pressed","true");
+      var want=chip.getAttribute("data-filter");
+      var shown=0;
+      document.querySelectorAll("#ordList .ord").forEach(function(row){
+        var match=want==="all" || row.getAttribute("data-status")===want;
+        if(match){ row.removeAttribute("hidden"); shown++; }
+        else { row.setAttribute("hidden",""); }
+      });
+      var empty=document.getElementById("ordEmpty");
+      if(empty){
+        if(shown===0) empty.removeAttribute("hidden");
+        else empty.setAttribute("hidden","");
+      }
+    });
+  }
+
+  // profil
+  document.querySelectorAll("[data-switch]").forEach(function(row){
+    row.addEventListener("click",function(){
+      row.setAttribute("aria-checked", row.getAttribute("aria-checked")==="true" ? "false" : "true");
+    });
+  });
+
+  document.querySelectorAll("[data-acc]").forEach(function(row){
+    row.addEventListener("click",function(){
+      var body=document.getElementById(row.getAttribute("data-acc"));
+      if(!body) return;
+      var isOpen=row.getAttribute("aria-expanded")==="true";
+      row.setAttribute("aria-expanded", isOpen ? "false" : "true");
+      if(isOpen) body.setAttribute("hidden","");
+      else body.removeAttribute("hidden");
+    });
+  });
+
+  setCount();
+})();
+</script>
+</body>
+</html>

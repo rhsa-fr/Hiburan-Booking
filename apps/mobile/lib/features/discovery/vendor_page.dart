@@ -7,9 +7,14 @@ import '../../app/theme.dart';
 import '../../core/api_exception.dart';
 import '../../core/format.dart';
 import '../../core/models.dart';
+import '../../core/ui.dart';
 import '../../core/widgets.dart';
 
 const _weekdays = <String>['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'];
+const _tabularFigures = <FontFeature>[FontFeature.tabularFigures()];
+
+/// `Rp 1.500.000` → `Rp1.500.000`, the tighter form DESIGN.md asks for.
+String _rp(int amount) => rupiah(amount).replaceFirst('Rp ', 'Rp');
 
 /// Vendor profile, packages, and an honest 45-day schedule view.
 class VendorPage extends StatefulWidget {
@@ -31,10 +36,9 @@ class _VendorPageState extends State<VendorPage> {
   String? _availError;
   bool _loadingAvail = true;
   bool _started = false;
-  bool _showAllDates = false;
+  int _weekIndex = 0;
   String? _packageId;
   String? _date;
-  String? _session;
 
   @override
   void didChangeDependencies() {
@@ -130,13 +134,13 @@ class _VendorPageState extends State<VendorPage> {
       setState(() {
         _availability = availability;
         _loadingAvail = false;
+        _weekIndex = 0;
         final dates = _dates();
-        if (_date == null || !dates.contains(_date)) {
-          _date = dates.isEmpty ? null : dates.first;
-          _session = null;
-        } else if (_session != null &&
-            !_isSelectable(_stateOf(_date!, _session!))) {
-          _session = null;
+        final date = _date;
+        if (date == null ||
+            !dates.contains(date) ||
+            _dayState(date) == 'blocked') {
+          _date = null;
         }
       });
     } on ApiException catch (error) {
@@ -164,33 +168,22 @@ class _VendorPageState extends State<VendorPage> {
     return dates;
   }
 
-  List<AvailabilityDay> _sessionsFor(String date) {
-    final sessions = [
-      for (final day in _availability?.days ?? const <AvailabilityDay>[])
-        if (day.date == date) day,
-    ];
-    sessions.sort(
-      (a, b) => _sessionOrder(a.session).compareTo(_sessionOrder(b.session)),
-    );
-    return sessions;
-  }
-
-  int _sessionOrder(String session) => switch (session) {
-    'day' => 0,
-    'night' => 1,
-    'full' => 2,
-    _ => 3,
-  };
-
-  String _stateOf(String date, String session) {
+  /// Aggregates the day's sessions into what the strip can honestly show.
+  String _dayState(String date) {
+    var available = false;
+    var waiting = false;
     for (final day in _availability?.days ?? const <AvailabilityDay>[]) {
-      if (day.date == date && day.session == session) return day.state;
+      if (day.date != date) continue;
+      if (day.state == 'available') {
+        available = true;
+      } else if (day.state != 'booked' && day.state != 'blocked') {
+        waiting = true;
+      }
     }
-    return 'unconfirmed';
+    if (available) return 'available';
+    if (waiting) return 'waiting';
+    return 'blocked';
   }
-
-  bool _isSelectable(String state) =>
-      state == 'available' || state == 'unconfirmed' || state == 'stale';
 
   VendorPackage? get _selectedPackage {
     for (final item in _vendor?.packages ?? const <VendorPackage>[]) {
@@ -218,10 +211,26 @@ class _VendorPageState extends State<VendorPage> {
   }
 
   void _chooseDate(String date) {
-    setState(() {
-      _date = date;
-      _session = null;
-    });
+    setState(() => _date = date);
+  }
+
+  void _continue(VendorDetail vendor) {
+    final package = _selectedPackage;
+    if (package == null) {
+      _scrollTo(_packagesKey);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Pilih paket dulu, ya.')));
+      return;
+    }
+    Navigator.pushNamed(
+      context,
+      Routes.bookCreate,
+      arguments: BookCreateArgs(
+        vendorIdOrSlug: vendor.slug,
+        packageId: package.id,
+      ),
+    );
   }
 
   Future<void> _openWhatsApp(String raw) async {
@@ -251,111 +260,352 @@ class _VendorPageState extends State<VendorPage> {
     return digits;
   }
 
+  Future<void> _openVideo(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return;
+    try {
+      final opened = await launchUrl(
+        uri,
+        mode: LaunchMode.inAppBrowserView,
+        browserConfiguration: const BrowserConfiguration(showTitle: true),
+      );
+      if (!opened) {
+        await launchUrl(uri, mode: LaunchMode.platformDefault);
+      }
+    } catch (_) {
+      try {
+        await launchUrl(uri, mode: LaunchMode.platformDefault);
+      } catch (_) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Gagal memutar video pentas.')),
+          );
+        }
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final vendor = _vendor;
     return Scaffold(
-      appBar: AppBar(title: const Text('Detail vendor')),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 560),
-          child: _body(),
+          child: vendor == null ? _placeholderBody() : _content(vendor),
         ),
       ),
-      bottomNavigationBar: _bottomBar(),
+      bottomNavigationBar: vendor == null ? null : _bottomBar(vendor),
     );
   }
 
-  Widget _body() {
-    if (_vendor == null) {
-      if (_vendorError != null) {
-        return AppError(message: _vendorError!, onRetry: _bootstrap);
-      }
-      return ListView(
-        padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.sm, Sp.lg, Sp.xl),
-        children: const [AppLoading(rows: 5, label: 'Memuat vendor dan paket')],
-      );
-    }
-
-    final vendor = _vendor!;
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.sm, Sp.lg, Sp.xl),
+  Widget _placeholderBody() {
+    return Column(
       children: [
-        _header(vendor),
-        const SizedBox(height: Sp.xl),
-        _packages(vendor),
-        const SizedBox(height: Sp.xl),
-        _schedule(),
+        StageHeader.back(
+          context: context,
+          title: 'Detail Grup Hiburan',
+        ),
+        Expanded(
+          child: _vendorError != null
+              ? AppError(message: _vendorError!, onRetry: _bootstrap)
+              : ListView(
+                  padding: const EdgeInsets.fromLTRB(
+                    Sp.lg,
+                    Sp.sm,
+                    Sp.lg,
+                    Sp.xl,
+                  ),
+                  children: const [
+                    AppLoading(rows: 5, label: 'Memuat vendor dan paket'),
+                  ],
+                ),
+        ),
       ],
     );
   }
 
-  Widget _header(VendorDetail vendor) {
-    final text = Theme.of(context).textTheme;
+  Widget _content(VendorDetail vendor) {
+    final description = (vendor.description ?? '').trim();
     final address = (vendor.baseAddress ?? '').trim();
-    final whatsapp = vendor.whatsapp.trim();
+    final transport = _transportLine(vendor);
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return ListView(
+      padding: EdgeInsets.zero,
       children: [
-        Text(vendor.displayName, style: text.displaySmall),
-        const SizedBox(height: Sp.sm),
-        _RatingLine(rating: vendor.rating, count: vendor.ratingCount),
-        const SizedBox(height: Sp.sm),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Icon(
-              Icons.place_outlined,
-              size: 16,
-              color: AppColors.inkMuted,
-            ),
-            const SizedBox(width: Sp.xs),
-            Expanded(child: Text(vendor.regionName, style: text.bodyMedium)),
-          ],
-        ),
-        const SizedBox(height: Sp.xs),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Icon(
-              Icons.home_outlined,
-              size: 16,
-              color: AppColors.inkMuted,
-            ),
-            const SizedBox(width: Sp.xs),
-            Expanded(
-              child: Text(
-                address.isEmpty ? 'Alamat belum diisi' : address,
-                style: text.bodyMedium?.copyWith(
-                  color: address.isEmpty ? AppColors.inkMuted : AppColors.ink,
-                ),
-              ),
-            ),
-          ],
-        ),
-        if ((vendor.description ?? '').trim().isNotEmpty) ...[
-          const SizedBox(height: Sp.md),
-          Text(vendor.description!.trim(), style: text.bodyMedium),
-        ],
-        if (whatsapp.isNotEmpty) ...[
-          const SizedBox(height: Sp.lg),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: () => _openWhatsApp(whatsapp),
-              icon: const Icon(Icons.chat_bubble_outline, size: 20),
-              label: const Text('Chat vendor di WhatsApp'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: AppColors.accent,
-                minimumSize: const Size.fromHeight(48),
-                side: const BorderSide(color: AppColors.accent),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(Radii.sm),
-                ),
-              ),
+        _hero(vendor),
+        if (vendor.videoUrl != null && vendor.videoUrl!.trim().isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.lg, Sp.lg, 0),
+            child: StageVideoCard(
+              videoUrl: vendor.videoUrl!,
+              thumbnailUrl: vendor.bannerUrl,
+              vendorName: vendor.displayName,
+              onOpenVideo: () => _openVideo(vendor.videoUrl!),
             ),
           ),
         ],
+        if (vendor.photoUrls.isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.lg, Sp.lg, 0),
+            child: MediaGalleryReel(photoUrls: vendor.photoUrls),
+          ),
+        ],
+        if (description.isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.lg, Sp.lg, 0),
+            child: _ExpandableDescription(text: description),
+          ),
+          const SizedBox(height: Sp.sm),
+        ],
+        const Padding(
+          padding: EdgeInsets.fromLTRB(Sp.lg, Sp.md, Sp.lg, 0),
+          child: Divider(color: AppColors.line),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.md, Sp.lg, 0),
+          child: _packages(vendor),
+        ),
+        const Padding(
+          padding: EdgeInsets.fromLTRB(Sp.lg, Sp.lg, Sp.lg, 0),
+          child: Divider(color: AppColors.line),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.md, Sp.lg, 0),
+          child: _schedule(vendor),
+        ),
+        if (address.isNotEmpty || transport != null) ...[
+          const Padding(
+            padding: EdgeInsets.fromLTRB(Sp.lg, Sp.lg, Sp.lg, 0),
+            child: Divider(color: AppColors.line),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.md, Sp.lg, 0),
+            child: _location(address, transport),
+          ),
+        ],
+        const SizedBox(height: 96),
+      ],
+    );
+  }
+
+  Widget _hero(VendorDetail vendor) {
+    final text = Theme.of(context).textTheme;
+    final region = vendor.regionName.trim();
+    final category = vendor.categoryName?.trim() ?? '';
+    final rating = vendor.rating;
+    final ratingText = rating == null || vendor.ratingCount == 0
+        ? null
+        : '${rating.toStringAsFixed(1)} (${vendor.ratingCount} ulasan)';
+    final responseRate = vendor.responseRateBp;
+    final responseText = responseRate == null
+        ? null
+        : 'Respons ${(responseRate / 100).round()}%';
+    final whatsapp = _waDigits(vendor.whatsapp);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        StageHeader.back(
+          context: context,
+          title: 'Detail Grup Hiburan',
+          subtitle: vendor.displayName,
+          trailing: whatsapp != null
+              ? Material(
+                  color: AppColors.card,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(Radii.sm),
+                    side: const BorderSide(color: AppColors.line),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: InkWell(
+                    onTap: () => _openWhatsApp(vendor.whatsapp),
+                    child: const SizedBox(
+                      width: 38,
+                      height: 38,
+                      child: Center(
+                        child: Icon(Icons.chat_outlined, size: 19, color: AppColors.ink),
+                      ),
+                    ),
+                  ),
+                )
+              : null,
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.sm, Sp.lg, 0),
+          child: PosterTile(
+            name: vendor.displayName,
+            imageUrl: vendor.bannerUrl ?? vendor.avatarUrl,
+            aspectRatio: 16 / 9,
+            heroTag: 'vendor-poster-${vendor.id}',
+            badges: [
+              if (category.isNotEmpty) category,
+              if (region.isNotEmpty) region,
+              if (vendor.videoUrl != null &&
+                  vendor.videoUrl!.trim().isNotEmpty)
+                '▶ Cuplikan Video',
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.md, Sp.lg, 0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  if (vendor.avatarUrl != null &&
+                      vendor.avatarUrl!.trim().isNotEmpty) ...[
+                    Container(
+                      width: 52,
+                      height: 52,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(color: AppColors.primary, width: 2),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Color(0x18000000),
+                            blurRadius: 8,
+                            offset: Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      clipBehavior: Clip.antiAlias,
+                      child: Image.network(
+                        vendor.avatarUrl!.trim(),
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => const ColoredBox(
+                          color: AppColors.surfaceSoft,
+                          child: Icon(Icons.person, color: AppColors.primary),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: Sp.md),
+                  ],
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          vendor.displayName,
+                          style: text.headlineSmall?.copyWith(
+                            fontSize: 22,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -0.3,
+                          ),
+                        ),
+                        const SizedBox(height: Sp.xs),
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons.place_outlined,
+                              size: 16,
+                              color: AppColors.inkMuted,
+                            ),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: Text(
+                                <String>[
+                                  if (region.isNotEmpty) region,
+                                  '${vendor.packages.length} paket',
+                                ].join(' · '),
+                                style: text.bodySmall,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              if (ratingText != null || responseText != null) ...[
+                const SizedBox(height: Sp.xs),
+                Row(
+                  children: [
+                    if (ratingText != null) ...[
+                      const Icon(
+                        Icons.star_rounded,
+                        size: 17,
+                        color: AppColors.tertiary,
+                      ),
+                      const SizedBox(width: 2),
+                      Text(
+                        ratingText,
+                        style: text.bodySmall?.copyWith(
+                          color: AppColors.ink,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                    if (ratingText != null && responseText != null)
+                      Text(' · ', style: text.bodySmall),
+                    if (responseText != null)
+                      Flexible(
+                        child: Text(
+                          responseText,
+                          style: text.bodySmall,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+              const SizedBox(height: Sp.md),
+              _pricePill(vendor),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _pricePill(VendorDetail vendor) {
+    final text = Theme.of(context).textTheme;
+    final price = _startingPrice(vendor);
+    final percent = vendor.minDpBp > 0 ? _percent(vendor.minDpBp) : null;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Mulai dari', style: text.bodySmall?.copyWith(fontSize: 11)),
+              Text(
+                price == 0 ? 'Harga belum diisi' : _rp(price),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: text.displaySmall?.copyWith(
+                  fontSize: 26,
+                  fontWeight: FontWeight.w700,
+                  color: price == 0 ? AppColors.inkMuted : AppColors.primary,
+                  fontFeatures: _tabularFigures,
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (percent != null)
+          Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: Sp.sm + 2,
+              vertical: Sp.xs + 1,
+            ),
+            decoration: BoxDecoration(
+              color: AppColors.primarySoft,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              'DP $percent%',
+              style: text.labelSmall?.copyWith(
+                color: AppColors.primaryDeep,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
       ],
     );
   }
@@ -364,56 +614,49 @@ class _VendorPageState extends State<VendorPage> {
     final text = Theme.of(context).textTheme;
     return Column(
       key: _packagesKey,
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Expanded(child: Text('Paket', style: text.titleLarge)),
-            if (vendor.packages.isNotEmpty)
-              Text('${vendor.packages.length} paket', style: text.bodySmall),
-          ],
-        ),
+        const SectionHeader(title: 'Paket'),
         const SizedBox(height: Sp.md),
         if (vendor.packages.isEmpty)
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(Sp.lg),
-              child: Text(
-                'Belum ada paket untuk vendor ini.',
-                style: text.bodyMedium?.copyWith(color: AppColors.inkMuted),
-              ),
+          Container(
+            padding: const EdgeInsets.all(Sp.lg),
+            decoration: BoxDecoration(
+              color: AppColors.card,
+              borderRadius: BorderRadius.circular(Radii.lg),
+              border: Border.all(color: AppColors.line),
+            ),
+            child: Text(
+              'Belum ada paket untuk vendor ini.',
+              style: text.bodyMedium?.copyWith(color: AppColors.inkMuted),
             ),
           )
         else
-          for (final item in vendor.packages)
+          for (var i = 0; i < vendor.packages.length; i++)
             Padding(
-              padding: const EdgeInsets.only(bottom: Sp.md),
+              padding: EdgeInsets.only(
+                bottom: i == vendor.packages.length - 1 ? 0 : Sp.md,
+              ),
               child: _PackageCard(
-                package: item,
-                selected: item.id == _packageId,
-                onChoose: () => _choosePackage(item),
+                package: vendor.packages[i],
+                minDpBp: vendor.minDpBp,
+                selected: vendor.packages[i].id == _packageId,
+                onChoose: () => _choosePackage(vendor.packages[i]),
               ),
             ),
       ],
     );
   }
 
-  Widget _schedule() {
+  Widget _schedule(VendorDetail vendor) {
     final text = Theme.of(context).textTheme;
     final availability = _availability;
-    final dates = _dates();
 
     return Column(
       key: _scheduleKey,
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text('Jadwal', style: text.titleLarge),
-        const SizedBox(height: Sp.xs),
-        Text(
-          'Pilih tanggal, lalu sesi siang atau malam.',
-          style: text.bodySmall,
-        ),
+        const SectionHeader(title: 'Jadwal', caption: '45 hari ke depan'),
         const SizedBox(height: Sp.md),
         if (_loadingAvail)
           const AppLoading(rows: 2, label: 'Memuat jadwal vendor')
@@ -428,296 +671,327 @@ class _VendorPageState extends State<VendorPage> {
           ),
         ] else if (availability != null) ...[
           if (availability.stale) ...[
-            _staleBanner(availability),
+            _staleStrip(vendor, availability),
             const SizedBox(height: Sp.md),
           ],
-          if (dates.isEmpty)
-            Text(
-              'Jadwal belum tersedia untuk 45 hari ke depan.',
-              style: text.bodyMedium?.copyWith(color: AppColors.inkMuted),
-            )
-          else ...[
-            _dateStrip(dates),
-            if (dates.length > 14 && !_showAllDates)
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton.icon(
-                  onPressed: () => setState(() => _showAllDates = true),
-                  icon: const Icon(Icons.expand_more, size: 20),
-                  label: const Text('Lihat tanggal lain'),
-                ),
-              ),
-            const SizedBox(height: Sp.md),
-            _sessions(),
-          ],
-        ],
+          _datesStrip(availability),
+        ] else
+          Text(
+            'Jadwal belum tersedia untuk 45 hari ke depan.',
+            style: text.bodyMedium?.copyWith(color: AppColors.inkMuted),
+          ),
       ],
     );
   }
 
-  Widget _staleBanner(Availability availability) {
-    final text = Theme.of(context).textTheme;
-    final freshness = relativeFreshness(
-      availability.calendarUpdatedAt,
-      staleAfterDays: availability.staleThresholdDays,
-    );
-    return Container(
-      padding: const EdgeInsets.all(Sp.md),
-      decoration: BoxDecoration(
-        color: AppColors.warningSoft,
-        borderRadius: BorderRadius.circular(Radii.sm),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(Icons.info_outline, size: 18, color: AppColors.warning),
-          const SizedBox(width: Sp.sm),
-          Expanded(
-            child: Text(
-              '$freshness Sesi “Belum dikonfirmasi” tetap bisa dipesan; vendor akan memastikan.',
-              style: text.bodySmall?.copyWith(color: AppColors.warning),
-            ),
-          ),
-        ],
-      ),
+  Widget _staleStrip(VendorDetail vendor, Availability availability) {
+    final whatsapp = _waDigits(vendor.whatsapp);
+    return InfoStrip(
+      message: _staleMessage(availability),
+      icon: Icons.history,
+      tone: InfoTone.warning,
+      actionLabel: whatsapp == null ? null : 'WhatsApp',
+      onAction: whatsapp == null ? null : () => _openWhatsApp(vendor.whatsapp),
     );
   }
 
-  Widget _dateStrip(List<String> dates) {
-    final visible = _showAllDates ? dates : dates.take(14).toList();
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          for (final date in visible)
-            Padding(
-              padding: const EdgeInsets.only(right: Sp.sm),
-              child: _DateChip(
-                date: date,
-                selected: date == _date,
-                onTap: () => _chooseDate(date),
-              ),
-            ),
-        ],
-      ),
-    );
+  String _staleMessage(Availability availability) {
+    final updated = availability.calendarUpdatedAt == null
+        ? null
+        : DateTime.tryParse(availability.calendarUpdatedAt!);
+    if (updated == null) {
+      return 'Jadwal terakhir belum pernah diperbarui. Konfirmasi ke vendor '
+          'lewat WhatsApp.';
+    }
+    final days = DateTime.now().toUtc().difference(updated.toUtc()).inDays;
+    final age = days < 1 ? 1 : days;
+    return 'Jadwal terakhir diperbarui $age hari lalu. Konfirmasi ke vendor '
+        'lewat WhatsApp.';
   }
 
-  Widget _sessions() {
+  Widget _datesStrip(Availability availability) {
     final text = Theme.of(context).textTheme;
-    final selectedDate = _date;
-    if (selectedDate == null) {
+    final dates = _dates();
+    if (dates.isEmpty) {
       return Text(
-        'Pilih tanggal dulu untuk melihat sesi.',
+        'Jadwal belum tersedia untuk 45 hari ke depan.',
         style: text.bodyMedium?.copyWith(color: AppColors.inkMuted),
       );
     }
 
-    final sessions = _sessionsFor(selectedDate);
-    if (sessions.isEmpty) {
-      return Text(
-        'Belum ada jadwal untuk tanggal ini.',
-        style: text.bodyMedium?.copyWith(color: AppColors.inkMuted),
-      );
+    final weeks = <List<String>>[];
+    for (var i = 0; i < dates.length; i += 7) {
+      weeks.add(dates.sublist(i, i + 7 > dates.length ? dates.length : i + 7));
     }
-
-    final needsConfirmation =
-        _session != null &&
-        (_stateOf(selectedDate, _session!) == 'unconfirmed' ||
-            _stateOf(selectedDate, _session!) == 'stale');
+    final index = _weekIndex.clamp(0, weeks.length - 1);
+    final week = weeks[index];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        for (final day in sessions)
-          Padding(
-            padding: const EdgeInsets.only(bottom: Sp.sm),
-            child: _sessionTile(day),
-          ),
-        if (needsConfirmation)
-          Container(
-            padding: const EdgeInsets.all(Sp.md),
-            decoration: BoxDecoration(
-              color: AppColors.warningSoft,
-              borderRadius: BorderRadius.circular(Radii.sm),
+        Row(
+          children: [
+            IconButton(
+              tooltip: 'Minggu sebelumnya',
+              onPressed: index == 0
+                  ? null
+                  : () => setState(() => _weekIndex = index - 1),
+              icon: const Icon(Icons.chevron_left),
+              color: AppColors.inkMuted,
             ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Icon(
-                  Icons.info_outline,
-                  size: 18,
-                  color: AppColors.warning,
+            Expanded(
+              child: Text(
+                _weekLabel(week),
+                textAlign: TextAlign.center,
+                style: text.labelMedium?.copyWith(
+                  color: AppColors.ink,
+                  fontWeight: FontWeight.w700,
                 ),
-                const SizedBox(width: Sp.sm),
-                Expanded(
-                  child: Text(
-                    'Jadwal ini belum dikonfirmasi vendor. Kamu tetap bisa pesan; vendor akan memastikan.',
-                    style: text.bodySmall?.copyWith(color: AppColors.warning),
-                  ),
-                ),
-              ],
+              ),
             ),
-          ),
+            IconButton(
+              tooltip: 'Minggu berikutnya',
+              onPressed: index >= weeks.length - 1
+                  ? null
+                  : () => setState(() => _weekIndex = index + 1),
+              icon: const Icon(Icons.chevron_right),
+              color: AppColors.inkMuted,
+            ),
+          ],
+        ),
+        const SizedBox(height: Sp.sm),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final cellWidth = ((constraints.maxWidth - Sp.sm * 6) / 7).clamp(
+              34.0,
+              56.0,
+            );
+            final states = <String, String>{
+              for (final date in week) date: _dayState(date),
+            };
+            final cells = <Widget>[];
+            for (final date in week) {
+              final parsed = DateTime.tryParse(date);
+              if (parsed == null) continue;
+              final state = states[date]!;
+              cells.add(
+                _DayCell(
+                  date: parsed,
+                  state: state,
+                  selected: date == _date,
+                  width: cellWidth,
+                  // Blocked days stay visible but cannot be chosen.
+                  onTap: state == 'blocked' ? null : () => _chooseDate(date),
+                ),
+              );
+            }
+            return Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: cells,
+            );
+          },
+        ),
+        const SizedBox(height: Sp.sm),
+        const _ScheduleLegend(),
       ],
     );
   }
 
-  Widget _sessionTile(AvailabilityDay day) {
-    final text = Theme.of(context).textTheme;
-    final selectable = _isSelectable(day.state);
-    final selected = _session == day.session;
+  String _weekLabel(List<String> week) {
+    final first = DateTime.tryParse(week.first);
+    final last = DateTime.tryParse(week.last);
+    if (first == null || last == null) return '${week.first} – ${week.last}';
+    if (first.year == last.year) {
+      if (first.month == last.month) {
+        return '${first.day} – ${formatDate(last)}';
+      }
+      return '${formatDayMonth(first)} – ${formatDate(last)}';
+    }
+    return '${formatDate(first)} – ${formatDate(last)}';
+  }
 
-    return Semantics(
-      button: true,
-      enabled: selectable,
-      selected: selected,
-      child: InkWell(
-        onTap: selectable ? () => setState(() => _session = day.session) : null,
-        borderRadius: BorderRadius.circular(Radii.sm),
-        child: Container(
-          padding: const EdgeInsets.all(Sp.md),
+  Widget _location(String address, String? transport) {
+    final text = Theme.of(context).textTheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SectionHeader(title: 'Lokasi & transport'),
+        const SizedBox(height: Sp.md),
+        Container(
+          padding: const EdgeInsets.all(Sp.lg),
           decoration: BoxDecoration(
-            color: selectable ? AppColors.card : AppColors.neutralSoft,
-            borderRadius: BorderRadius.circular(Radii.sm),
-            border: Border.all(
-              color: selected ? AppColors.primary : AppColors.line,
-              width: selected ? 1.6 : 1,
-            ),
+            color: AppColors.card,
+            borderRadius: BorderRadius.circular(Radii.lg),
+            border: Border.all(color: AppColors.line),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Wrap(
-                spacing: Sp.sm,
-                runSpacing: Sp.xs,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  Text(
-                    _sessionLabel(day.session),
-                    style: text.titleMedium?.copyWith(
-                      color: selectable ? AppColors.ink : AppColors.inkMuted,
+              if (address.isNotEmpty)
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.only(top: 2),
+                      child: Icon(
+                        Icons.place_outlined,
+                        size: 18,
+                        color: AppColors.inkMuted,
+                      ),
                     ),
-                  ),
-                  _StateChip(state: day.state),
-                  if (selected)
-                    const Icon(
-                      Icons.check_circle,
-                      size: 20,
-                      color: AppColors.primary,
+                    const SizedBox(width: Sp.sm),
+                    Expanded(child: Text(address, style: text.bodyMedium)),
+                  ],
+                ),
+              if (address.isNotEmpty && transport != null)
+                const SizedBox(height: Sp.sm),
+              if (transport != null)
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.only(top: 2),
+                      child: Icon(
+                        Icons.directions_car_outlined,
+                        size: 18,
+                        color: AppColors.inkMuted,
+                      ),
                     ),
-                ],
-              ),
-              const SizedBox(height: Sp.xs),
-              Text(
-                _sessionNote(day.state),
-                style: text.bodySmall?.copyWith(color: AppColors.inkMuted),
-              ),
+                    const SizedBox(width: Sp.sm),
+                    Expanded(
+                      child: Text(
+                        transport,
+                        style: text.bodyMedium?.copyWith(
+                          color: AppColors.inkMuted,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
             ],
           ),
         ),
+      ],
+    );
+  }
+
+  Widget? _bottomBar(VendorDetail vendor) {
+    final date = _date == null ? null : DateTime.tryParse(_date!);
+    final label = date == null
+        ? 'Pilih jadwal'
+        : 'Lanjut · ${formatDayMonth(date)}';
+    final price = _startingPrice(vendor);
+    final hasPackages = vendor.packages.isNotEmpty;
+
+    return StickyActionBar(
+      leading: FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: Alignment.centerLeft,
+        child: Text(
+          price == 0 ? 'Harga belum diisi' : 'Mulai ${_rp(price)}',
+          maxLines: 1,
+          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.w700,
+            color: price == 0 ? AppColors.inkMuted : AppColors.ink,
+            fontFeatures: _tabularFigures,
+          ),
+        ),
+      ),
+      child: PrimaryButton(
+        label: hasPackages ? label : 'Belum ada paket',
+        onPressed: hasPackages
+            ? () {
+                if (date == null) {
+                  _scrollTo(_scheduleKey);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Pilih tanggal acara dulu, ya.'),
+                    ),
+                  );
+                  return;
+                }
+                _continue(vendor);
+              }
+            : null,
       ),
     );
   }
 
-  Widget? _bottomBar() {
-    final vendor = _vendor;
-    if (vendor == null) return null;
-
-    if (vendor.packages.isEmpty) {
-      return SafeArea(
-        minimum: const EdgeInsets.fromLTRB(Sp.lg, Sp.sm, Sp.lg, Sp.lg),
-        child: const PrimaryButton(label: 'Belum ada paket', onPressed: null),
-      );
+  int _startingPrice(VendorDetail vendor) {
+    var best = 0;
+    for (final item in vendor.packages) {
+      if (item.basePriceIdr <= 0) continue;
+      if (best == 0 || item.basePriceIdr < best) best = item.basePriceIdr;
     }
+    return best;
+  }
 
-    final package = _selectedPackage;
-    final date = _date == null ? null : DateTime.tryParse(_date!);
-    final complete = package != null && date != null && _session != null;
-    final label = complete
-        ? 'Pesan ${package.name} · ${formatDayMonth(date)}'
-        : package == null
-        ? 'Pilih paket'
-        : date == null
-        ? 'Pilih tanggal'
-        : 'Pilih sesi';
-
-    return SafeArea(
-      minimum: const EdgeInsets.fromLTRB(Sp.lg, Sp.sm, Sp.lg, Sp.lg),
-      child: Center(
-        heightFactor: 1,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 528),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (complete)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: Sp.sm),
-                  child: Text(
-                    'Tanggal dan sesi dipilih ulang di halaman berikutnya.',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ),
-              SizedBox(
-                width: double.infinity,
-                child: PrimaryButton(
-                  label: label,
-                  icon: complete ? Icons.arrow_forward : null,
-                  onPressed: () {
-                    if (complete) {
-                      Navigator.pushNamed(
-                        context,
-                        Routes.bookCreate,
-                        arguments: BookCreateArgs(
-                          vendorIdOrSlug: vendor.slug,
-                          packageId: package.id,
-                        ),
-                      );
-                    } else if (package == null) {
-                      _scrollTo(_packagesKey);
-                    } else {
-                      _scrollTo(_scheduleKey);
-                    }
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+  String? _transportLine(VendorDetail vendor) {
+    final parts = <String>[
+      if (vendor.transportFeePerKmIdr > 0)
+        'Biaya transport ${_rp(vendor.transportFeePerKmIdr)}/km',
+      if (vendor.serviceRadiusKm > 0)
+        'jangkauan ${_kilometers(vendor.serviceRadiusKm)} km',
+    ];
+    return parts.isEmpty ? null : parts.join(' · ');
   }
 }
 
-class _RatingLine extends StatelessWidget {
-  const _RatingLine({required this.rating, required this.count});
+class _ExpandableDescription extends StatefulWidget {
+  const _ExpandableDescription({required this.text});
 
-  final double? rating;
-  final int count;
+  final String text;
+
+  @override
+  State<_ExpandableDescription> createState() => _ExpandableDescriptionState();
+}
+
+class _ExpandableDescriptionState extends State<_ExpandableDescription> {
+  static const _maxLines = 4;
+
+  bool _expanded = false;
 
   @override
   Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    final value = rating;
-    if (value == null) {
-      return Text(
-        'Belum ada ulasan',
-        style: text.bodySmall?.copyWith(color: AppColors.inkMuted),
-      );
-    }
-    return Wrap(
-      spacing: Sp.xs,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      children: [
-        const Icon(Icons.star_rounded, size: 18, color: AppColors.warning),
-        Text(
-          value.toStringAsFixed(1).replaceAll('.', ','),
-          style: text.labelMedium,
-        ),
-        if (count > 0) Text('($count ulasan)', style: text.bodySmall),
-      ],
+    final style = Theme.of(context).textTheme.bodyLarge;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final painter = TextPainter(
+          text: TextSpan(text: widget.text, style: style),
+          maxLines: _maxLines,
+          textDirection: Directionality.of(context),
+          textScaler: MediaQuery.textScalerOf(context),
+        )..layout(maxWidth: constraints.maxWidth);
+        final clamped = painter.didExceedMaxLines;
+        painter.dispose();
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              widget.text,
+              style: style,
+              maxLines: _expanded ? null : _maxLines,
+              overflow: _expanded ? TextOverflow.clip : TextOverflow.ellipsis,
+            ),
+            if (clamped)
+              TextButton(
+                onPressed: () => setState(() => _expanded = !_expanded),
+                style: TextButton.styleFrom(
+                  foregroundColor: AppColors.primary,
+                  padding: EdgeInsets.zero,
+                  minimumSize: const Size(0, 44),
+                  tapTargetSize: MaterialTapTargetSize.padded,
+                  textStyle: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.primary,
+                  ),
+                ),
+                child: Text(_expanded ? 'Tutup' : 'Baca selengkapnya'),
+              ),
+          ],
+        );
+      },
     );
   }
 }
@@ -725,281 +999,379 @@ class _RatingLine extends StatelessWidget {
 class _PackageCard extends StatelessWidget {
   const _PackageCard({
     required this.package,
+    required this.minDpBp,
     required this.selected,
     required this.onChoose,
   });
 
   final VendorPackage package;
+  final int minDpBp;
   final bool selected;
   final VoidCallback onChoose;
 
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
-    final personnel = package.personnelCount;
-    final description = (package.description ?? '').trim();
+    final meta = <String>[
+      if (package.durationMinutes > 0) _duration(package.durationMinutes),
+      if (package.personnelCount > 0) '${package.personnelCount} personel',
+    ].join(' · ');
+    final dp = minDpBp > 0 ? package.basePriceIdr * minDpBp ~/ 10000 : 0;
+    final hasPhoto = package.photoUrl != null && package.photoUrl!.trim().isNotEmpty;
 
-    return Card(
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(Radii.lg),
-        side: BorderSide(
-          color: selected ? AppColors.primary : AppColors.line,
-          width: selected ? 1.6 : 1,
+    return Semantics(
+      button: true,
+      selected: selected,
+      child: Material(
+        color: AppColors.card,
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(Radii.lg),
+          side: BorderSide(
+            color: selected ? AppColors.primary : AppColors.line,
+            width: selected ? 2 : 1,
+          ),
         ),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(Sp.lg),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(child: Text(package.name, style: text.titleMedium)),
-                if (selected)
-                  const Icon(
-                    Icons.check_circle,
-                    size: 20,
-                    color: AppColors.primary,
-                  ),
-              ],
-            ),
-            const SizedBox(height: Sp.sm),
-            Wrap(
-              spacing: Sp.md,
-              runSpacing: Sp.xs,
-              children: [
-                _Meta(
-                  icon: Icons.schedule,
-                  label: _duration(package.durationMinutes),
-                ),
-                if (personnel > 0)
-                  _Meta(
-                    icon: Icons.people_alt_outlined,
-                    label: '$personnel orang',
-                  ),
-              ],
-            ),
-            const SizedBox(height: Sp.sm),
-            Text(
-              rupiah(package.basePriceIdr),
-              style: text.titleMedium?.copyWith(color: AppColors.accent),
-            ),
-            if (description.isNotEmpty) ...[
-              const SizedBox(height: Sp.xs),
-              Text(description, style: text.bodySmall),
-            ],
-            const SizedBox(height: Sp.md),
-            Text('Add-on', style: text.labelSmall),
-            const SizedBox(height: Sp.xs),
-            if (package.addons.isEmpty)
-              Text(
-                'Belum ada add-on',
-                style: text.bodySmall?.copyWith(color: AppColors.inkMuted),
-              )
-            else
-              for (final addon in package.addons)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: Sp.xs),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+        child: InkWell(
+          onTap: onChoose,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (hasPhoto)
+                AspectRatio(
+                  aspectRatio: 16 / 7,
+                  child: Stack(
+                    fit: StackFit.expand,
                     children: [
-                      const Icon(
-                        Icons.add,
-                        size: 16,
-                        color: AppColors.inkMuted,
+                      Image.network(
+                        package.photoUrl!.trim(),
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => const ColoredBox(
+                          color: AppColors.surfaceSoft,
+                          child: Icon(Icons.music_note, color: AppColors.inkMuted),
+                        ),
                       ),
-                      const SizedBox(width: Sp.xs),
-                      Expanded(
-                        child: Text(
-                          '${addon.name} · ${_addonPrice(addon)}',
-                          style: text.bodySmall,
+                      Positioned(
+                        top: Sp.sm,
+                        right: Sp.sm,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.6),
+                            borderRadius: BorderRadius.circular(Radii.pill),
+                          ),
+                          child: Text(
+                            meta,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                         ),
                       ),
                     ],
                   ),
                 ),
-            const SizedBox(height: Sp.md),
-            Align(
-              alignment: Alignment.centerRight,
-              child: OutlinedButton(
-                onPressed: onChoose,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppColors.primary,
-                  minimumSize: const Size(48, 48),
-                  side: const BorderSide(color: AppColors.primary),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(Radii.sm),
+              Padding(
+                padding: const EdgeInsets.all(Sp.lg),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            package.name,
+                            style: text.titleLarge,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          if (meta.isNotEmpty && !hasPhoto) ...[
+                            const SizedBox(height: Sp.xs),
+                            Text(meta, style: text.bodySmall),
+                          ],
+                          const SizedBox(height: Sp.sm),
+                          Text(
+                            _rp(package.basePriceIdr),
+                            style: text.titleMedium?.copyWith(
+                              color: AppColors.ink,
+                              fontWeight: FontWeight.w700,
+                              fontFeatures: _tabularFigures,
+                            ),
+                          ),
+                      if (dp > 0) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          'DP ${_rp(dp)} · ${_percent(minDpBp)}%',
+                          style: text.bodySmall,
+                        ),
+                      ],
+                      if (package.inclusions.isNotEmpty) ...[
+                        const SizedBox(height: Sp.md),
+                        Text(
+                          'Fasilitas',
+                          style: text.labelSmall?.copyWith(
+                            color: AppColors.inkMuted,
+                          ),
+                        ),
+                        const SizedBox(height: Sp.xs),
+                        for (final item in package.inclusions)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 2),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Padding(
+                                  padding: EdgeInsets.only(top: 2),
+                                  child: Icon(
+                                    Icons.check,
+                                    size: 13,
+                                    color: AppColors.accent,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    item,
+                                    style: text.bodySmall?.copyWith(
+                                      color: AppColors.ink,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
+                      if (package.addons.isNotEmpty) ...[
+                        const SizedBox(height: Sp.md),
+                        Text(
+                          'Add-on',
+                          style: text.labelSmall?.copyWith(
+                            color: AppColors.inkMuted,
+                          ),
+                        ),
+                        const SizedBox(height: Sp.xs),
+                        for (final addon in package.addons)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 2),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    addon.name,
+                                    style: text.bodySmall?.copyWith(
+                                      color: AppColors.ink,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: Sp.sm),
+                                Text(_addonPrice(addon), style: text.bodySmall),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ],
                   ),
                 ),
-                child: Text(selected ? 'Paket dipilih' : 'Pesan paket ini'),
+                const SizedBox(width: Sp.md),
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Icon(
+                    selected ? Icons.check_circle_rounded : Icons.chevron_right,
+                    size: 22,
+                    color: selected ? AppColors.primary : AppColors.inkMuted,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
+  ),
+);
+  }
+}
+
+class _DayCell extends StatelessWidget {
+  const _DayCell({
+    required this.date,
+    required this.state,
+    required this.selected,
+    required this.width,
+    required this.onTap,
+  });
+
+  final DateTime date;
+  final String state;
+  final bool selected;
+  final double width;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final disabled = onTap == null;
+    final waiting = state == 'waiting';
+    final background = selected
+        ? AppColors.primary
+        : disabled
+        ? AppColors.neutralSoft
+        : waiting
+        ? AppColors.warningSoft
+        : AppColors.accentSoft;
+    final border = selected
+        ? AppColors.primary
+        : disabled
+        ? Colors.transparent
+        : waiting
+        ? AppColors.warning.withValues(alpha: 0.35)
+        : AppColors.accent.withValues(alpha: 0.35);
+    final dayColor = selected
+        ? AppColors.onPrimary
+        : disabled
+        ? AppColors.inkMuted
+        : waiting
+        ? AppColors.warning
+        : const Color(0xFF15803D);
+    final weekdayColor = selected
+        ? AppColors.onPrimary.withValues(alpha: 0.85)
+        : AppColors.inkMuted;
+
+    return Semantics(
+      button: !disabled,
+      enabled: !disabled,
+      selected: selected,
+      label: '${formatDate(date)}, ${_stateLabel(state)}',
+      excludeSemantics: true,
+      child: SizedBox(
+        width: width,
+        height: 56,
+        child: Material(
+          color: background,
+          clipBehavior: Clip.antiAlias,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(Radii.sm),
+            side: BorderSide(color: border, width: selected ? 1.5 : 1),
+          ),
+          child: InkWell(
+            onTap: onTap,
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    _weekdays[date.weekday - 1],
+                    maxLines: 1,
+                    style: text.labelSmall?.copyWith(
+                      fontSize: 10,
+                      height: 1.2,
+                      fontWeight: FontWeight.w600,
+                      color: weekdayColor,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '${date.day}',
+                    maxLines: 1,
+                    style: text.titleMedium?.copyWith(
+                      fontSize: 15,
+                      height: 1.2,
+                      fontWeight: FontWeight.w700,
+                      color: dayColor,
+                      fontFeatures: _tabularFigures,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Container(
+                    width: 4,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: waiting
+                          ? (selected ? AppColors.onPrimary : AppColors.warning)
+                          : Colors.transparent,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ],
               ),
             ),
-          ],
+          ),
         ),
       ),
     );
   }
 }
 
-class _Meta extends StatelessWidget {
-  const _Meta({required this.icon, required this.label});
+class _ScheduleLegend extends StatelessWidget {
+  const _ScheduleLegend();
 
-  final IconData icon;
+  @override
+  Widget build(BuildContext context) {
+    return const Wrap(
+      spacing: Sp.md,
+      runSpacing: Sp.xs,
+      children: [
+        _LegendItem(
+          label: 'Tersedia',
+          background: AppColors.card,
+          border: AppColors.line,
+        ),
+        _LegendItem(
+          label: 'Menunggu konfirmasi',
+          background: AppColors.warningSoft,
+          border: AppColors.warning,
+        ),
+        _LegendItem(
+          label: 'Terisi',
+          background: AppColors.neutralSoft,
+          border: AppColors.neutralSoft,
+        ),
+      ],
+    );
+  }
+}
+
+class _LegendItem extends StatelessWidget {
+  const _LegendItem({
+    required this.label,
+    required this.background,
+    required this.border,
+  });
+
   final String label;
+  final Color background;
+  final Color border;
 
   @override
   Widget build(BuildContext context) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: 16, color: AppColors.inkMuted),
-        const SizedBox(width: Sp.xs),
+        Container(
+          width: 9,
+          height: 9,
+          decoration: BoxDecoration(
+            color: background,
+            borderRadius: BorderRadius.circular(3),
+            border: Border.all(color: border),
+          ),
+        ),
+        const SizedBox(width: Sp.xs + 2),
         Text(label, style: Theme.of(context).textTheme.bodySmall),
       ],
     );
   }
 }
 
-class _DateChip extends StatelessWidget {
-  const _DateChip({
-    required this.date,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String date;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    final parsed = DateTime.tryParse(date);
-    if (parsed == null) return const SizedBox.shrink();
-    final month = formatDayMonth(parsed).split(' ').last;
-    final foreground = selected ? AppColors.onPrimary : AppColors.ink;
-
-    return Semantics(
-      button: true,
-      selected: selected,
-      label: formatDate(parsed),
-      excludeSemantics: true,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(Radii.sm),
-        child: Container(
-          constraints: const BoxConstraints(minWidth: 56, minHeight: 56),
-          padding: const EdgeInsets.symmetric(
-            horizontal: Sp.md,
-            vertical: Sp.sm,
-          ),
-          decoration: BoxDecoration(
-            color: selected ? AppColors.primary : AppColors.card,
-            borderRadius: BorderRadius.circular(Radii.sm),
-            border: Border.all(
-              color: selected ? AppColors.primary : AppColors.line,
-            ),
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                _weekdays[parsed.weekday - 1],
-                style: text.labelSmall?.copyWith(
-                  color: selected ? AppColors.onPrimary : AppColors.inkMuted,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                '${parsed.day}',
-                style: text.titleMedium?.copyWith(color: foreground),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                month,
-                style: text.bodySmall?.copyWith(
-                  color: selected ? AppColors.onPrimary : AppColors.inkMuted,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _StateChip extends StatelessWidget {
-  const _StateChip({required this.state});
-
-  final String state;
-
-  @override
-  Widget build(BuildContext context) {
-    final (:label, :foreground, :background) = switch (state) {
-      'available' => (
-        label: 'Tersedia',
-        foreground: AppColors.accent,
-        background: AppColors.accentSoft,
-      ),
-      'unconfirmed' || 'stale' => (
-        label: 'Belum dikonfirmasi',
-        foreground: AppColors.warning,
-        background: AppColors.warningSoft,
-      ),
-      'blocked' => (
-        label: 'Tutup',
-        foreground: AppColors.danger,
-        background: AppColors.dangerSoft,
-      ),
-      'held' => (
-        label: 'Sedang ditahan',
-        foreground: AppColors.warning,
-        background: AppColors.warningSoft,
-      ),
-      'booked' => (
-        label: 'Sudah terisi',
-        foreground: AppColors.primary,
-        background: AppColors.primarySoft,
-      ),
-      _ => (
-        label: 'Belum jelas',
-        foreground: AppColors.inkMuted,
-        background: AppColors.neutralSoft,
-      ),
-    };
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: Sp.md, vertical: Sp.xs),
-      decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(Radii.pill),
-      ),
-      child: Text(
-        label,
-        style: Theme.of(
-          context,
-        ).textTheme.labelSmall?.copyWith(color: foreground),
-      ),
-    );
-  }
-}
-
-String _sessionLabel(String session) => switch (session) {
-  'day' => 'Siang',
-  'night' => 'Malam',
-  'full' => 'Sehari penuh',
-  _ => session.replaceAll('_', ' '),
-};
-
-String _sessionNote(String state) => switch (state) {
-  'available' => 'Vendor siap di tanggal ini.',
-  'unconfirmed' || 'stale' => 'Vendor belum mengonfirmasi jadwal ini.',
-  'blocked' => 'Vendor menutup sesi ini.',
-  'held' => 'Sedang dipegang pesanan lain.',
-  'booked' => 'Sudah ada pesanan.',
-  _ => 'Jadwal belum bisa dipastikan.',
+String _stateLabel(String state) => switch (state) {
+  'available' => 'Tersedia',
+  'waiting' => 'Menunggu konfirmasi',
+  'blocked' => 'Terisi atau tutup',
+  _ => 'Belum jelas',
 };
 
 String _duration(int minutes) {
@@ -1011,9 +1383,24 @@ String _duration(int minutes) {
   return '$hours jam $rest menit';
 }
 
+String _percent(int basisPoints) {
+  final percent = basisPoints / 100;
+  final value = percent == percent.roundToDouble()
+      ? percent.toStringAsFixed(0)
+      : percent.toStringAsFixed(1);
+  return value.replaceAll('.', ',');
+}
+
+String _kilometers(double value) {
+  final rounded = (value * 10).round() / 10;
+  return rounded == rounded.roundToDouble()
+      ? rounded.toStringAsFixed(0)
+      : rounded.toStringAsFixed(1).replaceAll('.', ',');
+}
+
 String _addonPrice(Addon addon) {
   final unit = addon.unit.trim();
   final per = unit.isEmpty ? '' : ' / $unit';
   final max = addon.maxQty > 0 ? ' · maks ${addon.maxQty}' : '';
-  return '${rupiah(addon.priceIdr)}$per$max';
+  return '${_rp(addon.priceIdr)}$per$max';
 }

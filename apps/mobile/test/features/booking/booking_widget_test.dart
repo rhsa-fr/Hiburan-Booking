@@ -114,9 +114,10 @@ void main() {
       return _json({'data': _booking()}, 200);
     });
 
-    expect(find.text('Rp 5.050.000'), findsOneWidget);
-    expect(find.text('Rp 1.500.000'), findsOneWidget);
-    expect(find.text('Rp 3.550.000'), findsOneWidget);
+    expect(find.text('Total yang harus dibayar'), findsOneWidget);
+    expect(find.text('Rp5.050.000'), findsOneWidget);
+    // DP belum dibayar: jangan tampilkan baris potongan DP.
+    expect(find.text('-Rp1.500.000'), findsNothing);
     expect(find.widgetWithText(PrimaryButton, 'Bayar DP'), findsOneWidget);
 
     await _dispose(tester);

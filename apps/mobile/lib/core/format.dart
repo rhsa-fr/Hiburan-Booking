@@ -17,7 +17,39 @@ String _group(int value) {
 String rupiah(int amount) =>
     amount < 0 ? '-Rp ${_group(-amount)}' : 'Rp ${_group(amount)}';
 
+/// Bentuk rapat untuk kartu dan angka besar: `Rp1.500.000` (DESIGN.md §6.4).
+String rupiahTight(int amount) => rupiah(amount).replaceFirst('Rp ', 'Rp');
+
 String two(int value) => value.toString().padLeft(2, '0');
+
+/// Parse integer rupiah dari Map — handle string BIGINT dari API.
+int? moneyValue(Map<String, dynamic> m, String key) {
+  final v = m[key];
+  if (v == null) return null;
+  if (v is num) return v.toInt();
+  return int.tryParse('$v');
+}
+
+/// Formats phone digits to Indonesian format: `0812-3456-7890`.
+String formatIndonesianPhone(String? raw) {
+  if (raw == null || raw.isEmpty) return '-';
+  var digits = raw.replaceAll(RegExp(r'\D'), '');
+  if (digits.startsWith('62')) {
+    digits = '0${digits.substring(2)}';
+  } else if (!digits.startsWith('0')) {
+    digits = '0$digits';
+  }
+  if (digits.length <= 4) return digits;
+  final parts = <String>[];
+  parts.add(digits.substring(0, 4.clamp(0, digits.length)));
+  var rest = digits.length > 4 ? digits.substring(4) : '';
+  while (rest.isNotEmpty) {
+    final take = rest.length > 4 ? 4 : rest.length;
+    parts.add(rest.substring(0, take));
+    rest = rest.substring(take);
+  }
+  return parts.join('-');
+}
 
 /// `YYYY-MM-DD`, the API's date format.
 String isoDate(DateTime date) => '${date.year}-${two(date.month)}-${two(date.day)}';

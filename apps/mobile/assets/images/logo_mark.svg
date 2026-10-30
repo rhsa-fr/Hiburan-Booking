@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect x="1" y="1" width="510" height="510" rx="112" fill="#FFF5F2" stroke="#F6DCD6" stroke-width="2"/>
+  <g transform="translate(83.27, 72) scale(0.7510) translate(-170, -95)">
+    <g id="pantura-master-emblem">
+        <!-- 1. FESTIVE STAGE SPOTLIGHT RAYS (#C84B31) -->
+        <g id="stage-rays" stroke="#C84B31" stroke-width="13" stroke-linecap="butt">
+          <!-- Upper-Left 5 Rays -->
+          <line x1="296" y1="286" x2="222" y2="273" />
+          <line x1="308" y1="262" x2="241" y2="225" />
+          <line x1="327" y1="241" x2="278" y2="184" />
+          <line x1="354" y1="228" x2="329" y2="155" />
+          <line x1="390" y1="222" x2="390" y2="147" />
+          <!-- Right-Side Upper 2 Rays -->
+          <line x1="487" y1="307" x2="552" y2="262" />
+          <line x1="500" y1="336" x2="572" y2="318" />
+          <!-- Lower-Right 2 Rays (Below Coastal Waves) -->
+          <line x1="467" y1="459" x2="506" y2="498" />
+          <line x1="442" y1="473" x2="466" y2="528" />
+        </g>
+
+        <!-- 2. ACOUSTIC GUITAR (Tilted at 44 deg clockwise around soundhole 368, 378) -->
+        <g id="acoustic-guitar" transform="translate(368, 378) rotate(44)">
+          <!-- Guitar Body (Figure-8 Acoustic Silhouette) -->
+          <path d="M 0,-82
+                   C 50,-82 86,-60 86,-22
+                   C 86,4 64,16 64,34
+                   C 64,56 116,74 116,120
+                   C 116,162 70,188 0,188
+                   C -70,188 -116,162 -116,120
+                   C -116,74 -64,56 -64,34
+                   C -64,16 -86,4 -86,-22
+                   C -86,-60 -50,-82 0,-82 Z"
+                fill="#C84B31" stroke="#1B4965" stroke-width="14" stroke-linejoin="round" />
+
+          <!-- Guitar Bridge -->
+          <rect x="-42" y="92" width="84" height="19" rx="2.5" fill="#1B4965" />
+
+          <!-- Guitar Soundhole -->
+          <circle cx="0" cy="4" r="30" fill="#1B4965" />
+
+          <!-- Guitar Neck -->
+          <rect x="-17" y="-212" width="34" height="214" fill="#1B4965" />
+
+          <!-- Tuning Pegs (3 Left, 3 Right) -->
+          <g fill="#1B4965" stroke="#1B4965" stroke-width="6" stroke-linecap="round">
+            <!-- Left 3 Pegs -->
+            <line x1="-22" y1="-238" x2="-39" y2="-238" />
+            <rect x="-46" y="-245" width="11" height="14" rx="5" stroke="none" />
+            <line x1="-21" y1="-258" x2="-38" y2="-258" />
+            <rect x="-45" y="-265" width="11" height="14" rx="5" stroke="none" />
+            <line x1="-20" y1="-278" x2="-37" y2="-278" />
+            <rect x="-44" y="-285" width="11" height="14" rx="5" stroke="none" />
+
+            <!-- Right 3 Pegs -->
+            <line x1="22" y1="-238" x2="39" y2="-238" />
+            <rect x="35" y="-245" width="11" height="14" rx="5" stroke="none" />
+            <line x1="21" y1="-258" x2="38" y2="-258" />
+            <rect x="34" y="-265" width="11" height="14" rx="5" stroke="none" />
+            <line x1="20" y1="-278" x2="37" y2="-278" />
+            <rect x="33" y="-285" width="11" height="14" rx="5" stroke="none" />
+          </g>
+
+          <!-- Guitar Headstock -->
+          <path d="M -16,-208
+                   L -26,-222
+                   L -22,-285
+                   L 0,-297
+                   L 22,-285
+                   L 26,-222
+                   L 16,-208 Z"
+                fill="#C84B31" stroke="#1B4965" stroke-width="12" stroke-linejoin="round" />
+        </g>
+
+        <!-- 3. CLEAN NEGATIVE SPACE CUTOUT FOR WAVES ON RIGHT OF GUITAR -->
+        <path d="M 432,370 C 468,342 505,342 585,355 L 585,485 L 415,485 Z" fill="#FFF5F2" class="negative-cutout" />
+        <!-- Redraw right guitar body arch edge above the waves so it closes cleanly -->
+        <path d="M 454,328 C 466,348 463,372 451,394" fill="none" stroke="#1B4965" stroke-width="14" stroke-linecap="round" />
+
+        <!-- 4. THREE COASTAL & SOUND WAVE LINES (#1B4965) -->
+        <g id="coastal-waves" fill="none" stroke="#1B4965" stroke-width="13.5" stroke-linecap="butt">
+          <path d="M 442,418 C 465,382 502,374 528,390 C 546,401 562,395 575,378" />
+          <path d="M 434,447 C 464,406 502,400 528,415 C 545,425 559,420 568,412" />
+          <path d="M 494,435 C 516,448 536,448 552,439" />
+        </g>
+
+        <!-- 5. TRADITIONAL BAMBOO FLUTE / SULING (Tilted 13.5 deg clockwise) -->
+        <g id="bamboo-suling" transform="translate(425, 344) rotate(13.5)">
+          <!-- Negative-space white separation along left edge of suling over guitar -->
+          <rect x="-25" y="-198" width="44" height="398" rx="12" fill="#FFF5F2" class="negative-cutout" />
+
+          <!-- Main Bamboo Tube -->
+          <rect x="-18" y="-204" width="36" height="408" rx="11"
+                fill="#C84B31" stroke="#1B4965" stroke-width="13.5" stroke-linejoin="round" />
+
+          <!-- Top Bamboo Node Band -->
+          <line x1="-18" y1="-166" x2="18" y2="-166" stroke="#1B4965" stroke-width="6" />
+
+          <!-- Rectangular/Rounded Blowhole -->
+          <rect x="-6" y="-142" width="12" height="26" rx="5" fill="#1B4965" />
+
+          <!-- Center Bamboo Ring -->
+          <line x1="-18" y1="-18" x2="18" y2="-18" stroke="#1B4965" stroke-width="11" />
+
+          <!-- 5 Circular Finger Holes -->
+          <circle cx="0" cy="14" r="7.5" fill="#1B4965" />
+          <circle cx="0" cy="43" r="7.5" fill="#1B4965" />
+          <circle cx="0" cy="72" r="7.5" fill="#1B4965" />
+          <circle cx="0" cy="101" r="7.5" fill="#1B4965" />
+          <circle cx="0" cy="130" r="7.5" fill="#1B4965" />
+
+          <!-- Bottom Bamboo Node Band -->
+          <line x1="-18" y1="158" x2="18" y2="158" stroke="#1B4965" stroke-width="10" />
+        </g>
+      </g>
+  </g>
+</svg>

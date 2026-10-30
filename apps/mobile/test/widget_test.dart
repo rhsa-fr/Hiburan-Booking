@@ -5,7 +5,7 @@ import 'package:tarlink_customer/core/api_client.dart';
 import 'package:tarlink_customer/core/session.dart';
 
 void main() {
-  testWidgets('cold start tanpa sesi menampilkan Login', (tester) async {
+  testWidgets('cold start tanpa sesi menampilkan Welcome', (tester) async {
     final session = Session();
     final api = ApiClient(session: session);
     addTearDown(() {
@@ -14,16 +14,17 @@ void main() {
     });
 
     await tester.pumpWidget(TarlinkApp(session: session, api: api));
-    // Halaman Login punya animasi masuk; jangan pakai pumpAndSettle karena
-    // skeleton di layar lain bisa berputar terus.
+    // Welcome tidak memuat data jaringan; pump singkat cukup untuk frame awal.
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 
-    expect(find.text('Masuk'), findsOneWidget);
-    expect(find.text('Buat akun baru'), findsOneWidget);
+    expect(find.text('Hiburan panggung\nuntuk acaramu.'), findsOneWidget);
+    expect(find.text('Mulai cari hiburan'), findsOneWidget);
   });
 
-  testWidgets('Login tidak terpotong pada skala teks 1.3x', (tester) async {
+  testWidgets('Welcome dan Login tidak terpotong pada skala teks 1.3x', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(1080, 1920);
     tester.view.devicePixelRatio = 3;
     tester.platformDispatcher.textScaleFactorTestValue = 1.3;
@@ -43,6 +44,14 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 
-    expect(find.text('Masuk'), findsOneWidget);
+    expect(find.text('Mulai cari hiburan'), findsOneWidget);
+
+    await tester.ensureVisible(find.byType(TextButton));
+    await tester.pump();
+    await tester.tap(find.byType(TextButton));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.text('Masuk atau Daftar'), findsOneWidget);
   });
 }

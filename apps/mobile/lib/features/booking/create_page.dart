@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -7,18 +9,87 @@ import '../../app/theme.dart';
 import '../../core/api_exception.dart';
 import '../../core/format.dart';
 import '../../core/models.dart';
+import '../../core/ui.dart';
 import '../../core/widgets.dart';
 import 'booking_support.dart';
 
 const _weekdays = <String>['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'];
 const _allowedStates = {'available', 'unconfirmed', 'stale'};
 const _sessions = <String>['day', 'night', 'full'];
+const _tabularFigures = <FontFeature>[FontFeature.tabularFigures()];
+
+/// Server pricing: 30% DP of the package, 1% service fee, add-ons on top.
+const _dpRatePercent = 30;
+const _serviceFeeBp = 100;
+const _dpRule = 'DP berlaku 24 jam. Untuk nilai Rp10 juta ke atas, 48 jam.';
+
+const _eventTypes = <({String value, String label})>[
+  (value: 'tarling', label: 'Tarling'),
+  (value: 'organ_tunggal', label: 'Organ tunggal'),
+  (value: 'wayang', label: 'Wayang'),
+  (value: 'mc', label: 'MC'),
+  (value: 'tenda', label: 'Tenda'),
+  (value: 'lainnya', label: 'Lainnya'),
+];
 
 Map<String, dynamic> _asMap(dynamic value) =>
     value is Map ? value.cast<String, dynamic>() : const <String, dynamic>{};
 
-/// One scrollable screen: package, date/session, event details, estimate.
-/// No wizard, no invented total — the API computes the final number.
+/// RFC-4122 v4 id used as `Idempotency-Key` + `client_generated_id`.
+/// No uuid package: the mobile dependency list is locked (ADR 0003).
+String _uuidV4() {
+  final random = Random.secure();
+  final bytes = List<int>.generate(16, (_) => random.nextInt(256));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  final hex = bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+  return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-'
+      '${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}';
+}
+
+bool _allowedState(String? state) =>
+    state != null && _allowedStates.contains(state);
+
+/// `full` without an explicit row is derived from the two half-day sessions.
+String? _sessionState(
+  Map<String, Map<String, String>> availability,
+  String date,
+  String session,
+) {
+  final states = availability[date] ?? const <String, String>{};
+  if (session != 'full') return states[session];
+  final explicit = states['full'];
+  if (explicit != null) return explicit;
+  final day = states['day'];
+  final night = states['night'];
+  if (day == null && night == null) return null;
+  if (!_allowedState(day) || !_allowedState(night)) return 'blocked';
+  return day == 'available' && night == 'available' ? 'available' : 'stale';
+}
+
+bool _dateEnabled(Map<String, Map<String, String>> availability, String date) =>
+    _allowedState(_sessionState(availability, date, 'day')) ||
+    _allowedState(_sessionState(availability, date, 'night')) ||
+    _allowedState(_sessionState(availability, date, 'full'));
+
+bool _dateUncertain(
+  Map<String, Map<String, String>> availability,
+  String date,
+) {
+  if (!_dateEnabled(availability, date)) return false;
+  final day = _sessionState(availability, date, 'day');
+  final night = _sessionState(availability, date, 'night');
+  return (_allowedState(day) && day != 'available') ||
+      (_allowedState(night) && night != 'available');
+}
+
+String _slotStateText(String? state) {
+  if (!_allowedState(state)) return 'Tidak tersedia';
+  return state == 'available' ? 'Tersedia' : 'Belum dikonfirmasi';
+}
+
+/// One scrollable screen, three numbered blocks: event, package/add-ons, money.
+/// The API still computes the final number; this page never invents a total.
 class CreateBookingPage extends StatefulWidget {
   const CreateBookingPage({super.key, required this.args});
 
@@ -30,6 +101,7 @@ class CreateBookingPage extends StatefulWidget {
 
 class _CreateBookingPageState extends State<CreateBookingPage> {
   final _formKey = GlobalKey<FormState>();
+  final String _clientGeneratedId = _uuidV4();
   final _title = TextEditingController();
   final _guests = TextEditingController();
   final _address = TextEditingController();
@@ -40,7 +112,9 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
   Policy? _policy;
   List<String> _dates = const [];
   Map<String, Map<String, String>> _availability = const {};
+  final Map<String, int> _addonQty = {};
 
+  String? _eventType;
   String? _selectedDate;
   String? _selectedSession;
   bool _titleEdited = false;
@@ -139,68 +213,7 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
     }
   }
 
-  bool _stateAllowed(String? state) =>
-      state != null && _allowedStates.contains(state);
-
-  String? _stateFor(String date, String session) {
-    final states = _availability[date] ?? const <String, String>{};
-    if (session != 'full') return states[session];
-    final explicit = states['full'];
-    if (explicit != null) return explicit;
-    final day = states['day'];
-    final night = states['night'];
-    if (day == null && night == null) return null;
-    if (!_stateAllowed(day) || !_stateAllowed(night)) return 'blocked';
-    return day == 'available' && night == 'available' ? 'available' : 'stale';
-  }
-
-  bool _dateEnabled(String date) =>
-      _stateAllowed(_stateFor(date, 'day')) ||
-      _stateAllowed(_stateFor(date, 'night')) ||
-      _stateAllowed(_stateFor(date, 'full'));
-
-  bool _dateUncertain(String date) {
-    if (!_dateEnabled(date)) return false;
-    final day = _stateFor(date, 'day');
-    final night = _stateFor(date, 'night');
-    return (_stateAllowed(day) && day != 'available') ||
-        (_stateAllowed(night) && night != 'available');
-  }
-
-  String _stateText(String? state) {
-    if (!_stateAllowed(state)) return 'Tidak tersedia';
-    return state == 'available' ? 'Tersedia' : 'Belum dikonfirmasi';
-  }
-
-  void _pickDate(String date) {
-    final current = _selectedSession;
-    final keep = current != null && _stateAllowed(_stateFor(date, current));
-    final hasDay = _stateAllowed(_stateFor(date, 'day'));
-    final hasNight = _stateAllowed(_stateFor(date, 'night'));
-    final hasFull = _stateAllowed(_stateFor(date, 'full'));
-    setState(() {
-      _selectedDate = date;
-      _dateError = false;
-      if (!keep) {
-        _selectedSession = hasDay
-            ? 'day'
-            : hasNight
-            ? 'night'
-            : hasFull
-            ? 'full'
-            : null;
-      }
-    });
-    _syncTitle();
-  }
-
-  void _pickSession(String session) {
-    if (!_stateAllowed(_stateFor(_selectedDate!, session))) return;
-    setState(() {
-      _selectedSession = session;
-      _dateError = false;
-    });
-  }
+  bool _dateUncertainOn(String date) => _dateUncertain(_availability, date);
 
   void _syncTitle() {
     final vendor = _vendor;
@@ -217,8 +230,59 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
   }
 
   int get _packagePrice => _package?.basePriceIdr ?? 0;
-  int get _serviceFee => (_packagePrice * 0.01).round();
-  int get _estimateTotal => _packagePrice + _serviceFee;
+  int get _serviceFee => _packagePrice * _serviceFeeBp ~/ 10000;
+  int get _dpAmount => _packagePrice * _dpRatePercent ~/ 100;
+
+  int _qtyOf(Addon addon) => _addonQty[addon.id] ?? 0;
+
+  int get _addonTotal {
+    final package = _package;
+    if (package == null) return 0;
+    var total = 0;
+    for (final addon in package.addons) {
+      total += addon.priceIdr * _qtyOf(addon);
+    }
+    return total;
+  }
+
+  int get _total => _packagePrice + _addonTotal + _serviceFee;
+  int get _remaining => _total - _dpAmount;
+
+  int _maxQty(Addon addon) {
+    final max = addon.maxQty > 0 ? addon.maxQty : 10;
+    return max > 10 ? 10 : max;
+  }
+
+  void _setQty(Addon addon, int next) {
+    final max = _maxQty(addon);
+    final clamped = next < 0 ? 0 : (next > max ? max : next);
+    setState(() => _addonQty[addon.id] = clamped);
+  }
+
+  Future<void> _pickSlot() async {
+    if (_dates.isEmpty) return;
+    final result = await showModalBottomSheet<({String date, String session})>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.card,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(Radii.lg)),
+      ),
+      builder: (_) => _SlotSheet(
+        dates: _dates,
+        availability: _availability,
+        initialDate: _selectedDate,
+        initialSession: _selectedSession,
+      ),
+    );
+    if (result == null || !mounted) return;
+    setState(() {
+      _selectedDate = result.date;
+      _selectedSession = result.session;
+      _dateError = false;
+    });
+    _syncTitle();
+  }
 
   Future<void> _submit() async {
     if (_submitting) return;
@@ -231,23 +295,15 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
     final vendor = _vendor;
     final package = _package;
     final policy = _policy;
-    if (date == null || session == null) {
-      setState(() => _dateError = true);
-      return;
-    }
     if (vendor == null || package == null) return;
-    final location = vendor.location;
-    if (location == null) {
-      setState(() {
-        _submitError =
-            'Lokasi vendor belum diatur. Hubungi vendor dulu sebelum memesan.';
-      });
-      return;
-    }
     if (policy == null) {
       setState(() {
         _submitError = 'Kebijakan pembatalan belum bisa dimuat. Coba lagi.';
       });
+      return;
+    }
+    if (date == null || session == null) {
+      setState(() => _dateError = true);
       return;
     }
 
@@ -261,16 +317,25 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
     });
 
     try {
+      final addons = [
+        for (final addon in package.addons)
+          if (_qtyOf(addon) > 0) {'addon_id': addon.id, 'qty': _qtyOf(addon)},
+      ];
       final raw = await AppScope.of(context).api.post(
         '/bookings',
+        headers: {'Idempotency-Key': _clientGeneratedId},
         body: {
           'vendor_id': vendor.id,
           'package_id': package.id,
+          'client_generated_id': _clientGeneratedId,
           'event': {
             'title': _title.text.trim(),
+            if (_eventType != null) 'event_type': _eventType!,
             'region_code': vendor.regionCode,
             'venue_address': _address.text.trim(),
-            'venue_location': {'lat': location.lat, 'lng': location.lng},
+            // `venue_location` adalah koordinat ACARA, bukan lokasi vendor.
+            // Belum ada picker peta, jadi field dibiarkan kosong (null) sampai
+            // pelanggan benar-benar bisa memilih titik acara.
             'start_date': date,
             'end_date': date,
             if (guest != null) 'guest_estimate': guest,
@@ -279,6 +344,7 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
           'slots': [
             {'date': date, 'session': session},
           ],
+          if (addons.isNotEmpty) 'addons': addons,
           if (note.isNotEmpty) 'notes': note,
           'policy_version_id': policy.id,
         },
@@ -322,351 +388,743 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final loaded = !_loading && _loadError == null && _package != null;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Buat booking')),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 560),
-          child: _loading
-              ? const Padding(
-                  padding: EdgeInsets.all(Sp.lg),
-                  child: AppLoading(rows: 3, label: 'Memuat vendor dan jadwal'),
-                )
-              : _loadError != null
-              ? AppError(message: _loadError!, onRetry: _load)
-              : Form(
-                  key: _formKey,
-                  child: ListView(
-                    padding: const EdgeInsets.fromLTRB(
-                      Sp.lg,
-                      Sp.sm,
-                      Sp.lg,
-                      Sp.xl,
-                    ),
-                    children: [
-                      Text('Atur acara', style: text.displaySmall),
-                      const SizedBox(height: Sp.xs),
-                      Text(
-                        'Isi satu layar ini, lalu kirim. Vendor menjawab dulu sebelum pembayaran.',
-                        style: text.bodyMedium?.copyWith(
-                          color: AppColors.inkMuted,
+          child: Column(
+            children: [
+              StageHeader.back(
+                context: context,
+                title: 'Buat Booking',
+                subtitle: _vendor?.displayName ?? 'Pilih jadwal & paket',
+              ),
+              Expanded(
+                child: _loading
+                    ? const Padding(
+                        padding: EdgeInsets.all(Sp.lg),
+                        child: AppLoading(rows: 3, label: 'Memuat vendor dan jadwal'),
+                      )
+                    : _loadError != null
+                    ? AppError(message: _loadError!, onRetry: _load)
+                    : Form(
+                        key: _formKey,
+                        autovalidateMode: AutovalidateMode.onUserInteraction,
+                        child: ListView(
+                          padding: const EdgeInsets.fromLTRB(
+                            Sp.lg,
+                            Sp.sm,
+                            Sp.lg,
+                            160,
+                          ),
+                          children: [
+                            Text('Atur acara', style: text.displaySmall),
+                            const SizedBox(height: Sp.xs),
+                            Text(
+                              'Isi satu halaman ini. Vendor menjawab dulu sebelum '
+                              'kamu membayar DP.',
+                              style: text.bodyMedium?.copyWith(
+                                color: AppColors.inkMuted,
+                              ),
+                            ),
+                            const SizedBox(height: Sp.xl),
+                            _eventBlock(text),
+                            const SizedBox(height: Sp.xl),
+                            _packageBlock(text),
+                            const SizedBox(height: Sp.xl),
+                            _moneyBlock(),
+                            if (_submitError != null) ...[
+                              const SizedBox(height: Sp.lg),
+                              Semantics(
+                                liveRegion: true,
+                                child: AppError(
+                                  message: _submitError!,
+                                  compact: true,
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
                       ),
-                      const SizedBox(height: Sp.xl),
-                      _packagePanel(text),
-                      const SizedBox(height: Sp.xl),
-                      _scheduleSection(text),
-                      const SizedBox(height: Sp.xl),
-                      _detailSection(text),
-                      const SizedBox(height: Sp.xl),
-                      _moneySection(text),
-                      if (_submitError != null) ...[
-                        const SizedBox(height: Sp.lg),
-                        Semantics(
-                          liveRegion: true,
-                          child: AppError(
-                            message: _submitError!,
-                            compact: true,
-                          ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      bottomNavigationBar: loaded
+          ? StickyActionBar(
+              child: PrimaryButton(
+                label: 'Lanjut bayar DP ${rupiah(_dpAmount)}',
+                loadingLabel: 'Mengirim…',
+                loading: _submitting,
+                onPressed: _submit,
+              ),
+            )
+          : null,
+    );
+  }
+
+  Widget _eventBlock(TextTheme text) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SectionHeader(
+          title: '1. Acara',
+          caption: 'Detail yang dipakai vendor untuk menyiapkan acara.',
+        ),
+        const SizedBox(height: Sp.md),
+        TextFormField(
+          controller: _title,
+          textInputAction: TextInputAction.next,
+          maxLength: 150,
+          decoration: const InputDecoration(
+            labelText: 'Nama acara',
+            hintText: 'Contoh: Hajatan keluarga di rumah',
+            counterText: '',
+          ),
+          validator: (value) {
+            final trimmed = value?.trim() ?? '';
+            if (trimmed.isEmpty) return 'Nama acara wajib diisi.';
+            if (trimmed.length > 150) return 'Nama maksimal 150 karakter.';
+            return null;
+          },
+        ),
+        const SizedBox(height: Sp.md),
+        DropdownButtonFormField<String>(
+          initialValue: _eventType,
+          isExpanded: true,
+          decoration: const InputDecoration(labelText: 'Jenis acara'),
+          hint: const Text('Pilih jenis acara'),
+          items: [
+            for (final type in _eventTypes)
+              DropdownMenuItem(value: type.value, child: Text(type.label)),
+          ],
+          onChanged: (value) => setState(() => _eventType = value),
+        ),
+        const SizedBox(height: Sp.md),
+        if (_dates.isEmpty)
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const InfoStrip(
+                message:
+                    'Jadwal vendor belum tersedia untuk 45 hari ke depan. '
+                    'Muat ulang dulu sebelum memesan.',
+                icon: Icons.event_busy_outlined,
+                tone: InfoTone.warning,
+              ),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: _load,
+                  child: const Text('Muat ulang jadwal'),
+                ),
+              ),
+            ],
+          )
+        else
+          _slotSummary(text),
+        if (_dateError && _dates.isNotEmpty) ...[
+          const SizedBox(height: Sp.xs),
+          Text(
+            'Pilih tanggal dan sesi dulu.',
+            style: text.bodySmall?.copyWith(color: AppColors.danger),
+          ),
+        ],
+        const SizedBox(height: Sp.md),
+        TextFormField(
+          controller: _guests,
+          keyboardType: TextInputType.number,
+          textInputAction: TextInputAction.next,
+          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+          decoration: const InputDecoration(
+            labelText: 'Perkiraan jumlah tamu (opsional)',
+            hintText: 'Contoh: 120',
+          ),
+          validator: (value) {
+            final trimmed = value?.trim() ?? '';
+            if (trimmed.isEmpty) return null;
+            final parsed = int.tryParse(trimmed);
+            if (parsed == null || parsed < 0 || parsed > 100000) {
+              return 'Isi angka 0 sampai 100.000.';
+            }
+            return null;
+          },
+        ),
+        const SizedBox(height: Sp.md),
+        TextFormField(
+          controller: _address,
+          textInputAction: TextInputAction.next,
+          minLines: 2,
+          maxLines: 4,
+          maxLength: 1000,
+          decoration: const InputDecoration(
+            labelText: 'Alamat lokasi acara',
+            hintText: 'Nama kampung, jalan, patokan',
+            counterText: '',
+          ),
+          validator: (value) {
+            final trimmed = value?.trim() ?? '';
+            if (trimmed.length < 10) return 'Alamat minimal 10 karakter.';
+            if (trimmed.length > 1000) {
+              return 'Alamat maksimal 1.000 karakter.';
+            }
+            return null;
+          },
+        ),
+        const SizedBox(height: Sp.md),
+        TextFormField(
+          controller: _notes,
+          minLines: 2,
+          maxLines: 4,
+          maxLength: 2000,
+          decoration: const InputDecoration(
+            labelText: 'Catatan untuk vendor (opsional)',
+            hintText: 'Contoh: listrik tersedia, panggung di halaman',
+            counterText: '',
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _slotSummary(TextTheme text) {
+    final date = _selectedDate;
+    final session = _selectedSession;
+    final parsed = date == null ? null : DateTime.tryParse(date);
+    final uncertain = date != null && _dateUncertainOn(date);
+
+    return Material(
+      color: AppColors.card,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(Radii.sm),
+        side: BorderSide(color: _dateError ? AppColors.danger : AppColors.line),
+      ),
+      child: InkWell(
+        onTap: _pickSlot,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 64),
+          child: Padding(
+            padding: const EdgeInsets.all(Sp.lg),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.event_outlined,
+                  size: 20,
+                  color: AppColors.inkMuted,
+                ),
+                const SizedBox(width: Sp.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        parsed == null
+                            ? 'Pilih tanggal & sesi'
+                            : formatDate(parsed),
+                        style: text.titleMedium?.copyWith(
+                          color: parsed == null
+                              ? AppColors.inkMuted
+                              : AppColors.ink,
                         ),
-                      ],
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        parsed == null
+                            ? 'Dari jadwal vendor yang masih terbuka'
+                            : '${session == null ? 'Sesi belum dipilih' : sessionText(session)}'
+                                  '${uncertain ? ' · belum dikonfirmasi' : ''}',
+                        style: text.bodySmall?.copyWith(
+                          color: uncertain ? AppColors.warning : null,
+                        ),
+                      ),
                     ],
                   ),
                 ),
+                const SizedBox(width: Sp.sm),
+                const Icon(
+                  Icons.chevron_right,
+                  size: 22,
+                  color: AppColors.inkMuted,
+                ),
+              ],
+            ),
+          ),
         ),
       ),
-      bottomNavigationBar: _loading || _loadError != null
-          ? null
-          : SafeArea(
-              minimum: const EdgeInsets.fromLTRB(Sp.lg, Sp.sm, Sp.lg, Sp.lg),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (_package != null) ...[
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            'Total perkiraan',
-                            style: text.bodyMedium?.copyWith(
-                              color: AppColors.inkMuted,
-                            ),
-                          ),
-                        ),
-                        Text(rupiah(_estimateTotal), style: text.titleMedium),
-                      ],
-                    ),
-                    const SizedBox(height: Sp.sm),
-                  ],
-                  PrimaryButton(
-                    label: 'Kirim permintaan booking',
-                    loadingLabel: 'Mengirim…',
-                    loading: _submitting,
-                    onPressed: _submit,
-                  ),
-                ],
-              ),
-            ),
     );
   }
 
-  Widget _packagePanel(TextTheme text) {
+  Widget _packageBlock(TextTheme text) {
     final package = _package;
     final vendor = _vendor;
     if (package == null || vendor == null) return const SizedBox.shrink();
-    final facts = <String>[
-      if (package.durationMinutes > 0)
-        package.durationMinutes >= 60
-            ? '${package.durationMinutes ~/ 60} jam'
-            : '${package.durationMinutes} menit',
-      if (package.personnelCount > 0) '${package.personnelCount} personel',
-    ];
-    return BookingPanel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(vendor.displayName, style: text.titleLarge),
-          const SizedBox(height: Sp.xs),
-          Text(
-            '${vendor.regionName} · ${vendor.regionCode}',
-            style: text.bodySmall,
-          ),
-          const SizedBox(height: Sp.md),
-          Text(package.name, style: text.titleMedium),
-          if (facts.isNotEmpty) ...[
-            const SizedBox(height: Sp.xs),
-            Text(facts.join(' · '), style: text.bodySmall),
-          ],
-          if (package.description != null) ...[
-            const SizedBox(height: Sp.xs),
-            Text(package.description!, style: text.bodyMedium),
-          ],
-          const SizedBox(height: Sp.md),
-          MoneyLine(label: 'Harga paket', value: rupiah(package.basePriceIdr)),
-        ],
-      ),
-    );
-  }
 
-  Widget _scheduleSection(TextTheme text) {
-    if (_vendor?.location == null) {
-      return BookingSection(
-        title: 'Tanggal acara',
-        child: AppError(
-          compact: true,
-          message:
-              'Lokasi vendor belum diatur, jadi jadwal belum bisa dipesan. Hubungi vendor dulu.',
+    final meta = <String>[
+      if (package.durationMinutes > 0) _duration(package.durationMinutes),
+      if (package.personnelCount > 0) '${package.personnelCount} personel',
+    ].join(' · ');
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SectionHeader(
+          title: '2. Paket & tambahan',
+          actionLabel: 'Ganti',
+          onAction: () => Navigator.maybePop(context),
         ),
-      );
-    }
-    if (_dates.isEmpty) {
-      return BookingSection(
-        title: 'Tanggal acara',
-        child: Text(
-          'Jadwal vendor belum tersedia. Coba muat ulang nanti.',
-          style: text.bodyMedium,
-        ),
-      );
-    }
-    final selectedDate = _selectedDate;
-    return BookingSection(
-      title: 'Tanggal acara',
-      hint:
-          'Pilih satu tanggal. Tanda "Belum dikonfirmasi" berarti vendor perlu mengecek dulu, tapi kamu tetap bisa memesan.',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                for (final date in _dates) ...[
-                  _DateButton(
-                    date: date,
-                    selected: date == selectedDate,
-                    enabled: _dateEnabled(date),
-                    uncertain: _dateUncertain(date),
-                    onTap: () => _pickDate(date),
+        const SizedBox(height: Sp.md),
+        BookingPanel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                package.name,
+                style: text.titleLarge,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: Sp.xs),
+              Text(
+                vendor.displayName,
+                style: text.bodySmall,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              if (meta.isNotEmpty) ...[
+                const SizedBox(height: 2),
+                Text(meta, style: text.bodySmall),
+              ],
+              const SizedBox(height: Sp.md),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Expanded(
+                    child: Text(
+                      rupiah(package.basePriceIdr),
+                      style: text.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        fontFeatures: _tabularFigures,
+                      ),
+                    ),
                   ),
                   const SizedBox(width: Sp.sm),
+                  Text(
+                    'DP $_dpRatePercent%',
+                    style: text.labelSmall?.copyWith(
+                      color: AppColors.primary,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+              if (_serviceFee > 0) ...[
+                const SizedBox(height: 2),
+                Text(
+                  'Ditambah biaya layanan 1% (${rupiah(_serviceFee)}).',
+                  style: text.bodySmall,
+                ),
+              ],
+            ],
+          ),
+        ),
+        if (package.addons.isNotEmpty) ...[
+          const SizedBox(height: Sp.md),
+          BookingPanel(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Tambahan',
+                        style: text.labelSmall?.copyWith(
+                          color: AppColors.inkMuted,
+                        ),
+                      ),
+                    ),
+                    if (_addonTotal > 0)
+                      Text(
+                        rupiah(_addonTotal),
+                        style: text.labelMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          fontFeatures: _tabularFigures,
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: Sp.sm),
+                for (var i = 0; i < package.addons.length; i++) ...[
+                  if (i > 0)
+                    const Divider(
+                      height: Sp.lg,
+                      color: AppColors.line,
+                      thickness: 1,
+                    ),
+                  _AddonRow(
+                    addon: package.addons[i],
+                    qty: _qtyOf(package.addons[i]),
+                    maxQty: _maxQty(package.addons[i]),
+                    onChanged: (value) => _setQty(package.addons[i], value),
+                  ),
                 ],
               ],
             ),
           ),
-          const SizedBox(height: Sp.xs),
-          Text('Geser ke samping untuk tanggal lain.', style: text.bodySmall),
-          if (selectedDate != null && _dateUncertain(selectedDate)) ...[
-            const SizedBox(height: Sp.sm),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: Sp.md,
-                  vertical: Sp.xs + 2,
-                ),
-                decoration: BoxDecoration(
-                  color: AppColors.warningSoft,
-                  borderRadius: BorderRadius.circular(Radii.pill),
-                ),
-                child: Text(
-                  'Belum dikonfirmasi',
-                  style: text.labelSmall?.copyWith(color: AppColors.warning),
-                ),
-              ),
-            ),
+        ],
+      ],
+    );
+  }
+
+  Widget _moneyBlock() {
+    final package = _package;
+    if (package == null) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SectionHeader(
+          title: '3. Ringkasan',
+          caption: 'Total, DP, dan sisa setelah DP.',
+        ),
+        const SizedBox(height: Sp.md),
+        MoneyBlock(
+          rows: [
+            MoneyRow('Total acara', _total),
+            MoneyRow('DP sekarang ($_dpRatePercent%)', _dpAmount),
           ],
-          if (selectedDate == null) ...[
-            const SizedBox(height: Sp.md),
-            Text(
-              'Pilih tanggal dulu untuk melihat sesi.',
-              style: text.bodyMedium?.copyWith(color: AppColors.inkMuted),
-            ),
-          ] else ...[
-            const SizedBox(height: Sp.lg),
-            Text(
-              'Sesi · ${formatDate(DateTime.parse(selectedDate))}',
-              style: text.titleMedium,
-            ),
-            const SizedBox(height: Sp.sm),
-            for (final session in _sessions) ...[
-              _SessionOption(
-                label: sessionText(session),
-                stateText: _stateText(_stateFor(selectedDate, session)),
-                enabled: _stateAllowed(_stateFor(selectedDate, session)),
-                selected: _selectedSession == session,
-                onTap: () => _pickSession(session),
+          totalLabel: 'Sisa yang harus dibayar',
+          totalIdr: _remaining,
+          footnote: _dpRule,
+        ),
+        const SizedBox(height: Sp.md),
+        const InfoStrip(
+          message:
+              'Total final dihitung sistem saat booking dikirim, dan bisa '
+              'berbeda kalau vendor punya aturan harga untuk tanggal ini.',
+          icon: Icons.receipt_long_outlined,
+          tone: InfoTone.neutral,
+        ),
+      ],
+    );
+  }
+}
+
+String _duration(int minutes) {
+  if (minutes <= 0) return 'Durasi belum diisi';
+  final hours = minutes ~/ 60;
+  final rest = minutes % 60;
+  if (hours == 0) return '$rest menit';
+  if (rest == 0) return '$hours jam';
+  return '$hours jam $rest menit';
+}
+
+class _AddonRow extends StatelessWidget {
+  const _AddonRow({
+    required this.addon,
+    required this.qty,
+    required this.maxQty,
+    required this.onChanged,
+  });
+
+  final Addon addon;
+  final int qty;
+  final int maxQty;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final unit = addon.unit.trim();
+    final price = unit.isEmpty
+        ? rupiah(addon.priceIdr)
+        : '${rupiah(addon.priceIdr)} / $unit';
+
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                addon.name,
+                style: text.titleMedium,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
               ),
-              const SizedBox(height: Sp.sm),
+              const SizedBox(height: 2),
+              Text(
+                price,
+                style: text.bodySmall?.copyWith(fontFeatures: _tabularFigures),
+              ),
             ],
-          ],
-          if (_dateError) ...[
-            const SizedBox(height: Sp.xs),
-            Text(
-              'Pilih tanggal dan sesi dulu.',
-              style: text.bodySmall?.copyWith(color: AppColors.danger),
-            ),
-          ],
-        ],
-      ),
+          ),
+        ),
+        const SizedBox(width: Sp.md),
+        _QtyStepper(
+          value: qty,
+          max: maxQty,
+          label: addon.name,
+          onChanged: onChanged,
+        ),
+      ],
     );
   }
+}
 
-  Widget _detailSection(TextTheme text) {
-    return BookingSection(
-      title: 'Detail acara',
-      hint: 'Nama acara otomatis terisi. Kamu bisa mengubahnya.',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+class _QtyStepper extends StatelessWidget {
+  const _QtyStepper({
+    required this.value,
+    required this.max,
+    required this.label,
+    required this.onChanged,
+  });
+
+  final int value;
+  final int max;
+  final String label;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(Radii.pill),
+        border: Border.all(color: AppColors.line),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          TextFormField(
-            controller: _title,
-            textInputAction: TextInputAction.next,
-            maxLength: 150,
-            decoration: const InputDecoration(
-              labelText: 'Judul acara',
-              counterText: '',
-            ),
-            validator: (value) {
-              final trimmed = value?.trim() ?? '';
-              if (trimmed.isEmpty) return 'Judul acara wajib diisi.';
-              if (trimmed.length > 150) return 'Judul maksimal 150 karakter.';
-              return null;
-            },
+          IconButton(
+            onPressed: value <= 0 ? null : () => onChanged(value - 1),
+            tooltip: 'Kurangi $label',
+            visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+            icon: const Icon(Icons.remove, size: 18),
           ),
-          const SizedBox(height: Sp.md),
-          TextFormField(
-            controller: _guests,
-            keyboardType: TextInputType.number,
-            textInputAction: TextInputAction.next,
-            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-            decoration: const InputDecoration(
-              labelText: 'Perkiraan jumlah tamu (opsional)',
-              hintText: 'Contoh: 120',
+          SizedBox(
+            width: 26,
+            child: Text(
+              '$value',
+              textAlign: TextAlign.center,
+              style: text.titleMedium?.copyWith(fontFeatures: _tabularFigures),
             ),
-            validator: (value) {
-              final trimmed = value?.trim() ?? '';
-              if (trimmed.isEmpty) return null;
-              final parsed = int.tryParse(trimmed);
-              if (parsed == null || parsed < 0 || parsed > 100000) {
-                return 'Isi angka 0 sampai 100.000.';
-              }
-              return null;
-            },
           ),
-          const SizedBox(height: Sp.md),
-          TextFormField(
-            controller: _address,
-            textInputAction: TextInputAction.next,
-            minLines: 2,
-            maxLines: 4,
-            maxLength: 1000,
-            decoration: const InputDecoration(
-              labelText: 'Alamat lokasi acara',
-              hintText: 'Nama kampung, jalan, patokan',
-              counterText: '',
-            ),
-            validator: (value) {
-              final trimmed = value?.trim() ?? '';
-              if (trimmed.length < 10) return 'Alamat minimal 10 karakter.';
-              if (trimmed.length > 1000) {
-                return 'Alamat maksimal 1.000 karakter.';
-              }
-              return null;
-            },
-          ),
-          const SizedBox(height: Sp.md),
-          TextFormField(
-            controller: _notes,
-            minLines: 2,
-            maxLines: 4,
-            maxLength: 2000,
-            decoration: const InputDecoration(
-              labelText: 'Catatan untuk vendor (opsional)',
-              hintText: 'Contoh: listrik tersedia, panggung di halaman',
-              counterText: '',
-            ),
+          IconButton(
+            onPressed: value >= max ? null : () => onChanged(value + 1),
+            tooltip: 'Tambah $label',
+            visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+            icon: const Icon(Icons.add, size: 18),
           ),
         ],
       ),
     );
   }
+}
 
-  Widget _moneySection(TextTheme text) {
-    return BookingSection(
-      title: 'Perkiraan biaya',
-      child: BookingPanel(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            MoneyLine(label: 'Harga paket', value: rupiah(_packagePrice)),
-            const SizedBox(height: Sp.sm),
-            MoneyLine(
-              label: 'Biaya layanan 1%',
-              value: rupiah(_serviceFee),
-              muted: true,
-            ),
-            const SizedBox(height: Sp.md),
-            const Divider(height: 1),
-            const SizedBox(height: Sp.md),
-            MoneyLine(
-              label: 'Total perkiraan',
-              value: rupiah(_estimateTotal),
-              emphasis: true,
-            ),
-            const SizedBox(height: Sp.md),
-            Container(
-              padding: const EdgeInsets.all(Sp.md),
-              decoration: BoxDecoration(
-                color: AppColors.warningSoft,
-                borderRadius: BorderRadius.circular(Radii.sm),
+/// Slot picker sheet: pick a date, then a session, then confirm. Nothing is
+/// written back to the form until the customer taps the confirm button.
+class _SlotSheet extends StatefulWidget {
+  const _SlotSheet({
+    required this.dates,
+    required this.availability,
+    this.initialDate,
+    this.initialSession,
+  });
+
+  final List<String> dates;
+  final Map<String, Map<String, String>> availability;
+  final String? initialDate;
+  final String? initialSession;
+
+  @override
+  State<_SlotSheet> createState() => _SlotSheetState();
+}
+
+class _SlotSheetState extends State<_SlotSheet> {
+  String? _date;
+  String? _session;
+
+  @override
+  void initState() {
+    super.initState();
+    final date = widget.initialDate;
+    if (date == null ||
+        !widget.dates.contains(date) ||
+        !_dateEnabled(widget.availability, date)) {
+      return;
+    }
+    _date = date;
+    final session = widget.initialSession;
+    _session =
+        session != null &&
+            _allowedState(_sessionState(widget.availability, date, session))
+        ? session
+        : _firstSession(date);
+  }
+
+  String? _firstSession(String date) {
+    for (final session in _sessions) {
+      if (_allowedState(_sessionState(widget.availability, date, session))) {
+        return session;
+      }
+    }
+    return null;
+  }
+
+  void _chooseDate(String date) {
+    final current = _session;
+    final keep =
+        current != null &&
+        _allowedState(_sessionState(widget.availability, date, current));
+    setState(() {
+      _date = date;
+      _session = keep ? current : _firstSession(date);
+    });
+  }
+
+  void _chooseSession(String session) {
+    if (!_allowedState(_sessionState(widget.availability, _date!, session))) {
+      return;
+    }
+    setState(() => _session = session);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final date = _date;
+    final session = _session;
+    final uncertain = date != null && _dateUncertain(widget.availability, date);
+
+    return SafeArea(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * 0.86,
+        ),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(Sp.xl, Sp.md, Sp.xl, Sp.xl),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: AppColors.line,
+                    borderRadius: BorderRadius.circular(Radii.pill),
+                  ),
+                ),
               ),
-              child: Text(
-                'Perkiraan — total final dari sistem. Angka pasti muncul setelah booking dikirim.',
-                style: text.bodySmall?.copyWith(color: AppColors.warning),
+              const SizedBox(height: Sp.lg),
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Pilih tanggal & sesi',
+                          style: text.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -0.3,
+                          ),
+                        ),
+                        const SizedBox(height: Sp.xs),
+                        Text(
+                          'Satu tanggal dan satu sesi per booking.',
+                          style: text.bodySmall?.copyWith(color: AppColors.inkMuted),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (date != null && DateTime.tryParse(date) != null) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary,
+                        borderRadius: BorderRadius.circular(Radii.sm),
+                      ),
+                      child: Text(
+                        'Tahun ${DateTime.tryParse(date)!.year}',
+                        style: text.labelSmall?.copyWith(
+                          color: AppColors.onPrimary,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
               ),
-            ),
-          ],
+              const SizedBox(height: Sp.lg),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    for (final item in widget.dates) ...[
+                      _DateButton(
+                        date: item,
+                        selected: item == date,
+                        enabled: _dateEnabled(widget.availability, item),
+                        uncertain: _dateUncertain(widget.availability, item),
+                        onTap: () => _chooseDate(item),
+                      ),
+                      const SizedBox(width: Sp.sm),
+                    ],
+                  ],
+                ),
+              ),
+              if (date != null) ...[
+                const SizedBox(height: Sp.lg),
+                Text('Sesi · ${formatDateIso(date)}', style: text.titleMedium),
+                if (uncertain) ...[
+                  const SizedBox(height: Sp.sm),
+                  const InfoStrip(
+                    message:
+                        'Vendor perlu mengecek tanggal ini. Kamu tetap bisa '
+                        'memesan, tapi jadwal belum pasti.',
+                    icon: Icons.help_outline,
+                    tone: InfoTone.warning,
+                  ),
+                ],
+                const SizedBox(height: Sp.sm),
+                for (final item in _sessions) ...[
+                  _SessionOption(
+                    label: sessionText(item),
+                    stateText: _slotStateText(
+                      _sessionState(widget.availability, date, item),
+                    ),
+                    enabled: _allowedState(
+                      _sessionState(widget.availability, date, item),
+                    ),
+                    selected: session == item,
+                    onTap: () => _chooseSession(item),
+                  ),
+                  const SizedBox(height: Sp.sm),
+                ],
+              ],
+              const SizedBox(height: Sp.sm),
+              PrimaryButton(
+                label: 'Pakai jadwal ini',
+                onPressed: date == null || session == null
+                    ? null
+                    : () => Navigator.pop(context, (
+                        date: date,
+                        session: session,
+                      )),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -705,27 +1163,27 @@ class _DateButton extends StatelessWidget {
         color: Colors.transparent,
         child: InkWell(
           onTap: enabled ? onTap : null,
-          borderRadius: BorderRadius.circular(Radii.pill),
+          borderRadius: BorderRadius.circular(Radii.sm),
           child: Container(
-            constraints: const BoxConstraints(minHeight: 48),
+            constraints: const BoxConstraints(minHeight: 52),
             padding: const EdgeInsets.symmetric(
               horizontal: Sp.md,
-              vertical: Sp.sm + 2,
+              vertical: Sp.sm,
             ),
             decoration: BoxDecoration(
               color: selected
-                  ? AppColors.primarySoft
+                  ? AppColors.primary
                   : enabled
                   ? AppColors.card
                   : AppColors.neutralSoft,
-              borderRadius: BorderRadius.circular(Radii.pill),
+              borderRadius: BorderRadius.circular(Radii.sm),
               border: Border.all(
                 color: selected
                     ? AppColors.primary
                     : enabled
                     ? AppColors.line
-                    : AppColors.neutralSoft,
-                width: selected ? 1.6 : 1,
+                    : AppColors.line,
+                width: selected ? 1.5 : 1,
               ),
             ),
             child: Row(
@@ -735,18 +1193,72 @@ class _DateButton extends StatelessWidget {
                   Container(
                     width: 6,
                     height: 6,
-                    decoration: const BoxDecoration(
-                      color: AppColors.warning,
+                    decoration: BoxDecoration(
+                      color: selected ? AppColors.onPrimary : AppColors.warning,
                       shape: BoxShape.circle,
                     ),
                   ),
                   const SizedBox(width: Sp.xs + 2),
                 ],
-                Text(
-                  '${weekday.isEmpty ? '' : '$weekday '}${parsed == null ? date : formatDayMonth(parsed)}',
-                  style: text.labelMedium?.copyWith(
-                    color: enabled ? AppColors.ink : AppColors.inkMuted,
-                  ),
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          weekday.toUpperCase(),
+                          style: text.labelSmall?.copyWith(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.5,
+                            color: selected
+                                ? AppColors.onPrimary.withValues(alpha: 0.8)
+                                : AppColors.inkMuted,
+                          ),
+                        ),
+                        if (parsed != null) ...[
+                          const SizedBox(width: 4),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 4,
+                              vertical: 1,
+                            ),
+                            decoration: BoxDecoration(
+                              color: selected
+                                  ? AppColors.primaryContainer
+                                  : AppColors.surfaceSoft,
+                              borderRadius: BorderRadius.circular(3),
+                            ),
+                            child: Text(
+                              '${parsed.year}',
+                              style: text.labelSmall?.copyWith(
+                                fontSize: 9,
+                                fontWeight: FontWeight.w700,
+                                color: selected
+                                    ? AppColors.onPrimary
+                                    : AppColors.inkMuted,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      parsed == null ? date : formatDayMonth(parsed),
+                      style: text.titleMedium?.copyWith(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: selected
+                            ? AppColors.onPrimary
+                            : enabled
+                            ? AppColors.ink
+                            : AppColors.inkMuted,
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -801,11 +1313,7 @@ class _SessionOption extends StatelessWidget {
                     ? Icons.radio_button_checked
                     : Icons.radio_button_unchecked,
                 size: 22,
-                color: enabled
-                    ? selected
-                          ? AppColors.primary
-                          : AppColors.inkMuted
-                    : AppColors.inkMuted,
+                color: enabled ? AppColors.primary : AppColors.inkMuted,
               ),
               const SizedBox(width: Sp.md),
               Expanded(

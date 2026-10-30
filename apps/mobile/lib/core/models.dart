@@ -9,6 +9,10 @@ List<Map<String, dynamic>> _maps(dynamic value) => value is List
     ? value.map(_map).toList(growable: false)
     : const <Map<String, dynamic>>[];
 
+List<String> _strings(dynamic value) => value is List
+    ? value.map((e) => '$e').where((e) => e.isNotEmpty).toList(growable: false)
+    : const <String>[];
+
 int _int(dynamic value) =>
     value is num ? value.toInt() : int.tryParse('$value') ?? 0;
 
@@ -82,27 +86,54 @@ class VendorPackage {
     required this.durationMinutes,
     required this.personnelCount,
     required this.basePriceIdr,
+    this.photoUrl,
     this.description,
+    this.inclusions = const [],
     this.addons = const [],
+    this.isActive = true,
   });
 
   factory VendorPackage.fromJson(Map<String, dynamic> json) => VendorPackage(
     id: _string(json['id']),
     name: _string(json['name']),
     description: _stringOrNull(json['description']),
+    photoUrl: _stringOrNull(json['photo_url']),
     durationMinutes: _int(json['duration_minutes']),
     personnelCount: _int(json['personnel_count']),
     basePriceIdr: _int(json['base_price_idr']),
+    inclusions: _strings(json['inclusions']),
     addons: _maps(json['addons']).map(Addon.fromJson).toList(growable: false),
+    isActive: json['is_active'] is bool ? json['is_active'] as bool : true,
   );
 
   final String id;
   final String name;
   final String? description;
+  final String? photoUrl;
   final int durationMinutes;
   final int personnelCount;
   final int basePriceIdr;
+  final List<String> inclusions;
   final List<Addon> addons;
+  final bool isActive;
+}
+
+class VendorCategory {
+  const VendorCategory({
+    required this.slug,
+    required this.name,
+    required this.sortOrder,
+  });
+
+  factory VendorCategory.fromJson(Map<String, dynamic> json) => VendorCategory(
+    slug: _string(json['slug']),
+    name: _string(json['name']),
+    sortOrder: _int(json['sort_order']),
+  );
+
+  final String slug;
+  final String name;
+  final int sortOrder;
 }
 
 class VendorSummary {
@@ -119,6 +150,13 @@ class VendorSummary {
     required this.packageCount,
     this.baseAddress,
     this.description,
+    this.avatarUrl,
+    this.bannerUrl,
+    this.photoUrls = const [],
+    this.videoUrl,
+    this.responseRateBp,
+    this.categorySlug,
+    this.categoryName,
   });
 
   factory VendorSummary.fromJson(Map<String, dynamic> json) => VendorSummary(
@@ -129,8 +167,15 @@ class VendorSummary {
     regionName: _string(json['region_name']),
     baseAddress: _stringOrNull(json['base_address']),
     description: _stringOrNull(json['description']),
+    avatarUrl: _stringOrNull(json['avatar_url']),
+    bannerUrl: _stringOrNull(json['banner_url']),
+    photoUrls: _strings(json['photo_urls']),
+    videoUrl: _stringOrNull(json['video_url']),
     rating: _double(json['rating']),
     ratingCount: _int(json['rating_count']),
+    responseRateBp: _intOrNull(json['response_rate_bp']),
+    categorySlug: _stringOrNull(json['category_slug']),
+    categoryName: _stringOrNull(json['category_name']),
     minDpBp: _int(json['min_dp_bp']),
     startingPriceIdr: _int(json['starting_price_idr']),
     packageCount: _int(json['package_count']),
@@ -143,8 +188,15 @@ class VendorSummary {
   final String regionName;
   final String? baseAddress;
   final String? description;
+  final String? avatarUrl;
+  final String? bannerUrl;
+  final List<String> photoUrls;
+  final String? videoUrl;
   final double? rating;
   final int ratingCount;
+  final int? responseRateBp;
+  final String? categorySlug;
+  final String? categoryName;
   final int minDpBp;
   final int startingPriceIdr;
   final int packageCount;
@@ -177,7 +229,14 @@ class VendorDetail {
     this.legalName,
     this.description,
     this.baseAddress,
+    this.avatarUrl,
+    this.bannerUrl,
+    this.photoUrls = const [],
+    this.videoUrl,
     this.location,
+    this.responseRateBp,
+    this.categorySlug,
+    this.categoryName,
   });
 
   factory VendorDetail.fromJson(Map<String, dynamic> json) => VendorDetail(
@@ -189,12 +248,19 @@ class VendorDetail {
     regionCode: _string(json['region_code']),
     regionName: _string(json['region_name']),
     baseAddress: _stringOrNull(json['base_address']),
+    avatarUrl: _stringOrNull(json['avatar_url']),
+    bannerUrl: _stringOrNull(json['banner_url']),
+    photoUrls: _strings(json['photo_urls']),
+    videoUrl: _stringOrNull(json['video_url']),
     location: json['location'] == null ? null : LatLng.fromJson(_map(json['location'])),
     serviceRadiusKm: _double(json['service_radius_km']) ?? 0,
     transportFeePerKmIdr: _int(json['transport_fee_per_km_idr']),
     minDpBp: _int(json['min_dp_bp']),
     rating: _double(json['rating']),
     ratingCount: _int(json['rating_count']),
+    responseRateBp: _intOrNull(json['response_rate_bp']),
+    categorySlug: _stringOrNull(json['category_slug']),
+    categoryName: _stringOrNull(json['category_name']),
     whatsapp: _string(json['whatsapp']),
     packages: _maps(json['packages']).map(VendorPackage.fromJson).toList(growable: false),
   );
@@ -207,12 +273,19 @@ class VendorDetail {
   final String regionCode;
   final String regionName;
   final String? baseAddress;
+  final String? avatarUrl;
+  final String? bannerUrl;
+  final List<String> photoUrls;
+  final String? videoUrl;
   final LatLng? location;
   final double serviceRadiusKm;
   final int transportFeePerKmIdr;
   final int minDpBp;
   final double? rating;
   final int ratingCount;
+  final int? responseRateBp;
+  final String? categorySlug;
+  final String? categoryName;
   final String whatsapp;
   final List<VendorPackage> packages;
 }
@@ -318,27 +391,37 @@ class BookingEvent {
     required this.endDate,
     this.eventType,
     this.venueName,
+    this.location,
     this.guestEstimate,
     this.notes,
   });
 
-  factory BookingEvent.fromJson(Map<String, dynamic> json) => BookingEvent(
-    title: _string(json['title']),
-    eventType: _stringOrNull(json['event_type']),
-    regionCode: _string(json['region_code']),
-    venueName: _stringOrNull(json['venue_name']),
-    venueAddress: _string(json['venue_address']),
-    startDate: _string(json['start_date']),
-    endDate: _string(json['end_date']),
-    guestEstimate: _intOrNull(json['guest_estimate']),
-    notes: _stringOrNull(json['notes']),
-  );
+  factory BookingEvent.fromJson(Map<String, dynamic> json) {
+    final location = json['location'];
+    return BookingEvent(
+      title: _string(json['title']),
+      eventType: _stringOrNull(json['event_type']),
+      regionCode: _string(json['region_code']),
+      venueName: _stringOrNull(json['venue_name']),
+      venueAddress: _string(json['venue_address']),
+      location: location is Map
+          ? LatLng.fromJson(location.cast<String, dynamic>())
+          : null,
+      startDate: _string(json['start_date']),
+      endDate: _string(json['end_date']),
+      guestEstimate: _intOrNull(json['guest_estimate']),
+      notes: _stringOrNull(json['notes']),
+    );
+  }
 
   final String title;
   final String? eventType;
   final String regionCode;
   final String? venueName;
   final String venueAddress;
+
+  /// Koordinat acara dari API; null selama pelanggan belum memilih titik.
+  final LatLng? location;
   final String startDate;
   final String endDate;
   final int? guestEstimate;
