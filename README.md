@@ -39,7 +39,7 @@ Repositori ini berisi **API**, **panel admin**, **worker**, **library domain**, 
 | `libs/platform/*` | Fondasi: db, config, auth (JWT + `jti`), error, uang, idempotensi |
 | `db/migrations` | Skema PostgreSQL `001`–`012` |
 | `scripts/` | Migrasi, seed, smoke test, webhook PJP, probe browser |
-| `opendesain/` | Ekspor HTML acuan desain pelanggan & vendor (bukan aplikasi) |
+| `opendesain/` | Ekspor HTML acuan desain pelanggan & vendor (bukan aplikasi) — lihat [docs/DESIGN-REFERENCES.md](docs/DESIGN-REFERENCES.md) |
 | `docs/` | PRD, tech design, UX flow, brief legal, SOP, arsitektur, API |
 
 ## Prasyarat
@@ -148,6 +148,7 @@ Viewport dipaksa 390×844 lewat CDP `Emulation.setDeviceMetricsOverride` di
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Arsitektur, ledger, auth, worker, mobile |
 | [docs/API.md](docs/API.md) | Referensi endpoint, error, webhook |
 | [apps/mobile/DESIGN.md](apps/mobile/DESIGN.md) | Kontrak desain UI pelanggan |
+| [docs/DESIGN-REFERENCES.md](docs/DESIGN-REFERENCES.md) | Peta ekspor HTML di `opendesain/` dan aturan pemakaiannya |
 | [docs/TECH-DESIGN-v1.0.md](docs/TECH-DESIGN-v1.0.md) | Desain teknis awal (historis) |
 | [docs/PRD-v1.1.md](docs/PRD-v1.1.md) | PRD terkini |
 | [docs/UX-FLOW-SPEC.md](docs/UX-FLOW-SPEC.md) | Alur UX |

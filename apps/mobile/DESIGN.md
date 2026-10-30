@@ -5,6 +5,7 @@
 > `lib/core/ui.dart`; sumber acuan visualnya ekspor OpenDesign `Graphite · Lime`
 > (`opendesain/Tampilan_Pelanggan.html`). Portal vendor punya kontrak sendiri di
 > `lib/features/vendor/vendor_theme.dart` dan tidak mengubah theme pelanggan.
+> Peta lengkap file ekspor ada di [docs/DESIGN-REFERENCES.md](../../docs/DESIGN-REFERENCES.md).
 
 Versi: 2.0 · Platform: Android-first (Flutter), target viewport **390 × 844 dp**
 · Bahasa produk: Indonesia · Basis teks: 14 px

@@ -193,7 +193,9 @@ apps/mobile/lib/
   Pengguna berperan `vendor_owner` langsung diarahkan ke `Routes.vendorHome`.
 - **State**: `setState` + `ChangeNotifier` sederhana; tanpa provider/bloc/riverpod.
 - **HTTP**: satu `ApiClient` dengan refresh-on-401; error dipetakan ke pesan Indonesia.
-- **Desain**: token di `theme.dart` mengikuti ekspor OpenDesign **Graphite · Lime**:
+- **Desain**: acuan visual berupa ekspor HTML di `opendesain/` (peta file:
+  [DESIGN-REFERENCES.md](DESIGN-REFERENCES.md)). Token di `theme.dart` mengikuti
+  ekspor OpenDesign **Graphite · Lime**:
   ink `#0B1220`, kanvas hangat `#EEEEE9`, kartu `#FAFAF7`, aksi lime `#D9FB4F`,
   uang/sukses hijau `#076C48`, tahan/menunggu amber `#9A4208`. Satu keluarga font:
   Plus Jakarta Sans (Roboto Flex tetap dibundel dan diuji, tetapi tidak dipakai theme).
