@@ -36,6 +36,8 @@ import type {
   ReleasePreview,
   ReleaseQueue,
   ReleaseResult,
+  ResolveDisputeInput,
+  ResolveDisputeResult,
   SettleBookingInput,
   SettleBookingResult,
   Vendor,
@@ -460,6 +462,20 @@ export function getPayments(): Promise<PaymentsOverview> {
 
 export function getDisputes(): Promise<DisputeOverview> {
   return apiFetch<DisputeOverview>('/api/v1/admin/disputes');
+}
+
+export function resolveDispute(
+  disputeId: string,
+  input: ResolveDisputeInput
+): Promise<ResolveDisputeResult> {
+  return apiFetch<ResolveDisputeResult>(
+    `/api/v1/admin/disputes/${encodeURIComponent(disputeId)}/resolve`,
+    {
+      method: 'POST',
+      headers: { 'Idempotency-Key': crypto.randomUUID() },
+      body: JSON.stringify(input)
+    }
+  );
 }
 
 export function getAuditLog(): Promise<AuditLog> {

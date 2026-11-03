@@ -29,6 +29,8 @@ import {
   type IdempotencyStore
 } from '@tarlink/platform/idempotency';
 import type { BookingPaymentPort } from './booking.port';
+import { LocalPaymentGateway } from './local.gateway';
+import type { GatewayInstruction, PaymentGateway } from './payment.gateway';
 import {
   PAYMENT_METHODS,
   type PaymentMethod,
@@ -82,6 +84,8 @@ export interface PaymentServiceDeps {
   /** `PJP_WEBHOOK_SECRET`. Empty/undefined rejects every webhook (fail closed). */
   readonly webhookSecret?: string;
   readonly provider?: string;
+  /** Defaults to `LocalPaymentGateway` so unit tests never touch the network. */
+  readonly gateway?: PaymentGateway;
   readonly now?: () => Date;
   readonly newId?: () => string;
   readonly newProviderRef?: (paymentId: string, method: PaymentMethod) => string;
@@ -96,9 +100,14 @@ export interface RequestOptions {
 
 export interface PaymentInstruction {
   readonly type: 'qris' | 'va';
+  /** Raw QR payload for local rendering. */
   readonly qr_string?: string;
+  /** Provider-rendered QR image URL (Midtrans Core API). */
+  readonly qr_url?: string;
   readonly va_number?: string;
   readonly bank?: string;
+  /** Mandiri Bill only. */
+  readonly biller_code?: string;
   readonly expires_at: string;
 }
 
@@ -249,6 +258,7 @@ export class PaymentService {
   private readonly idempotencyStore: IdempotencyStore;
   private readonly webhookSecret: string;
   private readonly provider: string;
+  private readonly gateway: PaymentGateway;
   private readonly now: () => Date;
   private readonly newId: () => string;
   private readonly newProviderRef: (paymentId: string, method: PaymentMethod) => string;
@@ -258,7 +268,8 @@ export class PaymentService {
     this.booking = deps.booking;
     this.idempotencyStore = deps.idempotencyStore;
     this.webhookSecret = deps.webhookSecret ?? '';
-    this.provider = deps.provider ?? 'pjp';
+    this.gateway = deps.gateway ?? new LocalPaymentGateway();
+    this.provider = deps.provider ?? this.gateway.name;
     this.now = deps.now ?? (() => new Date());
     this.newId = deps.newId ?? (() => randomUUID());
     this.newProviderRef =
@@ -292,7 +303,7 @@ export class PaymentService {
     const requestHash = opts.requestHash ?? hashRequest({ booking_id: bookingId, method });
     return this.runIdempotent(IDEMPOTENCY_SCOPE.createDpCharge, opts, requestHash, async () => {
       const now = this.now();
-      return this.repository.transaction(async (tx) => {
+      const payment = await this.repository.transaction(async (tx) => {
         const booking = await this.repository.lockBooking(tx, bookingId);
         if (!booking) throw new AppError('NOT_FOUND', `booking ${bookingId} not found`);
 
@@ -331,6 +342,9 @@ export class PaymentService {
 
         const active = await this.repository.findActiveDpPayment(tx, bookingId);
         if (active) {
+          // A previous attempt already reached the provider. Replaying its
+          // instruction is safe; creating a second charge is not.
+          if (this.instructionFromPayment(active)) return active;
           throw new AppError(
             'CONFLICT',
             'an active DP payment already exists for this booking',
@@ -339,7 +353,7 @@ export class PaymentService {
         }
 
         const paymentId = this.newId();
-        const payment = await this.repository.insertPayment(tx, {
+        return this.repository.insertPayment(tx, {
           bookingId,
           kind: 'dp',
           method,
@@ -349,9 +363,49 @@ export class PaymentService {
           providerRef: this.newProviderRef(paymentId, method),
           expiresAt: booking.paymentDeadline
         });
-
-        return this.toChargeResult(payment);
       });
+
+      // A replay of an already-charged payment returns the stored instruction.
+      const storedInstruction = this.instructionFromPayment(payment);
+      if (storedInstruction) return this.toChargeResult(payment, storedInstruction);
+      if (!payment.expiresAt) {
+        throw new AppError('INTERNAL_ERROR', 'pending payment without expires_at');
+      }
+
+      let charge;
+      try {
+        charge = await this.gateway.createCharge({
+          paymentId: payment.id,
+          orderId: payment.providerRef,
+          amountIdr: payment.amountIdr,
+          method: payment.method,
+          expiresAt: payment.expiresAt
+        });
+      } catch (error) {
+        // Release the active-DP slot so the customer can retry with a new
+        // Idempotency-Key after a provider rejection.
+        await this.repository
+          .transaction((tx) =>
+            this.repository.markPaymentFailed(tx, {
+              paymentId: payment.id,
+              status: 'failed',
+              failureCode: 'CHARGE_FAILED',
+              rawPayload: { error: error instanceof Error ? error.message : String(error) }
+            })
+          )
+          .catch(() => undefined);
+        throw error;
+      }
+
+      const updated = await this.repository.transaction((tx) =>
+        this.repository.updatePaymentCharge(tx, {
+          paymentId: payment.id,
+          providerTxnId: charge.providerTxnId,
+          rawPayload: this.rawWithInstruction(charge.rawPayload, charge.instruction),
+          expiresAt: charge.expiresAt ?? payment.expiresAt
+        })
+      );
+      return this.toChargeResult(updated, charge.instruction);
     });
   }
 
@@ -569,15 +623,93 @@ export class PaymentService {
     // The amount is mandatory: without it the event cannot be verified against
     // the server-side amount, so nothing is recorded at all.
     const reportedAmountIdr = parseExternalAmount(event.data?.amount_idr, 'amount_idr');
+    return this.processVerifiedEvent(event, { signature }, true, reportedAmountIdr);
+  }
 
+  /**
+   * Midtrans-style notification: authenticity comes from the body's
+   * `signature_key` (SHA512), not from an HMAC header.
+   */
+  async handleGatewayNotification(_rawBody: string | Buffer, body: unknown): Promise<WebhookResult> {
+    const gateway = this.gateway;
+    if (!gateway.verifyNotification || !gateway.classifyNotification) {
+      throw new AppError('CONFLICT', 'Gateway ini tidak mendukung notifikasi berbasis body');
+    }
+    gateway.verifyNotification(body);
+    const notification = gateway.classifyNotification(body);
+
+    if (notification.kind === 'paid') {
+      const amountIdr = parseExternalAmount(notification.event.data?.amount_idr, 'amount_idr');
+      return this.processVerifiedEvent(
+        notification.event,
+        { source: gateway.name },
+        true,
+        amountIdr
+      );
+    }
+
+    if (!notification.orderId) {
+      throw new AppError('VALIDATION_ERROR', 'notification order_id is required');
+    }
+
+    return this.repository.transaction(async (tx) => {
+      const inserted = await this.repository.insertWebhookEvent(tx, {
+        provider: this.provider,
+        externalId: notification.eventId,
+        eventType: notification.eventType,
+        payload: notification.raw,
+        headers: { source: gateway.name },
+        signatureValid: true
+      });
+      if (!inserted) {
+        return {
+          received: true,
+          duplicate: true,
+          event_id: notification.eventId,
+          status: 'duplicate'
+        };
+      }
+
+      if (notification.kind === 'failed' || notification.kind === 'expired') {
+        const payment = await this.repository.findPaymentByProviderRef(
+          tx,
+          this.provider,
+          notification.orderId
+        );
+        if (payment && payment.status === 'pending') {
+          await this.repository.markPaymentFailed(tx, {
+            paymentId: payment.id,
+            status: notification.kind === 'expired' ? 'expired' : 'failed',
+            failureCode: notification.eventType,
+            rawPayload: notification.raw
+          });
+        }
+      }
+
+      await this.repository.markWebhookEvent(tx, { id: inserted.id, status: 'processed' });
+      return {
+        received: true,
+        duplicate: false,
+        event_id: notification.eventId,
+        status: 'processed'
+      };
+    });
+  }
+
+  private async processVerifiedEvent(
+    event: PjpWebhookEvent,
+    headers: Record<string, string>,
+    signatureValid: boolean,
+    reportedAmountIdr: bigint
+  ): Promise<WebhookResult> {
     return this.repository.transaction(async (tx, client) => {
       const inserted = await this.repository.insertWebhookEvent(tx, {
         provider: this.provider,
         externalId: event.id,
         eventType: event.type,
         payload: event,
-        headers: { signature },
-        signatureValid: true
+        headers,
+        signatureValid
       });
 
       if (!inserted) {
@@ -850,8 +982,8 @@ export class PaymentService {
         amount_idr: amountIdr.toString(),
         reason
       });
-    return this.runIdempotent(IDEMPOTENCY_SCOPE.refund, opts, requestHash, async () =>
-      this.repository.transaction(async (tx) => {
+    return this.runIdempotent(IDEMPOTENCY_SCOPE.refund, opts, requestHash, async () => {
+      const outcome = await this.repository.transaction(async (tx) => {
         // Lock order: booking first, then payment (§8.1).
         const booking = await this.repository.lockBookingForPayment(tx, paymentId);
         const payment = await this.repository.lockPayment(tx, paymentId);
@@ -861,6 +993,13 @@ export class PaymentService {
           throw new AppError(
             'CONFLICT',
             `payment must be paid before refunding (current: ${payment.status})`
+          );
+        }
+        if (this.gateway.name !== 'local' && (!payment.providerRef || payment.provider !== this.provider)) {
+          // A manual settlement row has no provider transaction to reverse.
+          throw new AppError(
+            'CONFLICT',
+            'Pembayaran ini tidak berasal dari gateway; refund harus dicatat manual.'
           );
         }
 
@@ -895,24 +1034,31 @@ export class PaymentService {
           requestedBy: actorId
         });
 
-        // Recognition entry only; disbursement is posted when the PJP confirms (§6.4 4b/5b).
-        const entry = buildEntry(
-          isFullRefund ? 'refund_full_recognized' : 'refund_partial_recognized',
-          {
-            refundId: refund.id,
-            bookingId: payment.bookingId,
-            vendorId: booking.vendorId,
-            escrowIdr: amountIdr,
-            refundNetIdr,
-            gatewayFeeRecoveredIdr: feeRecoveredIdr,
-            retainedCommissionBaseIdr: 0n,
-            occurredAt: this.now(),
-            memo: `refund ${reason.trim()}`
-          }
-        );
-        const posted = await postEntry(tx, entry);
+        // The local gateway keeps the historical request-only behaviour, so it
+        // posts the recognition entry immediately. A real provider waits until
+        // the money movement is confirmed; a rejected refund must not leave a
+        // recognition entry behind.
+        let recognitionJournalId = '';
+        if (this.gateway.name === 'local') {
+          const entry = buildEntry(
+            isFullRefund ? 'refund_full_recognized' : 'refund_partial_recognized',
+            {
+              refundId: refund.id,
+              bookingId: payment.bookingId,
+              vendorId: booking.vendorId,
+              escrowIdr: amountIdr,
+              refundNetIdr,
+              gatewayFeeRecoveredIdr: feeRecoveredIdr,
+              retainedCommissionBaseIdr: 0n,
+              occurredAt: this.now(),
+              memo: `refund ${reason.trim()}`
+            }
+          );
+          const posted = await postEntry(tx, entry);
+          recognitionJournalId = posted.id;
+        }
 
-        return {
+        const result: RefundResult = {
           id: refund.id,
           payment_id: paymentId,
           booking_id: payment.bookingId,
@@ -921,10 +1067,123 @@ export class PaymentService {
           currency: 'IDR' as const,
           status: refund.status,
           reason_code: refund.reasonCode,
-          journal_entry_id: posted.id
+          journal_entry_id: recognitionJournalId
         };
-      })
-    );
+        return {
+          result,
+          providerRef: payment.providerRef,
+          method: payment.method,
+          vendorId: booking.vendorId,
+          isFullRefund,
+          refundNetIdr,
+          reason: reason.trim()
+        };
+      });
+
+      // The local gateway preserves the historical request-only behaviour used
+      // by unit tests. A real provider is asked to move the money; if it
+      // rejects, the refund becomes `failed` (retryable) and no journal is
+      // posted. On success the recognition + disbursement journals are posted.
+      if (this.gateway.name === 'local') return outcome.result;
+
+      let providerRefund;
+      try {
+        providerRefund = await this.gateway.refund({
+          orderId: outcome.providerRef,
+          method: outcome.method,
+          amountIdr,
+          reason: outcome.reason,
+          refundKey: outcome.result.id
+        });
+      } catch (error) {
+        await this.repository
+          .transaction((tx) =>
+            this.repository.advanceRefundStatus(tx, {
+              refundId: outcome.result.id,
+              from: 'requested',
+              to: 'failed',
+              actorId: null,
+              providerRefundId: null
+            })
+          )
+          .catch(() => undefined);
+        throw error;
+      }
+      return this.finalizeRefund(outcome, providerRefund.providerRefundId);
+    });
+  }
+
+  private async finalizeRefund(
+    outcome: {
+      result: RefundResult;
+      vendorId: string;
+      isFullRefund: boolean;
+      refundNetIdr: bigint;
+      reason: string;
+    },
+    providerRefundId: string | null
+  ): Promise<RefundResult> {
+    const { result } = outcome;
+    return this.repository.transaction(async (tx) => {
+      const refund = await this.repository.lockRefund(tx, result.id);
+      if (!refund) throw new AppError('NOT_FOUND', `refund ${result.id} not found`);
+      if (refund.status === 'succeeded') return result;
+      if (refund.status !== 'requested') {
+        throw new AppError(
+          'CONFLICT',
+          `refund ${result.id} is ${refund.status}, cannot be finalized automatically`
+        );
+      }
+
+      const updated = await this.repository.advanceRefundStatus(tx, {
+        refundId: result.id,
+        from: 'requested',
+        to: 'succeeded',
+        actorId: null,
+        providerRefundId
+      });
+      const refundNetIdr = updated.amountIdr - updated.feeIdr;
+
+      await postEntry(
+        tx,
+        buildEntry(
+          outcome.isFullRefund ? 'refund_full_recognized' : 'refund_partial_recognized',
+          {
+            refundId: updated.id,
+            bookingId: updated.bookingId,
+            vendorId: outcome.vendorId,
+            escrowIdr: updated.amountIdr,
+            refundNetIdr,
+            gatewayFeeRecoveredIdr: updated.feeIdr,
+            retainedCommissionBaseIdr: 0n,
+            occurredAt: this.now(),
+            memo: `refund ${outcome.reason}`
+          }
+        )
+      );
+      const posted = await postEntry(
+        tx,
+        buildEntry('refund_disbursed', {
+          refundId: updated.id,
+          refundNetIdr,
+          bookingId: updated.bookingId,
+          occurredAt: this.now(),
+          memo: `refund ${updated.id} disbursed`
+        })
+      );
+
+      return {
+        id: updated.id,
+        payment_id: updated.paymentId,
+        booking_id: updated.bookingId,
+        amount_idr: jsonRupiah(updated.amountIdr),
+        fee_idr: jsonRupiah(updated.feeIdr),
+        currency: 'IDR' as const,
+        status: updated.status,
+        reason_code: updated.reasonCode,
+        journal_entry_id: posted.id
+      };
+    });
   }
 
   /**
@@ -1006,7 +1265,10 @@ export class PaymentService {
 
   /* ---------------------------------------------------------------- helpers */
 
-  private toChargeResult(payment: PaymentRecord): DpChargeResult {
+  private toChargeResult(
+    payment: PaymentRecord,
+    instruction?: GatewayInstruction
+  ): DpChargeResult {
     if (!payment.expiresAt) {
       throw new AppError('INTERNAL_ERROR', 'pending payment without expires_at');
     }
@@ -1021,11 +1283,33 @@ export class PaymentService {
       provider: payment.provider,
       provider_ref: payment.providerRef,
       expires_at: payment.expiresAt.toISOString(),
-      payment_instruction: this.buildInstruction(payment)
+      payment_instruction:
+        instruction ?? this.instructionFromPayment(payment) ?? this.buildInstruction(payment)
     };
   }
 
+  /** The normalized instruction captured after a successful gateway charge. */
+  private instructionFromPayment(payment: PaymentRecord): PaymentInstruction | null {
+    const raw = payment.rawPayload;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const normalized = (raw as Record<string, unknown>)._tarlink_instruction;
+    if (!normalized || typeof normalized !== 'object' || Array.isArray(normalized)) return null;
+    const candidate = normalized as Record<string, unknown>;
+    if (candidate.type !== 'qris' && candidate.type !== 'va') return null;
+    return candidate as unknown as PaymentInstruction;
+  }
+
+  private rawWithInstruction(raw: unknown, instruction: GatewayInstruction): unknown {
+    const base =
+      raw && typeof raw === 'object' && !Array.isArray(raw)
+        ? (raw as Record<string, unknown>)
+        : { provider_payload: raw ?? null };
+    return { ...base, _tarlink_instruction: instruction };
+  }
+
   private buildInstruction(payment: PaymentRecord): PaymentInstruction {
+    const stored = this.instructionFromPayment(payment);
+    if (stored) return stored;
     const expiresAt = (payment.expiresAt ?? this.now()).toISOString();
     if (payment.method === 'qris') {
       const payload = payment.providerRef.replace(/[^A-Za-z0-9]/g, '').toUpperCase();

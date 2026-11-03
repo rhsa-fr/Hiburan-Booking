@@ -534,23 +534,29 @@ class PaymentInstruction {
   const PaymentInstruction({
     required this.type,
     this.qrString,
+    this.qrUrl,
     this.vaNumber,
     this.bank,
+    this.billerCode,
     this.expiresAt,
   });
 
   factory PaymentInstruction.fromJson(Map<String, dynamic> json) => PaymentInstruction(
     type: _string(json['type']),
     qrString: _stringOrNull(json['qr_string']),
+    qrUrl: _stringOrNull(json['qr_url']),
     vaNumber: _stringOrNull(json['va_number']),
     bank: _stringOrNull(json['bank']),
+    billerCode: _stringOrNull(json['biller_code']),
     expiresAt: _stringOrNull(json['expires_at']),
   );
 
   final String type;
   final String? qrString;
+  final String? qrUrl;
   final String? vaNumber;
   final String? bank;
+  final String? billerCode;
   final String? expiresAt;
 }
 

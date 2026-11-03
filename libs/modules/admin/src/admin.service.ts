@@ -145,6 +145,50 @@ const QUEUE_LIMIT = 5;
 const AUDIT_LIMIT = 200;
 const AUDIT_ACTION_LIMIT = 50;
 const LEDGER_LIMIT = 500;
+const OPEN_DISPUTE_STATUSES = new Set(['open', 'investigating', 'awaiting_evidence']);
+
+const RESOLVE_DISPUTE_BODY = z.object({
+  resolution: z.enum(['release_to_vendor', 'refund_full', 'refund_partial', 'reject']),
+  note: z.string().trim().min(10).max(1000),
+  amount_idr: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional()
+});
+
+export type ResolveDisputeBody = z.infer<typeof RESOLVE_DISPUTE_BODY>;
+export type DisputeResolution = ResolveDisputeBody['resolution'];
+
+export interface ResolveDisputeContext {
+  actorId: string;
+  actorRole: 'admin_finance' | 'admin_super';
+  requestId: string | null;
+  idempotencyKey?: string;
+}
+
+export interface ResolveDisputeResult {
+  dispute_id: string;
+  booking_id: string;
+  status: 'resolved' | 'rejected';
+  resolution: DisputeResolution | 'no_action';
+  resolution_amount_idr: number;
+  customer_share_idr: number;
+  vendor_share_idr: number;
+  journal_entry_id?: string;
+  refund_id?: string;
+}
+
+function parseResolveDisputeBody(body: unknown): ResolveDisputeBody {
+  const parsed = RESOLVE_DISPUTE_BODY.safeParse(body);
+  if (!parsed.success) {
+    const field = parsed.error.issues[0]?.path[0];
+    const message =
+      field === 'note'
+        ? 'Catatan putusan wajib diisi minimal 10 karakter.'
+        : field === 'amount_idr'
+          ? 'Nominal refund harus bilangan bulat lebih dari 0.'
+          : 'Putusan sengketa tidak valid.';
+    throw new AppError('VALIDATION_ERROR', message, parsed.error.issues);
+  }
+  return parsed.data;
+}
 
 function groupBy<T>(items: readonly T[], key: (item: T) => string): Map<string, T[]> {
   const map = new Map<string, T[]>();
@@ -727,6 +771,303 @@ export class AdminService {
         'disputes.total_idr'
       )
     };
+  }
+
+  /**
+   * Resolves a dispute. `release_to_vendor` and `reject` run in one transaction
+   * with the ledger/status write. Refunds run the provider refund first, then
+   * record the decision and update the booking statuses.
+   */
+  async resolveDispute(
+    disputeId: string,
+    body: unknown,
+    context: ResolveDisputeContext
+  ): Promise<ResolveDisputeResult> {
+    const input = parseResolveDisputeBody(body);
+    if (input.resolution === 'refund_full' || input.resolution === 'refund_partial') {
+      return this.resolveDisputeRefund(disputeId, input, context);
+    }
+
+    const occurredAt = new Date();
+    return withTransaction((client) =>
+      this.resolveDisputeInTransaction(client, disputeId, input, context, occurredAt)
+    );
+  }
+
+  private async resolveDisputeInTransaction(
+    client: PoolClient,
+    disputeId: string,
+    input: ResolveDisputeBody,
+    context: ResolveDisputeContext,
+    occurredAt: Date
+  ): Promise<ResolveDisputeResult> {
+    const dispute = await this.repository.lockDispute(client, disputeId);
+    if (!dispute) throw new AppError('NOT_FOUND', 'Sengketa tidak ditemukan.');
+    if (!OPEN_DISPUTE_STATUSES.has(dispute.status)) {
+      throw new AppError('CONFLICT', 'Sengketa ini sudah diputuskan.');
+    }
+
+    const bookings = await this.repository.lockBookings(client, [dispute.booking_id]);
+    const booking = bookings[0];
+    if (!booking) throw new AppError('NOT_FOUND', 'Booking sengketa tidak ditemukan.');
+
+    if (input.resolution === 'reject') {
+      if (booking.settlement_status !== 'disputed') {
+        throw new AppError('CONFLICT', 'Dana booking ini tidak sedang dalam status sengketa.');
+      }
+      await this.repository.setBookingSettlement(client, {
+        bookingId: booking.id,
+        settlementStatus: 'held'
+      });
+      await this.repository.insertStatusHistory(client, {
+        bookingId: booking.id,
+        from: 'disputed',
+        to: 'held',
+        event: 'dispute.rejected',
+        actorId: context.actorId,
+        actorRole: context.actorRole,
+        note: input.note
+      });
+      await this.repository.markDisputeRejected(client, {
+        disputeId,
+        resolvedBy: context.actorId,
+        note: input.note
+      });
+      await this.repository.insertAudit(client, {
+        actorId: context.actorId,
+        actorRole: context.actorRole,
+        action: 'dispute.rejected',
+        entityType: 'dispute',
+        entityId: disputeId,
+        beforeState: { status: dispute.status, settlement_status: 'disputed' },
+        afterState: { status: 'rejected', settlement_status: 'held', note: input.note },
+        requestId: context.requestId
+      });
+      return {
+        dispute_id: disputeId,
+        booking_id: booking.id,
+        status: 'rejected',
+        resolution: 'no_action',
+        resolution_amount_idr: 0,
+        customer_share_idr: 0,
+        vendor_share_idr: 0
+      };
+    }
+
+    // release_to_vendor
+    if (booking.lifecycle_status !== 'completed') {
+      throw new AppError('CONFLICT', 'Pelepasan ke vendor hanya untuk acara yang sudah selesai.');
+    }
+    if (booking.settlement_status !== 'disputed') {
+      throw new AppError('CONFLICT', 'Dana booking ini tidak sedang dalam status sengketa.');
+    }
+    if (booking.payment_status !== 'fully_paid' && booking.payment_status !== 'partially_refunded') {
+      throw new AppError('CONFLICT', 'Pelepasan ke vendor memerlukan pembayaran yang sudah lunas.');
+    }
+
+    const plan = buildReleaseJournalPlan(
+      booking,
+      occurredAt,
+      `Putusan sengketa ${booking.code}: ${input.note}`
+    );
+    const posted = await postEntry(client, plan.draft);
+    if (!posted.inserted) {
+      throw new AppError(
+        'CONFLICT',
+        `Jurnal release untuk ${booking.code} sudah ada tetapi settlement masih disputed. Periksa rekonsiliasi.`
+      );
+    }
+
+    const released = await this.repository.markReleased(
+      client,
+      [booking.id],
+      occurredAt,
+      ['disputed']
+    );
+    if (released.length !== 1) {
+      throw new AppError('CONFLICT', 'Status settlement berubah saat putusan disimpan.');
+    }
+
+    await this.repository.insertStatusHistory(client, {
+      bookingId: booking.id,
+      from: 'disputed',
+      to: 'released',
+      event: 'dispute.resolved_to_vendor',
+      actorId: context.actorId,
+      actorRole: context.actorRole,
+      note: input.note
+    });
+    await this.repository.markDisputeResolved(client, {
+      disputeId,
+      resolution: 'release_to_vendor',
+      resolutionAmountIdr: plan.vendorPayableIdr,
+      customerShareIdr: 0n,
+      vendorShareIdr: plan.vendorPayableIdr,
+      resolvedBy: context.actorId,
+      note: input.note
+    });
+    await this.repository.insertAudit(client, {
+      actorId: context.actorId,
+      actorRole: context.actorRole,
+      action: 'dispute.release_to_vendor',
+      entityType: 'dispute',
+      entityId: disputeId,
+      beforeState: { status: dispute.status, settlement_status: 'disputed' },
+      afterState: {
+        status: 'resolved',
+        settlement_status: 'released',
+        journal_entry_id: posted.id,
+        vendor_share_idr: idrToJson(plan.vendorPayableIdr, 'vendor_share_idr'),
+        note: input.note
+      },
+      requestId: context.requestId
+    });
+
+    return {
+      dispute_id: disputeId,
+      booking_id: booking.id,
+      status: 'resolved',
+      resolution: 'release_to_vendor',
+      resolution_amount_idr: idrToJson(plan.vendorPayableIdr, 'resolution_amount_idr'),
+      customer_share_idr: 0,
+      vendor_share_idr: idrToJson(plan.vendorPayableIdr, 'vendor_share_idr'),
+      journal_entry_id: posted.id
+    };
+  }
+
+  private async resolveDisputeRefund(
+    disputeId: string,
+    input: ResolveDisputeBody,
+    context: ResolveDisputeContext
+  ): Promise<ResolveDisputeResult> {
+    if (input.resolution !== 'refund_full' && input.resolution !== 'refund_partial') {
+      throw new AppError('VALIDATION_ERROR', 'Bukan putusan refund.');
+    }
+    const resolution = input.resolution;
+    const dispute = await this.repository.findDispute(disputeId);
+    if (!dispute) throw new AppError('NOT_FOUND', 'Sengketa tidak ditemukan.');
+    if (!OPEN_DISPUTE_STATUSES.has(dispute.status)) {
+      throw new AppError('CONFLICT', 'Sengketa ini sudah diputuskan.');
+    }
+
+    const payment = await this.repository.findPaidDpPayment(dispute.booking_id);
+    if (!payment) {
+      throw new AppError('CONFLICT', 'Tidak ada pembayaran DP yang sudah dibayar untuk booking ini.');
+    }
+
+    const capturedIdr = toIdr(payment.amount_idr, 'payment.amount_idr');
+    const amountIdr =
+      input.resolution === 'refund_full'
+        ? capturedIdr
+        : BigInt(input.amount_idr ?? 0);
+    if (amountIdr <= 0n || amountIdr > capturedIdr) {
+      throw new AppError('VALIDATION_ERROR', 'Nominal refund harus antara 1 dan nilai pembayaran.');
+    }
+    if (input.resolution === 'refund_partial' && amountIdr === capturedIdr) {
+      throw new AppError(
+        'VALIDATION_ERROR',
+        'Refund sebagian harus lebih kecil dari nilai pembayaran. Gunakan refund_full.'
+      );
+    }
+
+    // Move the money first: if the provider declines, the dispute stays open.
+    const refund = await this.payment.refund(payment.id, amountIdr, input.note, {
+      actorId: context.actorId,
+      idempotencyKey: context.idempotencyKey
+    });
+
+    return withTransaction(async (client) => {
+      const locked = await this.repository.lockDispute(client, disputeId);
+      if (!locked) throw new AppError('NOT_FOUND', 'Sengketa tidak ditemukan.');
+      if (!OPEN_DISPUTE_STATUSES.has(locked.status)) {
+        throw new AppError('CONFLICT', 'Sengketa ini sudah diputuskan.');
+      }
+
+      const bookings = await this.repository.lockBookings(client, [locked.booking_id]);
+      const booking = bookings[0];
+      if (!booking) throw new AppError('NOT_FOUND', 'Booking sengketa tidak ditemukan.');
+      if (booking.settlement_status !== 'disputed') {
+        throw new AppError('CONFLICT', 'Dana booking ini tidak sedang dalam status sengketa.');
+      }
+      if (booking.lifecycle_status !== 'completed' && booking.lifecycle_status !== 'no_show') {
+        throw new AppError(
+          'CONFLICT',
+          'Refund sengketa hanya untuk acara completed atau no_show.'
+        );
+      }
+
+      const paymentStatus =
+        input.resolution === 'refund_full' ? 'refunded' : 'partially_refunded';
+      await this.repository.setBookingRefundStatus(client, {
+        bookingId: booking.id,
+        paymentStatus,
+        settlementStatus: 'not_eligible'
+      });
+      await this.repository.insertStatusHistory(client, {
+        bookingId: booking.id,
+        axis: 'payment',
+        from: booking.payment_status,
+        to: paymentStatus,
+        event:
+          input.resolution === 'refund_full'
+            ? 'payment.refund_succeeded'
+            : 'payment.refund_succeeded_partial',
+        actorId: context.actorId,
+        actorRole: context.actorRole,
+        note: input.note
+      });
+      await this.repository.insertStatusHistory(client, {
+        bookingId: booking.id,
+        axis: 'settlement',
+        from: 'disputed',
+        to: 'not_eligible',
+        event: 'dispute.resolved_refund',
+        actorId: context.actorId,
+        actorRole: context.actorRole,
+        note: input.note
+      });
+      await this.repository.markDisputeResolved(client, {
+        disputeId,
+        resolution,
+        resolutionAmountIdr: amountIdr,
+        customerShareIdr: amountIdr,
+        vendorShareIdr: 0n,
+        resolvedBy: context.actorId,
+        note: input.note
+      });
+      await this.repository.insertAudit(client, {
+        actorId: context.actorId,
+        actorRole: context.actorRole,
+        action:
+          input.resolution === 'refund_full'
+            ? 'dispute.refund_full'
+            : 'dispute.refund_partial',
+        entityType: 'dispute',
+        entityId: disputeId,
+        beforeState: { status: locked.status, settlement_status: 'disputed' },
+        afterState: {
+          status: 'resolved',
+          resolution: input.resolution,
+          customer_share_idr: idrToJson(amountIdr, 'customer_share_idr'),
+          refund_id: refund.id,
+          journal_entry_id: refund.journal_entry_id,
+          note: input.note
+        },
+        requestId: context.requestId
+      });
+
+      return {
+        dispute_id: disputeId,
+        booking_id: booking.id,
+        status: 'resolved',
+        resolution,
+        resolution_amount_idr: idrToJson(amountIdr, 'resolution_amount_idr'),
+        customer_share_idr: idrToJson(amountIdr, 'customer_share_idr'),
+        vendor_share_idr: 0,
+        refund_id: refund.id,
+        journal_entry_id: refund.journal_entry_id
+      };
+    });
   }
 
   async audit(): Promise<AuditLog> {

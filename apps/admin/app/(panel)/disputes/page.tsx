@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Scale, ShieldAlert } from 'lucide-react';
 import {
@@ -22,9 +23,10 @@ import {
   TableSkeleton,
   TitleBlock
 } from '@/components/ui';
-import { getDisputes } from '@/lib/api';
+import { getDisputes, resolveDispute } from '@/lib/api';
 import { formatDateTimeID, formatIDR, relativeFrom } from '@/lib/format';
 import { MOCK_NOW } from '@/lib/mock';
+import type { DisputeRecord, ResolveDisputeInput } from '@/lib/types';
 
 const DISPUTE_STATUS_LABELS: Record<string, string> = {
   open: 'Terbuka',
@@ -47,6 +49,54 @@ export default function DisputesPage() {
     queryKey: ['disputes'],
     queryFn: getDisputes
   });
+  const [target, setTarget] = useState<DisputeRecord | null>(null);
+  const [resolution, setResolution] = useState<ResolveDisputeInput['resolution']>('reject');
+  const [note, setNote] = useState('');
+  const [amount, setAmount] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  function openResolve(dispute: DisputeRecord): void {
+    setTarget(dispute);
+    setResolution('reject');
+    setNote('');
+    setAmount('');
+    setFormError(null);
+  }
+
+  async function submitResolve(): Promise<void> {
+    if (!target) return;
+    const trimmed = note.trim();
+    if (trimmed.length < 10) {
+      setFormError('Catatan putusan minimal 10 karakter.');
+      return;
+    }
+    const numeric = Number(amount.replace(/[^\d]/g, ''));
+    if (resolution === 'refund_partial' && (!Number.isInteger(numeric) || numeric <= 0)) {
+      setFormError('Nominal refund sebagian harus lebih dari 0.');
+      return;
+    }
+
+    setBusy(true);
+    setFormError(null);
+    try {
+      await resolveDispute(target.id, {
+        resolution,
+        note: trimmed,
+        ...(resolution === 'refund_partial' ? { amount_idr: numeric } : {})
+      });
+      setTarget(null);
+      setNote('');
+      setAmount('');
+      await refetch();
+    } catch (submitError) {
+      setFormError(
+        submitError instanceof Error ? submitError.message : 'Gagal menyimpan putusan sengketa.'
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <div>
@@ -123,6 +173,7 @@ export default function DisputesPage() {
                     <TableHeadCell align="right">Pelanggan</TableHeadCell>
                     <TableHeadCell align="right">Vendor</TableHeadCell>
                     <TableHeadCell align="right">SLA</TableHeadCell>
+                    <TableHeadCell align="right">Aksi</TableHeadCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -168,12 +219,93 @@ export default function DisputesPage() {
                             : 'Selesai'}
                         </span>
                       </TableCell>
+                      <TableCell align="right">
+                        {dispute.status === 'open' ? (
+                          <Button variant="outline" size="sm" onClick={() => openResolve(dispute)}>
+                            Putuskan
+                          </Button>
+                        ) : (
+                          <span className="text-[13px] text-textSecondary">Selesai</span>
+                        )}
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
             )}
           </Card>
+        </div>
+      ) : null}
+
+      {target ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Putusan sengketa ${target.booking_code}`}
+            className="w-full max-w-lg rounded-card border border-border bg-surface p-5 shadow-xl"
+          >
+            <h2 className="text-[18px] font-semibold text-textMain">
+              Putusan sengketa {target.booking_code}
+            </h2>
+            <p className="mt-1 text-[13px] text-textSecondary">{target.reason}</p>
+
+            <label htmlFor="dispute-resolution" className="mt-4 block text-[13px] font-semibold text-textMain">
+              Putusan
+            </label>
+            <select
+              id="dispute-resolution"
+              value={resolution}
+              onChange={(event) =>
+                setResolution(event.target.value as ResolveDisputeInput['resolution'])
+              }
+              className="mt-1 w-full rounded-field border border-border bg-surface px-3 py-2 text-[14px] text-textMain"
+            >
+              <option value="reject">Tolak klaim</option>
+              <option value="release_to_vendor">Lepas dana ke vendor</option>
+              <option value="refund_full">Refund penuh</option>
+              <option value="refund_partial">Refund sebagian</option>
+            </select>
+
+            {resolution === 'refund_partial' ? (
+              <>
+                <label htmlFor="dispute-amount" className="mt-3 block text-[13px] font-semibold text-textMain">
+                  Nominal refund (Rp)
+                </label>
+                <input
+                  id="dispute-amount"
+                  inputMode="numeric"
+                  value={amount}
+                  onChange={(event) => setAmount(event.target.value)}
+                  placeholder="Contoh: 500000"
+                  className="mt-1 w-full rounded-field border border-border bg-surface px-3 py-2 text-[14px] text-textMain"
+                />
+              </>
+            ) : null}
+
+            <label htmlFor="dispute-note" className="mt-3 block text-[13px] font-semibold text-textMain">
+              Catatan putusan (min. 10 karakter)
+            </label>
+            <textarea
+              id="dispute-note"
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+              rows={4}
+              className="mt-1 w-full rounded-field border border-border bg-surface px-3 py-2 text-[14px] text-textMain"
+              placeholder="Alasan putusan dan bukti yang dipertimbangkan."
+            />
+
+            {formError ? <p className="mt-2 text-[13px] text-danger">{formError}</p> : null}
+
+            <div className="mt-5 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setTarget(null)} disabled={busy}>
+                Batal
+              </Button>
+              <Button onClick={() => void submitResolve()} disabled={busy}>
+                {busy ? 'Menyimpan…' : 'Simpan putusan'}
+              </Button>
+            </div>
+          </div>
         </div>
       ) : null}
     </div>

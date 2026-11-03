@@ -88,6 +88,7 @@ curl http://localhost:3001/v1/health
 | Mobile (web) — pelanggan | `http://localhost:8080` | `qa.b2.520274@tarlink.id` / `Tarlink#2026!` |
 | Mobile (web) — vendor | `http://localhost:8080` | `vendor@tarlink.id` / `Tarlink#2026!` |
 | PostgreSQL | `localhost:5432`, db `tarlink` | `postgres` / `tarlink` |
+| Midtrans Sandbox | Core API `https://api.sandbox.midtrans.com` | isi `MIDTRANS_SERVER_KEY` + `MIDTRANS_CLIENT_KEY` di `.env`; webhook ke `POST /v1/webhooks/midtrans` |
 
 > Kredensial ini untuk **lokal saja**. Jangan pernah dipakai di produksi.
 
@@ -164,8 +165,9 @@ IP, index trigram pencarian, guard `OTP_DEV_MODE`, dan e-wallet ditolak eksplisi
 Yang masih terbuka:
 
 - Tidak ada emulator/HP fisik di lingkungan pengembangan ini.
-- Gateway PJP nyata, provider WhatsApp/SMS, review/rating, picker peta lokasi acara,
-  dan `checkin_location` belum ada.
+- Disbursement/payout ke rekening vendor, provider WhatsApp/SMS, review/rating, picker peta
+  lokasi acara, dan UI check-in berbasis GPS belum ada. Charge/notifikasi/refund QRIS sudah
+  memakai Midtrans sandbox; endpoint check-in basic sudah ada.
 
 ## Lisensi
 

@@ -13,7 +13,7 @@ import { Injectable } from '@nestjs/common';
 import type { PoolClient } from 'pg';
 import { query } from '@tarlink/core/db';
 import { AppError } from '@tarlink/core/errors';
-import type { BookingFilters } from './contracts';
+import type { BookingFilters, PaymentStatus, SettlementStatus } from './contracts';
 import type {
   AccountRow,
   AdminUserRow,
@@ -280,6 +280,70 @@ const DISPUTE_SELECT = `
     JOIN users cu ON cu.id = b.customer_id
     JOIN events e ON e.id = b.event_id
     JOIN regions ereg ON ereg.code = e.region_code
+`;
+
+const LOCK_DISPUTE_SQL = `${DISPUTE_SELECT} WHERE d.id = $1::uuid FOR UPDATE OF d`;
+
+const SELECT_DISPUTE_SQL = `${DISPUTE_SELECT} WHERE d.id = $1::uuid`;
+
+const PAID_DP_PAYMENT_SQL = `
+  SELECT * FROM (${PAYMENT_UNION}) payments_view
+   WHERE booking_id = $1::uuid AND kind = 'dp' AND status = 'paid'
+   ORDER BY paid_at DESC NULLS LAST, created_at DESC
+   LIMIT 1
+`;
+
+const MARK_DISPUTE_RESOLVED_SQL = `
+UPDATE disputes
+   SET status = 'resolved',
+       resolution = $2::dispute_resolution,
+       resolution_amount_idr = $3,
+       customer_share_idr = $4,
+       vendor_share_idr = $5,
+       resolved_at = now(),
+       resolved_by = $6::uuid,
+       resolution_note = $7,
+       updated_at = now()
+ WHERE id = $1::uuid
+   AND status IN ('open','investigating','awaiting_evidence')
+RETURNING id
+`;
+
+const MARK_DISPUTE_REJECTED_SQL = `
+UPDATE disputes
+   SET status = 'rejected',
+       resolution = NULL,
+       resolution_amount_idr = 0,
+       customer_share_idr = 0,
+       vendor_share_idr = 0,
+       resolved_at = now(),
+       resolved_by = $2::uuid,
+       resolution_note = $3,
+       updated_at = now()
+ WHERE id = $1::uuid
+   AND status IN ('open','investigating','awaiting_evidence')
+RETURNING id
+`;
+
+const SET_BOOKING_SETTLEMENT_SQL = `
+UPDATE bookings
+   SET settlement_status = $2::booking_settlement_status,
+       row_version = row_version + 1,
+       updated_at = now()
+ WHERE id = $1::uuid
+   AND settlement_status = 'disputed'
+RETURNING id
+`;
+
+const SET_BOOKING_REFUND_STATUS_SQL = `
+UPDATE bookings
+   SET payment_status = $2::booking_payment_status,
+       settlement_status = $3::booking_settlement_status,
+       row_version = row_version + 1,
+       updated_at = now()
+ WHERE id = $1::uuid
+   AND settlement_status = 'disputed'
+RETURNING id
 `;
 
 const VENDOR_SELECT = `
@@ -653,6 +717,92 @@ export class AdminRepository {
     return rows[0] ?? null;
   }
 
+  async findDispute(disputeId: string): Promise<DisputeRow | null> {
+    const rows = await query<DisputeRow>(SELECT_DISPUTE_SQL, [disputeId]);
+    return rows[0] ?? null;
+  }
+
+  async lockDispute(client: PoolClient, disputeId: string): Promise<DisputeRow | null> {
+    const result = await client.query<DisputeRow>(LOCK_DISPUTE_SQL, [disputeId]);
+    return result.rows[0] ?? null;
+  }
+
+  async findPaidDpPayment(bookingId: string): Promise<PaymentRow | null> {
+    const rows = await query<PaymentRow>(PAID_DP_PAYMENT_SQL, [bookingId]);
+    return rows[0] ?? null;
+  }
+
+  async markDisputeResolved(
+    client: PoolClient,
+    input: {
+      disputeId: string;
+      resolution: 'refund_full' | 'refund_partial' | 'release_to_vendor' | 'split' | 'no_action';
+      resolutionAmountIdr: bigint;
+      customerShareIdr: bigint;
+      vendorShareIdr: bigint;
+      resolvedBy: string;
+      note: string;
+    }
+  ): Promise<void> {
+    const result = await client.query(MARK_DISPUTE_RESOLVED_SQL, [
+      input.disputeId,
+      input.resolution,
+      input.resolutionAmountIdr.toString(),
+      input.customerShareIdr.toString(),
+      input.vendorShareIdr.toString(),
+      input.resolvedBy,
+      input.note
+    ]);
+    if (result.rows.length === 0) {
+      throw new AppError('CONFLICT', 'Sengketa sudah diputuskan atau tidak lagi terbuka.');
+    }
+  }
+
+  async markDisputeRejected(
+    client: PoolClient,
+    input: { disputeId: string; resolvedBy: string; note: string }
+  ): Promise<void> {
+    const result = await client.query(MARK_DISPUTE_REJECTED_SQL, [
+      input.disputeId,
+      input.resolvedBy,
+      input.note
+    ]);
+    if (result.rows.length === 0) {
+      throw new AppError('CONFLICT', 'Sengketa sudah diputuskan atau tidak lagi terbuka.');
+    }
+  }
+
+  async setBookingSettlement(
+    client: PoolClient,
+    input: { bookingId: string; settlementStatus: SettlementStatus }
+  ): Promise<void> {
+    const result = await client.query(SET_BOOKING_SETTLEMENT_SQL, [
+      input.bookingId,
+      input.settlementStatus
+    ]);
+    if (result.rows.length === 0) {
+      throw new AppError('CONFLICT', 'Status settlement booking sudah berubah.');
+    }
+  }
+
+  async setBookingRefundStatus(
+    client: PoolClient,
+    input: {
+      bookingId: string;
+      paymentStatus: PaymentStatus;
+      settlementStatus: SettlementStatus;
+    }
+  ): Promise<void> {
+    const result = await client.query(SET_BOOKING_REFUND_STATUS_SQL, [
+      input.bookingId,
+      input.paymentStatus,
+      input.settlementStatus
+    ]);
+    if (result.rows.length === 0) {
+      throw new AppError('CONFLICT', 'Status booking sudah berubah sebelum putusan disimpan.');
+    }
+  }
+
   async bookingJournalEntries(
     bookingId: string
   ): Promise<{ entries: JournalEntryRow[]; lines: JournalLineRow[] }> {
@@ -762,7 +912,8 @@ export class AdminRepository {
   async markReleased(
     client: PoolClient,
     bookingIds: readonly string[],
-    releasedAt: Date
+    releasedAt: Date,
+    fromStatuses: readonly string[] = ['held']
   ): Promise<ReleasedRow[]> {
     const result = await client.query<ReleasedRow>(
       `UPDATE bookings
@@ -771,9 +922,9 @@ export class AdminRepository {
               updated_at = now(),
               row_version = row_version + 1
         WHERE id = ANY($1::uuid[])
-          AND settlement_status = 'held'
+          AND settlement_status::text = ANY($3::text[])
         RETURNING id, code, settlement_status, released_at`,
-      [bookingIds, releasedAt]
+      [bookingIds, releasedAt, fromStatuses]
     );
     return result.rows;
   }
@@ -811,14 +962,16 @@ export class AdminRepository {
       actorId: string | null;
       actorRole: string | null;
       note: string;
+      axis?: 'lifecycle' | 'payment' | 'settlement';
     }
   ): Promise<void> {
     await client.query(
       `INSERT INTO booking_status_history
          (booking_id, axis, from_state, to_state, event, actor_id, actor_role, note)
-       VALUES ($1::uuid, 'settlement', $2, $3, $4, $5::uuid, $6::user_role, $7)`,
+       VALUES ($1::uuid, $2::status_axis, $3, $4, $5, $6::uuid, $7::user_role, $8)`,
       [
         entry.bookingId,
+        entry.axis ?? 'settlement',
         entry.from,
         entry.to,
         entry.event,

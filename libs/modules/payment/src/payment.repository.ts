@@ -52,6 +52,8 @@ export interface PaymentRecord {
   readonly providerRef: string;
   readonly expiresAt: Date | null;
   readonly paidAt: Date | null;
+  /** Provider response captured at charge time, when the gateway returns one. */
+  readonly rawPayload?: unknown;
 }
 
 export type RefundStatus =
@@ -183,6 +185,26 @@ export interface PaymentRepository {
     provider: string,
     providerRef: string
   ): Promise<PaymentRecord | null>;
+  /** Stores the provider transaction id and the instruction payload after a charge. */
+  updatePaymentCharge(
+    tx: JournalQueryClient,
+    input: {
+      paymentId: string;
+      providerTxnId: string | null;
+      rawPayload: unknown;
+      expiresAt: Date | null;
+    }
+  ): Promise<PaymentRecord>;
+  /** Releases the active-DP slot when the provider rejects or expires the charge. */
+  markPaymentFailed(
+    tx: JournalQueryClient,
+    input: {
+      paymentId: string;
+      status: 'failed' | 'expired';
+      failureCode?: string | null;
+      rawPayload?: unknown;
+    }
+  ): Promise<void>;
   markPaymentPaid(
     tx: JournalQueryClient,
     input: { paymentId: string; paidAt: Date; providerTxnId: string | null; rawPayload: unknown }
@@ -269,7 +291,7 @@ FOR UPDATE OF b
 
 const SELECT_ACTIVE_DP_SQL = `
 SELECT id, booking_id, kind, method, amount_idr, fee_idr, status, provider, provider_ref,
-       expires_at, paid_at
+       expires_at, paid_at, raw_payload
 FROM payments
 WHERE booking_id = $1 AND kind = 'dp' AND status IN ('pending','paid')
 LIMIT 1
@@ -277,7 +299,7 @@ LIMIT 1
 
 const SELECT_LATEST_DP_BY_BOOKING_SQL = `
 SELECT p.id, p.booking_id, p.kind, p.method, p.amount_idr, p.fee_idr, p.status, p.provider,
-       p.provider_ref, p.expires_at, p.paid_at, b.customer_id
+       p.provider_ref, p.expires_at, p.paid_at, p.raw_payload, b.customer_id
 FROM payments p
 JOIN bookings b ON b.id = p.booking_id
 WHERE p.booking_id = $1 AND p.kind = 'dp'
@@ -295,7 +317,7 @@ RETURNING id, booking_id, kind, method, amount_idr, fee_idr, status, provider, p
 
 const SELECT_PAYMENT_BY_ID_SQL = `
 SELECT id, booking_id, kind, method, amount_idr, fee_idr, status, provider, provider_ref,
-       expires_at, paid_at
+       expires_at, paid_at, raw_payload
 FROM payments
 WHERE id = $1
 FOR UPDATE
@@ -303,7 +325,7 @@ FOR UPDATE
 
 const SELECT_PAYMENT_BY_PROVIDER_REF_SQL = `
 SELECT id, booking_id, kind, method, amount_idr, fee_idr, status, provider, provider_ref,
-       expires_at, paid_at
+       expires_at, paid_at, raw_payload
 FROM payments
 WHERE provider = $1 AND provider_ref = $2
 LIMIT 1
@@ -311,7 +333,7 @@ LIMIT 1
 
 const SELECT_SETTLEMENT_SQL = `
 SELECT id, booking_id, kind, method, amount_idr, fee_idr, status, provider, provider_ref,
-       expires_at, paid_at
+       expires_at, paid_at, raw_payload
 FROM payments
 WHERE booking_id = $1 AND kind = 'settlement'
   AND ($2::payment_status IS NULL OR status = $2::payment_status)
@@ -326,6 +348,24 @@ INSERT INTO payments
 VALUES ($1, 'settlement', $2, $3, 'IDR', 'pending', 'manual', NULL, $4, NULL)
 RETURNING id, booking_id, kind, method, amount_idr, fee_idr, status, provider, provider_ref,
           expires_at, paid_at
+`;
+
+const UPDATE_PAYMENT_CHARGE_SQL = `
+UPDATE payments
+SET provider_txn_id = $2, raw_payload = $3, expires_at = COALESCE($4, expires_at), updated_at = now()
+WHERE id = $1 AND status = 'pending'
+RETURNING id, booking_id, kind, method, amount_idr, fee_idr, status, provider, provider_ref,
+          expires_at, paid_at, raw_payload
+`;
+
+const MARK_PAYMENT_FAILED_SQL = `
+UPDATE payments
+SET status = $2::payment_status,
+    failure_code = $3,
+    raw_payload = COALESCE($4, raw_payload),
+    updated_at = now()
+WHERE id = $1 AND status = 'pending'
+RETURNING id
 `;
 
 const MARK_PAID_SQL = `
@@ -526,6 +566,43 @@ export class PgPaymentRepository implements PaymentRepository {
     return row ? mapPayment(row) : null;
   }
 
+  async updatePaymentCharge(
+    tx: JournalQueryClient,
+    input: {
+      paymentId: string;
+      providerTxnId: string | null;
+      rawPayload: unknown;
+      expiresAt: Date | null;
+    }
+  ): Promise<PaymentRecord> {
+    const { rows } = await tx.query(UPDATE_PAYMENT_CHARGE_SQL, [
+      input.paymentId,
+      input.providerTxnId,
+      input.rawPayload === undefined ? null : JSON.stringify(input.rawPayload),
+      input.expiresAt ? input.expiresAt.toISOString() : null
+    ]);
+    const row = rows[0];
+    if (!row) throw new AppError('CONFLICT', 'payment is no longer pending');
+    return mapPayment(row);
+  }
+
+  async markPaymentFailed(
+    tx: JournalQueryClient,
+    input: {
+      paymentId: string;
+      status: 'failed' | 'expired';
+      failureCode?: string | null;
+      rawPayload?: unknown;
+    }
+  ): Promise<void> {
+    await tx.query(MARK_PAYMENT_FAILED_SQL, [
+      input.paymentId,
+      input.status,
+      input.failureCode ?? null,
+      input.rawPayload === undefined ? null : JSON.stringify(input.rawPayload)
+    ]);
+  }
+
   async markPaymentPaid(
     tx: JournalQueryClient,
     input: { paymentId: string; paidAt: Date; providerTxnId: string | null; rawPayload: unknown }
@@ -702,7 +779,8 @@ function mapPayment(row: Record<string, unknown>): PaymentRecord {
     providerRef:
       row.provider_ref === null || row.provider_ref === undefined ? '' : String(row.provider_ref),
     expiresAt: toDateOrNull(row.expires_at),
-    paidAt: toDateOrNull(row.paid_at)
+    paidAt: toDateOrNull(row.paid_at),
+    rawPayload: row.raw_payload === undefined ? null : row.raw_payload
   };
 }
 

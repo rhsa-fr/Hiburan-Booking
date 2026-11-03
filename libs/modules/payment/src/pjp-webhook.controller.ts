@@ -55,4 +55,22 @@ export class PjpWebhookController {
     });
     return { data: result };
   }
+
+  /**
+   * Midtrans sends a JSON body whose `signature_key` is SHA512 over
+   * `order_id + status_code + gross_amount + ServerKey`; no custom headers.
+   * The raw bytes are kept for audit/dedupe even though the signature is body-based.
+   */
+  @Post('midtrans')
+  @HttpCode(200)
+  async handleMidtransNotification(@Req() req: RawBodyRequest): Promise<{ data: unknown }> {
+    const raw = readRawBody(req);
+    let event: unknown;
+    try {
+      event = JSON.parse(raw.toString('utf8'));
+    } catch {
+      throw new AppError('VALIDATION_ERROR', 'webhook body is not valid JSON');
+    }
+    return { data: await this.payments.handleGatewayNotification(raw, event) };
+  }
 }

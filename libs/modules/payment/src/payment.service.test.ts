@@ -302,6 +302,46 @@ class FakeRepository implements PaymentRepository {
     return null;
   }
 
+  async updatePaymentCharge(
+    _tx: JournalQueryClient,
+    input: {
+      paymentId: string;
+      providerTxnId: string | null;
+      rawPayload: unknown;
+      expiresAt: Date | null;
+    }
+  ): Promise<PaymentRecord> {
+    const payment = this.payments.get(input.paymentId);
+    if (!payment || payment.status !== 'pending') {
+      throw new AppError('CONFLICT', 'payment is no longer pending');
+    }
+    const updated: PaymentRecord = {
+      ...payment,
+      expiresAt: input.expiresAt ?? payment.expiresAt,
+      rawPayload: input.rawPayload
+    };
+    this.payments.set(updated.id, updated);
+    return updated;
+  }
+
+  async markPaymentFailed(
+    _tx: JournalQueryClient,
+    input: {
+      paymentId: string;
+      status: 'failed' | 'expired';
+      failureCode?: string | null;
+      rawPayload?: unknown;
+    }
+  ): Promise<void> {
+    const payment = this.payments.get(input.paymentId);
+    if (!payment || payment.status !== 'pending') return;
+    this.payments.set(payment.id, {
+      ...payment,
+      status: input.status,
+      rawPayload: input.rawPayload ?? payment.rawPayload
+    });
+  }
+
   async markPaymentPaid(
     _tx: JournalQueryClient,
     input: { paymentId: string; paidAt: Date; providerTxnId: string | null; rawPayload: unknown }
@@ -1136,6 +1176,54 @@ describe('refund', () => {
     await expect(service.refund(charge.id, 100_000n, 'no_actor')).rejects.toMatchObject({
       code: 'UNAUTHENTICATED'
     });
+  });
+
+  it('marks the refund failed and posts no recognition journal when the gateway declines', async () => {
+    const repository = new FakeRepository();
+    repository.seedBooking();
+    const bookingPort = new FakeBookingPort();
+    const idempotencyStore = new MemoryIdempotencyStore();
+    const gateway = {
+      name: 'midtrans',
+      createCharge: async () => ({
+        providerTxnId: 'tx-1',
+        expiresAt: AT,
+        instruction: { type: 'qris' as const, qr_string: 'qr', expires_at: AT.toISOString() },
+        rawPayload: { transaction_id: 'tx-1' }
+      }),
+      refund: async () => {
+        throw new AppError('UPSTREAM_ERROR', 'merchant insufficient funds');
+      }
+    };
+    const service = new PaymentService({
+      repository,
+      booking: bookingPort,
+      idempotencyStore,
+      webhookSecret: SECRET,
+      provider: 'midtrans',
+      gateway,
+      now: () => AT
+    });
+
+    const charge = await service.createDpCharge('booking-1', 'qris', { actorId: CUSTOMER });
+    await paidWebhook(service, repository, {
+      id: 'evt-gateway-refund',
+      type: 'payment.paid',
+      data: {
+        provider_ref: charge.provider_ref,
+        amount_idr: 1_200_000,
+        paid_at: AT.toISOString()
+      }
+    });
+    const linesBefore = repository.lines.length;
+
+    await expect(
+      service.refund(charge.id, 100_000n, 'declined', { actorId: 'admin-finance' })
+    ).rejects.toMatchObject({ code: 'UPSTREAM_ERROR' });
+
+    const refund = [...repository.refunds.values()][0];
+    expect(refund?.status).toBe('failed');
+    expect(repository.lines.length).toBe(linesBefore);
   });
 });
 

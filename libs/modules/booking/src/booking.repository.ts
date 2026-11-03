@@ -248,6 +248,8 @@ export interface BookingStatusPatch {
   confirmed_at?: Date | null;
   started_at?: Date | null;
   checkin_at?: Date | null;
+  /** WKT with SRID, e.g. `SRID=4326;POINT(108.3 -6.3)`. */
+  checkin_location?: string | null;
   completed_at?: Date | null;
   /** 'customer' | 'vendor' | 'admin' | 'system' (CHECK constraint of the DDL). */
   completed_by?: string | null;
@@ -602,6 +604,22 @@ export class BookingRepository {
     return rows.rows[0]?.count ?? 0;
   }
 
+  /** No-show opens the dispute row that freezes release until an admin decides. */
+  async insertNoShowDispute(
+    client: PoolClient,
+    input: { bookingId: string; raisedBy: string; description: string; slaDueAt: Date }
+  ): Promise<void> {
+    await client.query(
+      `INSERT INTO disputes
+         (booking_id, raised_by, reason_code, description, status, sla_due_at)
+       VALUES ($1, $2, 'no_show', $3, 'open', $4)
+       ON CONFLICT (booking_id)
+         WHERE status IN ('open', 'investigating', 'awaiting_evidence')
+       DO NOTHING`,
+      [input.bookingId, input.raisedBy, input.description, input.slaDueAt.toISOString()]
+    );
+  }
+
   /** Optimistic-concurrency friendly status write; only listed columns change. */
   async updateStatus(
     client: PoolClient,
@@ -613,7 +631,11 @@ export class BookingRepository {
 
     const set = (column: string, value: unknown): void => {
       values.push(value);
-      assignments.push(`${column} = $${values.length}`);
+      assignments.push(
+        column === 'checkin_location'
+          ? `checkin_location = ST_GeogFromText($${values.length})`
+          : `${column} = $${values.length}`
+      );
     };
 
     const columns: ReadonlyArray<[keyof BookingStatusPatch, string]> = [
@@ -627,6 +649,7 @@ export class BookingRepository {
       ['confirmed_at', 'confirmed_at'],
       ['started_at', 'started_at'],
       ['checkin_at', 'checkin_at'],
+      ['checkin_location', 'checkin_location'],
       ['completed_at', 'completed_at'],
       ['completed_by', 'completed_by'],
       ['cancelled_at', 'cancelled_at'],

@@ -50,6 +50,7 @@ import { idrToJson } from './money';
 const READ_ROLES = ['admin_support', 'admin_finance', 'admin_super'] as const;
 const RELEASE_ROLES = ['admin_finance', 'admin_super'] as const;
 const SETTLE_ROLES = ['admin_finance', 'admin_super'] as const;
+const RESOLVE_ROLES = ['admin_finance', 'admin_super'] as const;
 
 const BOOKING_QUERY = z
   .object({
@@ -229,6 +230,25 @@ export class AdminController {
   @Get('disputes')
   async disputes(): Promise<DisputeOverview> {
     return this.admin.disputes();
+  }
+
+  @Post('disputes/:id/resolve')
+  @HttpCode(200)
+  @Roles(...RESOLVE_ROLES)
+  async resolveDispute(
+    @Param('id') disputeId: string,
+    @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @Headers('x-request-id') requestId: string | undefined,
+    @Req() request: AuthenticatedRequest
+  ) {
+    const actor = settleActor(request);
+    return this.admin.resolveDispute(disputeId, body, {
+      actorId: actor.id,
+      actorRole: actor.role,
+      requestId: requestId ?? null,
+      idempotencyKey
+    });
   }
 
   @Get('audit')

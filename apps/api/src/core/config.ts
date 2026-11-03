@@ -51,10 +51,18 @@ const EnvSchema = z.object({
   OTP_IP_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
   /** Trust `X-Forwarded-For`; enable behind Railway/reverse proxies. */
   TRUST_PROXY: boolFromEnv.default(false),
-  PJP_PROVIDER: z.string().default('sandbox'),
+  /** `local` = deterministic no-network gateway; `midtrans` = Core API (sandbox by default). */
+  PJP_PROVIDER: z.string().default('local'),
   PJP_MERCHANT_ID: z.string().optional(),
   PJP_API_KEY: z.string().optional(),
   PJP_WEBHOOK_SECRET: z.string().optional(),
+  MIDTRANS_SERVER_KEY: z.string().optional(),
+  MIDTRANS_CLIENT_KEY: z.string().optional(),
+  MIDTRANS_IS_PRODUCTION: boolFromEnv.default(false),
+  MIDTRANS_BASE_URL: z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    z.string().url().optional()
+  ),
   /** Local upload directory; relative paths resolve from the repo root. */
   UPLOAD_DIR: z.string().default('storage/uploads'),
   /** Optional public origin for media URLs (no trailing /v1). */

@@ -5,6 +5,8 @@ import { BookingModule, BookingService } from '@tarlink/modules/booking';
 import { AuthGuard, JWT_SECRET, RolesGuard } from '@tarlink/platform/auth';
 import { PgIdempotencyStore } from '@tarlink/platform/idempotency';
 import { asBookingPaymentPort } from './booking.port';
+import { LocalPaymentGateway } from './local.gateway';
+import { MidtransGateway } from './midtrans.gateway';
 import { PaymentController } from './payment.controller';
 import { PjpWebhookController } from './pjp-webhook.controller';
 import { PgPaymentRepository } from './payment.repository';
@@ -32,12 +34,24 @@ import { PaymentService } from './payment.service';
       inject: [BookingService],
       useFactory: (booking: BookingService): PaymentService => {
         const cfg = loadConfig();
+        const useMidtrans = cfg.PJP_PROVIDER === 'midtrans';
+        const gateway = useMidtrans
+          ? new MidtransGateway({
+              serverKey: cfg.MIDTRANS_SERVER_KEY ?? '',
+              isProduction: cfg.MIDTRANS_IS_PRODUCTION,
+              baseUrl: cfg.MIDTRANS_BASE_URL
+            })
+          : new LocalPaymentGateway();
         return new PaymentService({
           repository: new PgPaymentRepository(),
           booking: asBookingPaymentPort(booking),
           idempotencyStore: new PgIdempotencyStore(getPool()),
           webhookSecret: cfg.PJP_WEBHOOK_SECRET,
-          provider: cfg.PJP_PROVIDER
+          gateway,
+          provider: gateway.name,
+          // Midtrans uses our payment id as the provider order_id so the
+          // notification and refund routes can look the payment up directly.
+          newProviderRef: useMidtrans ? (paymentId) => paymentId : undefined
         });
       }
     }

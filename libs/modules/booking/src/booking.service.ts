@@ -20,15 +20,18 @@ import {
   type BookingDetailRow,
   type BookingRow,
   type BookingSlotRow,
+  type BookingStatusPatch,
   type CustomerBookingListRow,
   type NewBookingAddon
 } from './booking.repository';
 import {
   type AcceptBookingDto,
   type CancelBookingDto,
+  type CheckinBookingDto,
   type CreateBookingDto,
   type DeclineBookingDto,
-  type ListBookingsQueryDto
+  type ListBookingsQueryDto,
+  type NoShowBookingDto
 } from './dto';
 import { currentRequestId } from './request-context';
 import { deriveScheduleWindow } from './schedule';
@@ -722,6 +725,116 @@ export class BookingService {
         eventType: 'booking.cancelled',
         payload: { ...this.outboxPayload(next), reason: historyNote },
         dedupeKey: `booking.cancelled:${id}`
+      });
+
+      return next;
+    });
+
+    const slots = await this.repo.findSlotsByBooking(id);
+    return this.toView(updated, slots);
+  }
+
+  /**
+   * L-15: vendor confirms arrival at the venue. GPS is optional because a
+   * denied permission must not block a vendor standing at the stage.
+   */
+  async checkin(
+    id: string,
+    input: CheckinBookingDto,
+    user: AuthUser,
+    now: Date = new Date()
+  ): Promise<BookingView> {
+    if ((input.lat === undefined) !== (input.lng === undefined)) {
+      throw new AppError('VALIDATION_ERROR', 'lat dan lng harus dikirim bersama');
+    }
+
+    const updated = await withTransaction(async (client) => {
+      const row = await this.repo.findByIdForUpdate(client, id);
+      if (!row) throw new AppError('NOT_FOUND', `Booking ${id} tidak ditemukan`);
+
+      const role = requireRole(user, ['vendor_owner', 'vendor_member']);
+      await this.assertResponder(row.vendor_id, user);
+
+      const result = applyTransition(bookingStateFromRow(row), 'booking.checkin', {
+        actor: role,
+        now,
+        reason: input.note ?? null
+      });
+
+      const patch: BookingStatusPatch = {
+        lifecycle_status: result.next.lifecycle_status,
+        started_at: result.derived.started_at ?? now,
+        checkin_at: result.derived.checkin_at ?? now
+      };
+      if (input.lat !== undefined && input.lng !== undefined) {
+        patch.checkin_location = `SRID=4326;POINT(${input.lng} ${input.lat})`;
+      }
+
+      const next = await this.repo.updateStatus(client, id, patch);
+      await this.writeHistory(client, id, result, 'booking.checkin', role, user.id, input.note);
+      await this.repo.enqueueOutbox(client, {
+        aggregateId: id,
+        aggregateVersion: next.row_version,
+        eventType: 'booking.checked_in',
+        payload: {
+          ...this.outboxPayload(next),
+          checkin_at: (result.derived.checkin_at ?? now).toISOString(),
+          has_location: input.lat !== undefined
+        },
+        dedupeKey: `booking.checked_in:${id}`
+      });
+
+      return next;
+    });
+
+    const slots = await this.repo.findSlotsByBooking(id);
+    return this.toView(updated, slots);
+  }
+
+  /**
+   * L-20: customer/admin marks the vendor absent. This also opens a dispute
+   * row, which freezes release until an admin decides.
+   */
+  async noShow(
+    id: string,
+    input: NoShowBookingDto,
+    user: AuthUser,
+    now: Date = new Date()
+  ): Promise<BookingView> {
+    const role = requireRole(user, ['customer', 'admin_support']);
+
+    const updated = await withTransaction(async (client) => {
+      const row = await this.repo.findByIdForUpdate(client, id);
+      if (!row) throw new AppError('NOT_FOUND', `Booking ${id} tidak ditemukan`);
+      if (role === 'customer') this.assertCustomer(row, user);
+
+      const openDisputes = await this.repo.countOpenDisputes(client, id);
+      const result = applyTransition(bookingStateFromRow(row), 'booking.no_show', {
+        actor: role,
+        now,
+        openDisputes,
+        reason: input.reason
+      });
+
+      const next = await this.repo.updateStatus(client, id, {
+        lifecycle_status: result.next.lifecycle_status,
+        settlement_status: result.next.settlement_status,
+        no_show_at: result.derived.no_show_at ?? now
+      });
+
+      await this.repo.insertNoShowDispute(client, {
+        bookingId: id,
+        raisedBy: user.id,
+        description: input.reason,
+        slaDueAt: new Date(now.getTime() + 2 * HOUR_MS)
+      });
+      await this.writeHistory(client, id, result, 'booking.no_show', role, user.id, input.reason);
+      await this.repo.enqueueOutbox(client, {
+        aggregateId: id,
+        aggregateVersion: next.row_version,
+        eventType: 'booking.no_show',
+        payload: { ...this.outboxPayload(next), reason: input.reason },
+        dedupeKey: `booking.no_show:${id}`
       });
 
       return next;

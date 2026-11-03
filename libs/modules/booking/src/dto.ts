@@ -75,6 +75,17 @@ export const cancelBookingSchema = z.object({
   reason_code: z.string().max(40).optional()
 });
 
+/** GPS is optional: a vendor with a denied permission may still check in. */
+export const checkinBookingSchema = z.object({
+  lat: z.number().min(-90).max(90).optional(),
+  lng: z.number().min(-180).max(180).optional(),
+  note: z.string().max(500).optional()
+});
+
+export const noShowBookingSchema = z.object({
+  reason: z.string().min(1).max(500)
+});
+
 /** The listable lifecycle values (S-05 `no_show` is not listable here). */
 export const BOOKING_LIST_STATUSES = [
   'requested',
@@ -128,6 +139,8 @@ export type CreateBookingDto = z.infer<typeof createBookingSchema>;
 export type AcceptBookingDto = z.infer<typeof acceptBookingSchema>;
 export type DeclineBookingDto = z.infer<typeof declineBookingSchema>;
 export type CancelBookingDto = z.infer<typeof cancelBookingSchema>;
+export type CheckinBookingDto = z.infer<typeof checkinBookingSchema>;
+export type NoShowBookingDto = z.infer<typeof noShowBookingSchema>;
 export type ListBookingsQueryDto = z.infer<typeof listBookingsQuerySchema>;
 export type AvailabilityQueryDto = z.infer<typeof availabilityQuerySchema>;
 

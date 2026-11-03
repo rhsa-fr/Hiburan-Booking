@@ -803,8 +803,9 @@ class _BookingStatusPageState extends State<BookingStatusPage>
         const SizedBox(height: Sp.lg),
         const Divider(height: 1),
         const SizedBox(height: Sp.lg),
-        if (instruction.type == 'qris' && instruction.qrString != null)
-          _qrisBlock(instruction.qrString!, text)
+        if (instruction.type == 'qris' &&
+            (instruction.qrString != null || instruction.qrUrl != null))
+          _qrisBlock(instruction, text)
         else if (instruction.type == 'va' && instruction.vaNumber != null)
           _vaBlock(instruction, text)
         else
@@ -823,7 +824,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
     return DateTime.tryParse(iso)?.toLocal();
   }
 
-  Widget _qrisBlock(String qrString, TextTheme text) {
+  Widget _qrisBlock(PaymentInstruction instruction, TextTheme text) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -835,21 +836,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
               borderRadius: BorderRadius.circular(Radii.sm),
               border: Border.all(color: AppColors.line),
             ),
-            child: QrImageView(
-              data: qrString,
-              version: QrVersions.auto,
-              size: 200,
-              backgroundColor: AppColors.card,
-              eyeStyle: const QrEyeStyle(
-                eyeShape: QrEyeShape.square,
-                color: AppColors.ink,
-              ),
-              dataModuleStyle: const QrDataModuleStyle(
-                dataModuleShape: QrDataModuleShape.square,
-                color: AppColors.ink,
-              ),
-              semanticsLabel: 'Kode QRIS pembayaran DP',
-            ),
+            child: _qrImage(instruction, 200),
           ),
         ),
         const SizedBox(height: Sp.sm),
@@ -860,7 +847,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
         ),
         const SizedBox(height: Sp.md),
         OutlinedButton.icon(
-          onPressed: () => _showQrSheet(qrString, text),
+          onPressed: () => _showQrSheet(instruction, text),
           icon: const Icon(Icons.download_outlined, size: 20),
           label: const Text('Simpan kode QR'),
           style: OutlinedButton.styleFrom(
@@ -870,6 +857,51 @@ class _BookingStatusPageState extends State<BookingStatusPage>
           ),
         ),
       ],
+    );
+  }
+
+  Widget _qrImage(PaymentInstruction instruction, double size) {
+    final url = instruction.qrUrl;
+    if (url != null) {
+      return Image.network(
+        url,
+        width: size,
+        height: size,
+        fit: BoxFit.contain,
+        semanticLabel: 'Kode QRIS pembayaran DP',
+        loadingBuilder: (context, child, progress) => progress == null
+            ? child
+            : SizedBox(
+                width: size,
+                height: size,
+                child: const Center(child: CircularProgressIndicator()),
+              ),
+        errorBuilder: (context, error, stackTrace) => SizedBox(
+          width: size,
+          height: size,
+          child: const Center(
+            child: Text(
+              'Kode QR tidak bisa dimuat. Muat ulang halaman ini.',
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ),
+      );
+    }
+    return QrImageView(
+      data: instruction.qrString!,
+      version: QrVersions.auto,
+      size: size,
+      backgroundColor: AppColors.card,
+      eyeStyle: const QrEyeStyle(
+        eyeShape: QrEyeShape.square,
+        color: AppColors.ink,
+      ),
+      dataModuleStyle: const QrDataModuleStyle(
+        dataModuleShape: QrDataModuleShape.square,
+        color: AppColors.ink,
+      ),
+      semanticsLabel: 'Kode QRIS pembayaran DP',
     );
   }
 
@@ -892,6 +924,13 @@ class _BookingStatusPageState extends State<BookingStatusPage>
             fontFeatures: _tabularFigures,
           ),
         ),
+        if (instruction.billerCode != null) ...[
+          const SizedBox(height: Sp.xs),
+          Text(
+            'Kode biller ${instruction.billerCode}',
+            style: text.bodySmall,
+          ),
+        ],
         const SizedBox(height: Sp.md),
         OutlinedButton.icon(
           onPressed: () => _copyText(number, 'Nomor VA disalin.'),
@@ -907,7 +946,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
     );
   }
 
-  Future<void> _showQrSheet(String qrString, TextTheme text) async {
+  Future<void> _showQrSheet(PaymentInstruction instruction, TextTheme text) async {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -932,21 +971,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
                     borderRadius: BorderRadius.circular(Radii.sm),
                     border: Border.all(color: AppColors.line),
                   ),
-                  child: QrImageView(
-                    data: qrString,
-                    version: QrVersions.auto,
-                    size: 240,
-                    backgroundColor: AppColors.card,
-                    eyeStyle: const QrEyeStyle(
-                      eyeShape: QrEyeShape.square,
-                      color: AppColors.ink,
-                    ),
-                    dataModuleStyle: const QrDataModuleStyle(
-                      dataModuleShape: QrDataModuleShape.square,
-                      color: AppColors.ink,
-                    ),
-                    semanticsLabel: 'Kode QRIS pembayaran DP',
-                  ),
+                  child: _qrImage(instruction, 240),
                 ),
               ),
               const SizedBox(height: Sp.lg),

@@ -9,6 +9,17 @@ export {
 export { PaymentController } from './payment.controller';
 export { PjpWebhookController } from './pjp-webhook.controller';
 export { PaymentModule } from './payment.module';
+export { LocalPaymentGateway } from './local.gateway';
+export { MidtransGateway, type MidtransGatewayConfig } from './midtrans.gateway';
+export type {
+  GatewayChargeInput,
+  GatewayChargeResult,
+  GatewayInstruction,
+  GatewayNotification,
+  GatewayRefundInput,
+  GatewayRefundResult,
+  PaymentGateway
+} from './payment.gateway';
 export {
   PAYMENT_METHODS,
   PgPaymentRepository,

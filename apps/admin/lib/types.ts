@@ -315,6 +315,24 @@ export interface DisputeOverview {
   total_idr: number;
 }
 
+export interface ResolveDisputeInput {
+  resolution: 'release_to_vendor' | 'refund_full' | 'refund_partial' | 'reject';
+  note: string;
+  amount_idr?: number;
+}
+
+export interface ResolveDisputeResult {
+  dispute_id: string;
+  booking_id: string;
+  status: 'resolved' | 'rejected';
+  resolution: ResolveDisputeInput['resolution'] | 'no_action';
+  resolution_amount_idr: number;
+  customer_share_idr: number;
+  vendor_share_idr: number;
+  journal_entry_id?: string;
+  refund_id?: string;
+}
+
 export interface AuditEvent {
   id: string;
   booking_id: string;

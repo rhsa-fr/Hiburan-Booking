@@ -229,9 +229,19 @@ pilih vendor → pilih paket → pilih tanggal/sesi → isi detail acara
    → acara selesai → auto-complete → auto-release → dana ke vendor
 ```
 
-Pembayaran diverifikasi lewat webhook `POST /webhooks/pjp` dengan HMAC-SHA256
-`sha256(timestamp + "." + rawBody)`, header `x-pjp-signature` dan `x-pjp-timestamp`,
-toleransi 300 detik. Event yang diproses: `payment.paid`.
+Provider pembayaran dipilih lewat `PJP_PROVIDER`:
+
+- `midtrans` — Midtrans Core API (sandbox default). Charge QRIS/VA/Mandiri dikirim
+  ke `POST https://api.sandbox.midtrans.com/v2/charge`; notifikasi masuk ke
+  `POST /webhooks/midtrans` dan diverifikasi dengan
+  `SHA512(order_id + status_code + gross_amount + MIDTRANS_SERVER_KEY)`.
+  `order_id` Midtrans = `payments.id`.
+- `local` — gateway deterministik tanpa jaringan untuk test/dev tanpa kredensial.
+
+Webhook legacy `POST /webhooks/pjp` (HMAC-SHA256
+`sha256(timestamp + "." + rawBody)`) tetap ada untuk gateway lokal. Refund QRIS
+dipanggil ke Midtrans dan langsung difinalkan; refund VA/Mandiri ditolak karena
+Midtrans tidak mendukung reverse bank transfer.
 
 ## 11. Keputusan arsitektur yang mengikat
 
@@ -252,5 +262,7 @@ snapshot, rate limit per IP, index trigram pencarian, guard `dev_code`, refresh 
 panjang, pemangkasan sesi, dan penolakan e-wallet yang eksplisit.
 
 Yang masih terbuka (lihat [AGENTS.md § Batasan](../AGENTS.md#batasan-yang-diketahui)):
-gateway PJP nyata, provider WhatsApp/SMS, review/rating, picker peta lokasi acara,
-`checkin_location`, dan token admin HttpOnly.
+disbursement/payout ke rekening vendor, provider WhatsApp/SMS, review/rating,
+picker peta lokasi acara, UI check-in berbasis GPS, dan token admin HttpOnly.
+Integrasi charge + notifikasi + refund QRIS sekarang memakai Midtrans sandbox;
+endpoint check-in/no-show basic sudah ada.

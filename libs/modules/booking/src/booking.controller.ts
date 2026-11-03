@@ -19,9 +19,11 @@ import { CurrentUser, type AuthUser } from './current-user.decorator';
 import {
   acceptBookingSchema,
   cancelBookingSchema,
+  checkinBookingSchema,
   createBookingSchema,
   declineBookingSchema,
   listBookingsQuerySchema,
+  noShowBookingSchema,
   parseInput
 } from './dto';
 import { RequestIdInterceptor } from './request-context';
@@ -117,5 +119,29 @@ export class BookingController {
   ) {
     const dto = parseInput(cancelBookingSchema, body);
     return { data: await this.bookings.cancel(id, dto, user) };
+  }
+
+  @Post('bookings/:id/checkin')
+  @HttpCode(200)
+  @Roles('vendor_owner', 'vendor_member')
+  async checkin(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @CurrentUser() user: AuthUser
+  ) {
+    const dto = parseInput(checkinBookingSchema, body);
+    return { data: await this.bookings.checkin(id, dto, user) };
+  }
+
+  @Post('bookings/:id/no-show')
+  @HttpCode(200)
+  @Roles('customer', 'admin_support')
+  async noShow(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @CurrentUser() user: AuthUser
+  ) {
+    const dto = parseInput(noShowBookingSchema, body);
+    return { data: await this.bookings.noShow(id, dto, user) };
   }
 }

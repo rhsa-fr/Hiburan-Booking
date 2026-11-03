@@ -93,6 +93,28 @@ class _VendorBookingDetailPageState extends State<VendorBookingDetailPage> {
     }
   }
 
+  Future<void> _checkIn() async {
+    if (_actionBusy) return;
+    final api = AppScope.of(context).api;
+    setState(() => _actionBusy = true);
+
+    try {
+      await api.post('/bookings/${widget.bookingId}/checkin', body: {});
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Check-in tercatat. Acara ditandai berlangsung.')),
+      );
+      await _load();
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Gagal check-in: ${apiMessage(error)}')),
+      );
+    } finally {
+      if (mounted) setState(() => _actionBusy = false);
+    }
+  }
+
   Future<void> _declineBooking() async {
     if (_actionBusy) return;
     final code = _booking?['code']?.toString() ?? widget.bookingId;
@@ -172,6 +194,7 @@ class _VendorBookingDetailPageState extends State<VendorBookingDetailPage> {
     final code = booking?['code']?.toString() ?? widget.bookingId;
     final lifecycle = booking?['lifecycle_status']?.toString() ?? '';
     final isRequested = lifecycle == 'requested';
+    final isConfirmed = lifecycle == 'confirmed';
 
     return Scaffold(
       backgroundColor: VendorColors.canvas,
@@ -186,7 +209,7 @@ class _VendorBookingDetailPageState extends State<VendorBookingDetailPage> {
                 tone: vendorToneForStatus(lifecycle),
               ),
       ),
-      bottomNavigationBar: booking != null && isRequested
+      bottomNavigationBar: booking != null && (isRequested || isConfirmed)
           ? _actionBar(booking)
           : null,
       body: ColoredBox(
@@ -591,12 +614,16 @@ class _VendorBookingDetailPageState extends State<VendorBookingDetailPage> {
   }
 
   Widget _actionBar(Map<String, dynamic> booking) {
+    final lifecycle = booking['lifecycle_status']?.toString() ?? '';
+    final isConfirmed = lifecycle == 'confirmed';
     final deadline = DateTime.tryParse(
       booking['respond_deadline']?.toString() ?? '',
     );
     final remaining = deadline?.difference(DateTime.now());
     String? hint;
-    if (remaining != null) {
+    if (isConfirmed) {
+      hint = 'Tekan saat sudah tiba di lokasi acara.';
+    } else if (remaining != null) {
       if (remaining.isNegative) {
         hint = 'Batas respons sudah lewat';
       } else if (remaining.inDays > 0) {
@@ -649,26 +676,32 @@ class _VendorBookingDetailPageState extends State<VendorBookingDetailPage> {
             ),
             const SizedBox(height: 9),
           ],
-          Row(
-            children: [
-              Expanded(
-                child: VendorButton(
-                  label: 'Tolak Booking',
-                  kind: VendorButtonKind.outlineOnDark,
-                  maxLines: 2,
-                  onPressed: _actionBusy ? null : _declineBooking,
+          if (isConfirmed)
+            VendorButton(
+              label: 'Saya sudah sampai',
+              onPressed: _actionBusy ? null : _checkIn,
+            )
+          else
+            Row(
+              children: [
+                Expanded(
+                  child: VendorButton(
+                    label: 'Tolak Booking',
+                    kind: VendorButtonKind.outlineOnDark,
+                    maxLines: 2,
+                    onPressed: _actionBusy ? null : _declineBooking,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                flex: 2,
-                child: VendorButton(
-                  label: 'Terima Booking',
-                  onPressed: _actionBusy ? null : _acceptBooking,
+                const SizedBox(width: 8),
+                Expanded(
+                  flex: 2,
+                  child: VendorButton(
+                    label: 'Terima Booking',
+                    onPressed: _actionBusy ? null : _acceptBooking,
+                  ),
                 ),
-              ),
-            ],
-          ),
+              ],
+            ),
         ],
       ),
     );

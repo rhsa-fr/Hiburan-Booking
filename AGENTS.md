@@ -163,8 +163,9 @@ Masih terbuka:
 - Tidak ada emulator Android/HP fisik; bukti APK hanya build sukses.
 - Detail vendor sempat kosong pada screenshot E2E otomatis — assertion ukuran body
   sudah ditambahkan; cek manual screenshot sebelum menyatakan selesai.
-- Gateway PJP nyata, provider WhatsApp/SMS, review/rating, picker peta, dan
-  `checkin_location` belum ada.
+- Disbursement/payout ke rekening vendor, provider WhatsApp/SMS, review/rating, picker peta,
+  dan UI check-in berbasis GPS belum ada. Charge/notifikasi/refund QRIS sudah memakai
+  Midtrans sandbox; endpoint check-in/no-show basic sudah ada.
 
 ## 8. Git
 
