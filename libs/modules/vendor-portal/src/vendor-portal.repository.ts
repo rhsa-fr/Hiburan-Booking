@@ -7,6 +7,16 @@ function isUuid(value: string): boolean {
   return UUID_REGEX.test(value);
 }
 
+export interface VendorPayoutSummaryRow {
+  available_idr: string;
+  pending_payout_idr: string;
+  bank_code: string | null;
+  bank_name: string | null;
+  account_number_masked: string | null;
+  account_holder_name: string | null;
+  bank_status: string | null;
+}
+
 export interface VendorPortalVendorRow {
   id: string;
   display_name: string;
@@ -316,6 +326,60 @@ export class VendorPortalRepository {
       [vendorId]
     );
     return rows[0]?.held_idr ?? '0';
+  }
+
+  /**
+   * Payout numbers for the Saldo tab. `available_idr` is the ledger balance of
+   * `vendor_payable` (2120) — money already released but not yet disbursed —
+   * not a stored running balance (D-06).
+   */
+  async getPayoutSummary(vendorId: string): Promise<VendorPayoutSummaryRow> {
+    if (!isUuid(vendorId)) {
+      return {
+        available_idr: '0',
+        pending_payout_idr: '0',
+        bank_code: null,
+        bank_name: null,
+        account_number_masked: null,
+        account_holder_name: null,
+        bank_status: null
+      };
+    }
+
+    const rows = await query<VendorPayoutSummaryRow>(
+      `SELECT
+         (SELECT COALESCE(SUM(credit_idr - debit_idr), 0)::text
+            FROM journal_lines
+           WHERE account_code = '2120' AND vendor_id = $1::uuid) AS available_idr,
+         (SELECT COALESCE(SUM(amount_idr), 0)::text
+            FROM payouts
+           WHERE vendor_id = $1::uuid
+             AND status IN ('requested', 'approved', 'processing')) AS pending_payout_idr,
+         ba.bank_code, ba.bank_name, ba.account_number_masked,
+         ba.account_holder_name, ba.status::text AS bank_status
+       FROM (SELECT 1) AS one
+       LEFT JOIN LATERAL (
+         SELECT bank_code, bank_name, account_number_masked, account_holder_name, status
+           FROM vendor_bank_accounts
+          WHERE vendor_id = $1::uuid
+            AND status = 'verified'
+            AND superseded_at IS NULL
+          LIMIT 1
+       ) ba ON true`,
+      [vendorId]
+    );
+
+    return (
+      rows[0] ?? {
+        available_idr: '0',
+        pending_payout_idr: '0',
+        bank_code: null,
+        bank_name: null,
+        account_number_masked: null,
+        account_holder_name: null,
+        bank_status: null
+      }
+    );
   }
 
   async listSettledBookings(

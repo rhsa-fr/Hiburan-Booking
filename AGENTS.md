@@ -141,7 +141,7 @@ output. "Tidak dijalankan" adalah jawaban yang sah; klaim palsu tidak.
 4. `flutter analyze` + `flutter test`, lalu screenshot 390×844.
 
 **Migrasi DB**
-1. Nomor urut berikutnya di `db/migrations` (terakhir `012`, berikutnya `013`).
+1. Nomor urut berikutnya di `db/migrations` (terakhir `013`, berikutnya `014`).
 2. Idempoten bila memungkinkan; sediakan jalur koreksi ke depan, bukan `DROP` data.
 3. Jalankan `npm run migrate:dry` sebelum `npm run migrate`.
 
@@ -157,15 +157,21 @@ Sudah diperbaiki (jangan dikembalikan tanpa keputusan tertulis):
 - `dev_code` OTP butuh `OTP_DEV_MODE=true` dan `NODE_ENV != production`.
 - Refresh token panjang (30 hari) + rotasi + deteksi reuse; job `cleanup-auth`.
 - E-wallet ditolak eksplisit (400), bukan menghasilkan VA palsu.
+- Payout vendor: `payouts`/`payout_items`, rekening terenkripsi AES-256-GCM, maker-checker
+  dua endpoint, jurnal `payout_requested`/`payout_settled` + reversal saat provider gagal,
+  dan worker `payout_reconcile`.
 
 Masih terbuka:
 
 - Tidak ada emulator Android/HP fisik; bukti APK hanya build sukses.
 - Detail vendor sempat kosong pada screenshot E2E otomatis — assertion ukuran body
   sudah ditambahkan; cek manual screenshot sebelum menyatakan selesai.
-- Disbursement/payout ke rekening vendor, provider WhatsApp/SMS, review/rating, picker peta,
-  dan UI check-in berbasis GPS belum ada. Charge/notifikasi/refund QRIS sudah memakai
-  Midtrans sandbox; endpoint check-in/no-show basic sudah ada.
+- Provider WhatsApp/SMS, review/rating, picker peta, dan UI check-in berbasis GPS belum ada.
+  Charge/notifikasi/refund QRIS sudah memakai Midtrans sandbox; endpoint check-in/no-show
+  basic sudah ada.
+- Integrasi Iris (`PAYOUT_PROVIDER=iris`) belum diuji live: butuh `IRIS_API_KEY` dan saldo
+  merchant Iris sandbox. Jalur `PAYOUT_PROVIDER=local` sudah dipakai test dan worker.
+  Tanpa `BANK_ACCOUNT_ENCRYPTION_KEY`, vendor tidak bisa menyimpan rekening.
 
 ## 8. Git
 

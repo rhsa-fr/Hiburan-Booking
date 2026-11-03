@@ -16,8 +16,9 @@ Repositori ini berisi **API**, **panel admin**, **worker**, **library domain**, 
 | `apps/worker` — poller PostgreSQL | Berjalan | log `tick=done` tiap interval |
 | `apps/mobile` — Flutter pelanggan | 27 widget test lulus, `flutter analyze` bersih | `cd apps/mobile && flutter test` |
 | `apps/mobile` — portal vendor | 6 layar, kelola profil/paket/kalender + upload media | login akun `vendor_owner` |
-| Ledger double-entry | 737 test backend lulus (3 skip) | `npm test` |
-| Skema DB | migrasi `001`–`012` | `npm run migrate` |
+| Payout vendor + rekening | `payouts`/`payout_items`, rekening terenkripsi, maker-checker, worker rekonsiliasi | `PAYOUT_PROVIDER=local` (default) |
+| Ledger double-entry | 788 test backend lulus (3 skip) | `npm test` |
+| Skema DB | migrasi `001`–`013` | `npm run migrate` |
 
 ## Stack
 
@@ -34,10 +35,10 @@ Repositori ini berisi **API**, **panel admin**, **worker**, **library domain**, 
 | `apps/api` | Entrypoint HTTP NestJS, prefix `/v1` |
 | `apps/admin` | Panel admin Next.js App Router (`(auth)`, `(panel)`) |
 | `apps/mobile` | Aplikasi pelanggan Flutter + portal vendor (`lib/features/*`) |
-| `apps/worker` | Job: `expire-unpaid`, `expire-holds`, `auto-complete`, `auto-release`, `outbox`, `cleanup-auth` |
-| `libs/modules/*` | Domain: `auth`, `booking`, `payment`, `ledger`, `catalog`, `calendar`, `admin`, `vendor-portal` |
+| `apps/worker` | Job: `expire-unpaid`, `expire-holds`, `auto-complete`, `auto-release`, `payout-reconcile`, `outbox`, `cleanup-auth` |
+| `libs/modules/*` | Domain: `auth`, `booking`, `payment`, `payout`, `ledger`, `catalog`, `calendar`, `admin`, `vendor-portal` |
 | `libs/platform/*` | Fondasi: db, config, auth (JWT + `jti`), error, uang, idempotensi |
-| `db/migrations` | Skema PostgreSQL `001`–`012` |
+| `db/migrations` | Skema PostgreSQL `001`–`013` |
 | `scripts/` | Migrasi, seed, smoke test, webhook PJP, probe browser |
 | `opendesain/` | Ekspor HTML acuan desain pelanggan & vendor (bukan aplikasi) — lihat [docs/DESIGN-REFERENCES.md](docs/DESIGN-REFERENCES.md) |
 | `docs/` | PRD, tech design, UX flow, brief legal, SOP, arsitektur, API |
@@ -89,6 +90,7 @@ curl http://localhost:3001/v1/health
 | Mobile (web) — vendor | `http://localhost:8080` | `vendor@tarlink.id` / `Tarlink#2026!` |
 | PostgreSQL | `localhost:5432`, db `tarlink` | `postgres` / `tarlink` |
 | Midtrans Sandbox | Core API `https://api.sandbox.midtrans.com` | isi `MIDTRANS_SERVER_KEY` + `MIDTRANS_CLIENT_KEY` di `.env`; webhook ke `POST /v1/webhooks/midtrans` |
+| Payout | `PAYOUT_PROVIDER=local` (default) atau `iris` | isi `IRIS_API_KEY` dan `BANK_ACCOUNT_ENCRYPTION_KEY` (base64 32 byte) untuk rekening vendor |
 
 > Kredensial ini untuk **lokal saja**. Jangan pernah dipakai di produksi.
 
@@ -165,9 +167,12 @@ IP, index trigram pencarian, guard `OTP_DEV_MODE`, dan e-wallet ditolak eksplisi
 Yang masih terbuka:
 
 - Tidak ada emulator/HP fisik di lingkungan pengembangan ini.
-- Disbursement/payout ke rekening vendor, provider WhatsApp/SMS, review/rating, picker peta
-  lokasi acara, dan UI check-in berbasis GPS belum ada. Charge/notifikasi/refund QRIS sudah
-  memakai Midtrans sandbox; endpoint check-in basic sudah ada.
+- Disbursement/payout ke rekening vendor sekarang tersedia (rekening terenkripsi +
+  maker-checker + adapter Iris di balik `PAYOUT_PROVIDER=iris`), tetapi pengujian live Iris
+  belum dilakukan karena butuh kredensial dan saldo merchant sandbox. Provider WhatsApp/SMS,
+  review/rating, picker peta lokasi acara, dan UI check-in berbasis GPS belum ada.
+  Charge/notifikasi/refund QRIS sudah memakai Midtrans sandbox; endpoint check-in basic
+  sudah ada.
 
 ## Lisensi
 

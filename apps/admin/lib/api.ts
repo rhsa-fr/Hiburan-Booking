@@ -52,7 +52,12 @@ import type {
   VendorPackagePatchInput,
   VendorPatchInput,
   VendorVerifyInput,
-  VendorVerifyResult
+  VendorVerifyResult,
+  CreatePayoutInput,
+  EligiblePayout,
+  PayoutBankAccount,
+  PayoutDetail,
+  PayoutPage
 } from './types';
 
 const BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001').replace(
@@ -519,5 +524,97 @@ export function verifyOtp(
       method: 'POST',
       body: JSON.stringify({ phone, code })
     }
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Payout vendor                                                              */
+/* -------------------------------------------------------------------------- */
+
+export function getPayouts(params: {
+  status?: string;
+  vendor_id?: string;
+  page?: number;
+  page_size?: number;
+} = {}): Promise<PayoutPage> {
+  const search = new URLSearchParams();
+  if (params.status) search.set('status', params.status);
+  if (params.vendor_id) search.set('vendor_id', params.vendor_id);
+  if (params.page) search.set('page', String(params.page));
+  if (params.page_size) search.set('page_size', String(params.page_size));
+  const suffix = search.toString() ? `?${search.toString()}` : '';
+  return apiFetch<PayoutPage>(`/api/v1/admin/payouts${suffix}`);
+}
+
+export function getPayout(id: string): Promise<PayoutDetail> {
+  return apiFetch<PayoutDetail>(`/api/v1/admin/payouts/${encodeURIComponent(id)}`);
+}
+
+export function getPayoutEligible(vendorId: string): Promise<EligiblePayout> {
+  return apiFetch<EligiblePayout>(
+    `/api/v1/admin/payouts/eligible?vendor_id=${encodeURIComponent(vendorId)}`
+  );
+}
+
+export function createPayout(input: CreatePayoutInput): Promise<PayoutDetail> {
+  return apiFetch<PayoutDetail>('/api/v1/admin/payouts', {
+    method: 'POST',
+    headers: { 'Idempotency-Key': crypto.randomUUID() },
+    body: JSON.stringify(input)
+  });
+}
+
+export function approvePayout(id: string, note?: string): Promise<PayoutDetail> {
+  return apiFetch<PayoutDetail>(
+    `/api/v1/admin/payouts/${encodeURIComponent(id)}/approve`,
+    {
+      method: 'POST',
+      headers: { 'Idempotency-Key': crypto.randomUUID() },
+      body: JSON.stringify(note ? { note } : {})
+    }
+  );
+}
+
+export function rejectPayout(id: string, reason: string): Promise<PayoutDetail> {
+  return apiFetch<PayoutDetail>(
+    `/api/v1/admin/payouts/${encodeURIComponent(id)}/reject`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ reason })
+    }
+  );
+}
+
+export function cancelPayout(id: string): Promise<PayoutDetail> {
+  return apiFetch<PayoutDetail>(
+    `/api/v1/admin/payouts/${encodeURIComponent(id)}/cancel`,
+    { method: 'POST' }
+  );
+}
+
+export function getVendorPayoutBankAccounts(vendorId: string): Promise<PayoutBankAccount[]> {
+  return apiFetch<PayoutBankAccount[]>(
+    `/api/v1/admin/vendors/${encodeURIComponent(vendorId)}/bank-accounts`
+  );
+}
+
+export function verifyVendorPayoutBankAccount(
+  vendorId: string,
+  accountId: string
+): Promise<PayoutBankAccount> {
+  return apiFetch<PayoutBankAccount>(
+    `/api/v1/admin/vendors/${encodeURIComponent(vendorId)}/bank-accounts/${encodeURIComponent(accountId)}/verify`,
+    { method: 'POST' }
+  );
+}
+
+export function rejectVendorPayoutBankAccount(
+  vendorId: string,
+  accountId: string,
+  reason: string
+): Promise<PayoutBankAccount> {
+  return apiFetch<PayoutBankAccount>(
+    `/api/v1/admin/vendors/${encodeURIComponent(vendorId)}/bank-accounts/${encodeURIComponent(accountId)}/reject`,
+    { method: 'POST', body: JSON.stringify({ reason }) }
   );
 }

@@ -60,6 +60,7 @@ Klien Flutter (`ApiClient`) membuka `data` otomatis bila ada.
 | `booking_status_history` | jejak audit perubahan status |
 | `payments` + `refunds` | tagihan DP/pelunasan, instruksi QRIS/VA, refund |
 | `journal_entries` + `journal_lines` | ledger double-entry, **append-only** |
+| `payouts` + `payout_items` | pencairan dana per vendor (status provider, rekening snapshot, booking yang dicakup) |
 | `chart_of_accounts` | daftar akun ledger dan tipe normalnya |
 | `disputes` | sengketa dan resolusinya |
 | `policy_versions` | teks kebijakan berversi (`code`, `version`, `body`) |
@@ -107,6 +108,23 @@ debit   escrow_liability_vendor     total
 credit  platform_revenue_commission komisi
 credit  vendor_payable              sisa
 ```
+
+### Contoh: payout vendor (`payout_requested` → `payout_settled`)
+Admin keuangan mencairkan saldo `vendor_payable` ke rekening vendor. Debit ke clearing
+dulu, bukan langsung kas, karena transfer masih berjalan di provider.
+
+```
+# saat checker menyetujui
+debit   vendor_payable              nominal   (vendor)
+credit  vendor_payout_clearing      nominal   (vendor)
+
+# saat provider melaporkan selesai
+debit   vendor_payout_clearing      nominal   (vendor)
+credit  gateway_clearing            nominal
+```
+
+Bila provider menolak, jurnal `payout_requested` **dibalik** (`reversal`), bukan dihapus;
+booking yang tercakup dikembalikan ke antrean payout.
 
 ### Aturan yang dijaga test
 - Setiap jurnal seimbang (`assertBalanced`).
@@ -158,6 +176,7 @@ Poller PostgreSQL, interval pendek, tanpa broker.
 | `expire-unpaid` | menandai booking `unpaid` yang lewat batas sebagai `expired` |
 | `auto-complete` | menutup acara yang sudah lewat |
 | `auto-release` | melepas dana ke vendor setelah jendela sengketa |
+| `payout-reconcile` | mengirim ulang payout `approved` dan menanyakan status `processing` ke provider |
 | `outbox` | mengirim event `booking.*` keluar |
 | `cleanup-auth` | memangkas `sessions`/`otp_requests`/`login_attempts` yang kedaluwarsa |
 
@@ -262,7 +281,8 @@ snapshot, rate limit per IP, index trigram pencarian, guard `dev_code`, refresh 
 panjang, pemangkasan sesi, dan penolakan e-wallet yang eksplisit.
 
 Yang masih terbuka (lihat [AGENTS.md § Batasan](../AGENTS.md#batasan-yang-diketahui)):
-disbursement/payout ke rekening vendor, provider WhatsApp/SMS, review/rating,
-picker peta lokasi acara, UI check-in berbasis GPS, dan token admin HttpOnly.
-Integrasi charge + notifikasi + refund QRIS sekarang memakai Midtrans sandbox;
-endpoint check-in/no-show basic sudah ada.
+provider WhatsApp/SMS, review/rating, picker peta lokasi acara, UI check-in berbasis GPS,
+dan token admin HttpOnly. Integrasi charge + notifikasi + refund QRIS sekarang memakai
+Midtrans sandbox; endpoint check-in/no-show basic sudah ada. Payout vendor + rekening
+terenkripsi sudah ada; integrasi Iris tersedia di balik `PAYOUT_PROVIDER=iris`, tetapi
+pengujian live bergantung pada kredensial dan saldo merchant Iris sandbox.

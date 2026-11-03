@@ -39,6 +39,10 @@ export const VENDOR_READ_ROLES = ['admin_support', 'admin_finance', 'admin_super
 export const VENDOR_WRITE_ROLES = ['admin_finance', 'admin_super'];
 export const VENDOR_VERIFY_ROLES = ['admin_super'];
 
+export const PAYOUT_READ_ROLES = ['admin_support', 'admin_finance', 'admin_super'];
+export const PAYOUT_WRITE_ROLES = ['admin_finance', 'admin_super'];
+export const BANK_VERIFY_ROLES = ['admin_super'];
+
 export function useRoles(): { roles: string[]; ready: boolean } {
   const [state, setState] = useState<{ roles: string[]; ready: boolean }>({
     roles: [],

@@ -395,6 +395,10 @@ dari klien, sehingga satu vendor tidak bisa mengubah vendor lain.
 | PUT | `/vendor/calendar` | Set `available`/`blocked` untuk rentang tanggal |
 | POST | `/vendor/media` | Upload satu gambar (multipart field `file`) |
 | GET | `/media/:filename` | Sajikan gambar upload (publik) |
+| GET | `/vendor/bank-accounts` | Daftar rekening pencairan (masked, tanpa yang superseded) |
+| POST | `/vendor/bank-accounts` | Daftarkan rekening tujuan payout |
+| DELETE | `/vendor/bank-accounts/:id` | Batalkan rekening berstatus `pending` |
+| GET | `/vendor/payouts` | Riwayat payout vendor (`page`, `page_size`) |
 
 `GET /vendor/dashboard` mengembalikan profil vendor (termasuk `whatsapp`) dan
 `summary`:
@@ -413,18 +417,32 @@ dari klien, sehingga satu vendor tidak bisa mengubah vendor lain.
 }
 ```
 
-`GET /vendor/earnings` mengembalikan `held_idr` (juga `held_balance_idr`) dan halaman
-pencairan `settled`:
+`GET /vendor/earnings` mengembalikan `held_idr` (juga `held_balance_idr`), saldo yang
+sudah Released tetapi belum ditransfer, dan halaman pencairan `settled`:
 
 ```json
 {
   "data": {
     "held_idr": "3000000",
     "held_balance_idr": "3000000",
+    "available_idr": "4500000",
+    "pending_payout_idr": "0",
+    "bank_account": {
+      "bank_code": "bca",
+      "bank_name": "BCA",
+      "account_number_masked": "****7890",
+      "account_holder_name": "CV Putra Dermayu",
+      "status": "verified"
+    },
     "settled": { "items": [], "total": 0, "page": 1, "page_size": 20 }
   }
 }
 ```
+
+`available_idr` dihitung dari saldo akun ledger `vendor_payable` (2120), bukan angka
+berjalan yang disimpan. `pending_payout_idr` adalah jumlah payout berstatus
+`requested`/`approved`/`processing`. `bank_account` bernilai `null` bila belum ada
+rekening terverifikasi.
 
 `GET /vendor/bookings` mengembalikan objek halaman langsung (`items`, `total`, `page`,
 `page_size`). Setiap item memuat `code`, tiga status, `total_customer_idr`,
@@ -526,10 +544,63 @@ Semua butuh peran `admin`/`operator`.
 | GET/POST | `/admin/vendors/:id/packages` | Daftar/buat paket |
 | PATCH/DELETE | `/admin/vendors/:id/packages/:packageId` | Ubah/hapus paket |
 | GET/PUT | `/admin/vendors/:id/calendar` | Baca/tulis kalender |
+| GET | `/admin/payouts` | Daftar payout (`status`, `vendor_id`, `page`, `page_size`) |
+| GET | `/admin/payouts/eligible` | Booking released yang bisa dicairkan + saldo ledger |
+| GET | `/admin/payouts/:id` | Detail payout + item + jurnal |
+| POST | `/admin/payouts` | Buat payout (maker) |
+| POST | `/admin/payouts/:id/approve` | Setujui & kirim ke provider (checker) |
+| POST | `/admin/payouts/:id/reject` | Tolak payout `requested` |
+| POST | `/admin/payouts/:id/cancel` | Batalkan payout `requested` (pembuat) |
+| GET | `/admin/vendors/:vendorId/bank-accounts` | Rekening pencairan vendor |
+| POST | `/admin/vendors/:vendorId/bank-accounts/:id/verify` | Verifikasi rekening (`admin_super`) |
+| POST | `/admin/vendors/:vendorId/bank-accounts/:id/reject` | Tolak rekening (`admin_super`) |
 
 `PATCH /admin/vendors/:id` juga menerima `avatar_url`, `banner_url`,
 `photo_urls`, `video_url`. `POST/PATCH .../packages` menerima
 `personnel_count`, `inclusions[]`, dan `photo_url` (sama seperti portal vendor).
+
+### Payout vendor
+
+Payout bersifat **admin-initiated**: vendor hanya mengelola rekening tujuan. Nominal
+dihitung server dari booking `released` yang belum masuk payout lain, lalu dicek
+terhadap saldo ledger `vendor_payable` (2120).
+
+`POST /admin/payouts` (peran `admin_finance`/`admin_super`, header `Idempotency-Key`):
+
+```json
+{ "vendor_id": "uuid", "booking_ids": ["uuid", "uuid"] }
+```
+
+`booking_ids` opsional; bila dihilangkan, semua booking released yang belum dicairkan
+diambil. Respons berisi `code`, `amount_idr`, `status: "requested"`, `bank`, `items`.
+
+`POST /admin/payouts/:id/approve` (checker berbeda dari pembuat, header
+`Idempotency-Key`): memposting jurnal `payout_requested` lalu memanggil provider.
+Nominal ≥ `approval_threshold_idr` wajib disetujui `admin_super`.
+
+```json
+{ "note": "Rekening sudah dicek dengan vendor." }
+```
+
+Status payout: `requested → approved → processing → paid`, plus `failed`, `rejected`,
+`cancelled`. Worker `payout_reconcile` menanyakan status ke provider; `completed`
+memposting `payout_settled`, `failed` memposting jurnal balik (`reversal`) dan
+mengembalikan booking ke daftar yang bisa dicairkan.
+
+`POST /vendor/bank-accounts`:
+
+```json
+{
+  "bank_code": "bca",
+  "account_number": "1234567890",
+  "account_holder_name": "CV Putra Dermayu"
+}
+```
+
+Nomor rekening hanya disimpan terenkripsi (AES-256-GCM dengan
+`BANK_ACCOUNT_ENCRYPTION_KEY`); API hanya mengembalikan `account_number_masked`.
+Rekening baru berstatus `pending` dan punya masa tunggu `bank_cooling_hours` sebelum
+bisa dipakai payout.
 
 ### `POST /admin/disputes/:id/resolve`
 

@@ -125,9 +125,10 @@ export class VendorPortalService {
     const safePageSize = Math.min(100, Math.max(1, pageSize || 20));
     const offset = (safePage - 1) * safePageSize;
 
-    const [held_idr, rows] = await Promise.all([
+    const [held_idr, rows, payout] = await Promise.all([
       this.repo.getHeldBalance(vendor.id),
-      this.repo.listSettledBookings(vendor.id, safePageSize, offset)
+      this.repo.listSettledBookings(vendor.id, safePageSize, offset),
+      this.repo.getPayoutSummary(vendor.id)
     ]);
 
     const total = rows.length > 0 ? Number(rows[0]!.total_count) : 0;
@@ -136,6 +137,17 @@ export class VendorPortalService {
     return {
       held_idr,
       held_balance_idr: held_idr,
+      available_idr: payout.available_idr,
+      pending_payout_idr: payout.pending_payout_idr,
+      bank_account: payout.bank_code
+        ? {
+            bank_code: payout.bank_code,
+            bank_name: payout.bank_name,
+            account_number_masked: payout.account_number_masked,
+            account_holder_name: payout.account_holder_name,
+            status: payout.bank_status
+          }
+        : null,
       settled: {
         items,
         total,

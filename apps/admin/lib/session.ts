@@ -8,6 +8,8 @@ export interface OperatorSession {
   operator_name: string;
   role: string;
   logged_in_at: string;
+  /** Id operator dari `POST /auth/login`; dipakai payout untuk maker-checker. */
+  user_id?: string;
 }
 
 const SESSION_KEY = 'tarlink.admin.session';

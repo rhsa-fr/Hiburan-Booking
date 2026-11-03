@@ -242,13 +242,27 @@ describe('VendorPortalService', () => {
       const { service } = createService({
         findVendorByOwner: vi.fn().mockResolvedValue(MOCK_VENDOR),
         getHeldBalance: vi.fn().mockResolvedValue('9000000'),
-        listSettledBookings: vi.fn().mockResolvedValue(settledRows)
+        listSettledBookings: vi.fn().mockResolvedValue(settledRows),
+        getPayoutSummary: vi.fn().mockResolvedValue({
+          available_idr: '4500000',
+          pending_payout_idr: '0',
+          bank_code: 'bca',
+          bank_name: 'BCA',
+          account_number_masked: '****7890',
+          account_holder_name: 'Tarling Dangdut Pantura',
+          bank_status: 'verified'
+        })
       });
 
       const result = await service.getEarnings(USER_ID, 1, 20);
 
       expect(result.held_idr).toBe('9000000');
       expect(result.held_balance_idr).toBe('9000000');
+      expect(result.available_idr).toBe('4500000');
+      expect(result.bank_account).toMatchObject({
+        bank_code: 'bca',
+        account_number_masked: '****7890'
+      });
       expect(result.settled.total).toBe(1);
       expect(result.settled.page).toBe(1);
       expect(result.settled.page_size).toBe(20);

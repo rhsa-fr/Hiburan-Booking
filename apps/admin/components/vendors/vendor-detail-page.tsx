@@ -25,6 +25,7 @@ import type { KeyValueItem } from '@/components/ui';
 import { VendorCalendar } from '@/components/vendors/vendor-calendar';
 import { VendorPackages } from '@/components/vendors/vendor-packages';
 import { VendorVerification } from '@/components/vendors/vendor-verification';
+import { BankAccountVerification } from '@/components/payouts/bank-account-verification';
 import type { VendorNotice } from '@/components/vendors/notice';
 import { getVendor } from '@/lib/api';
 import { ApiError } from '@/lib/errors';
@@ -107,6 +108,8 @@ function VendorOperations({ detail }: { detail: VendorDetail }) {
             {bank.rejection_reason}
           </p>
         ) : null}
+
+        <BankAccountVerification vendorId={vendor.id} />
 
         <div className="border-t border-border pt-4">
           <h3 className="text-[15px] font-semibold text-textMain">Booking terakhir</h3>

@@ -13,6 +13,7 @@ import { BookingModule } from '@tarlink/modules/booking';
 import { AuthModule } from '@tarlink/modules/auth';
 import { CatalogModule } from '@tarlink/modules/catalog';
 import { PaymentModule } from '@tarlink/modules/payment';
+import { PayoutModule } from '@tarlink/modules/payout';
 import { VendorPortalModule } from '@tarlink/modules/vendor-portal';
 import { AuthGuard, JWT_SECRET, RolesGuard } from '@tarlink/platform/auth';
 import { IdempotencyService, PgIdempotencyStore } from '@tarlink/platform/idempotency';
@@ -79,7 +80,15 @@ class AllExceptionsFilter implements ExceptionFilter {
 }
 
 @Module({
-  imports: [AuthModule, AdminModule, CatalogModule, BookingModule, PaymentModule, VendorPortalModule],
+  imports: [
+    AuthModule,
+    AdminModule,
+    CatalogModule,
+    BookingModule,
+    PaymentModule,
+    VendorPortalModule,
+    PayoutModule
+  ],
   controllers: [HealthController],
   providers: [
     RolesGuard,

@@ -580,3 +580,127 @@ export interface VendorCalendarBulkInput {
 export interface VendorCalendarBulkResult {
   updated: number;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Payout vendor — kontrak /admin/payouts                                     */
+/* -------------------------------------------------------------------------- */
+
+export type PayoutStatus =
+  | 'requested'
+  | 'approved'
+  | 'processing'
+  | 'paid'
+  | 'failed'
+  | 'rejected'
+  | 'cancelled';
+
+export interface PayoutBankSnapshot {
+  bank_code: string;
+  bank_name: string;
+  account_number_masked: string;
+  account_holder_name: string;
+}
+
+export interface Payout {
+  id: string;
+  code: string;
+  vendor_id: string;
+  vendor_name: string | null;
+  status: PayoutStatus;
+  amount_idr: number;
+  currency: string;
+  provider: string;
+  provider_ref: string | null;
+  failure_code: string | null;
+  failure_reason: string | null;
+  bank: PayoutBankSnapshot;
+  requested_by: string;
+  requested_by_name: string | null;
+  approved_by: string | null;
+  approved_by_name: string | null;
+  approved_at: string | null;
+  processed_at: string | null;
+  paid_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PayoutItem {
+  booking_id: string;
+  booking_code: string;
+  amount_idr: number;
+  released_at: string | null;
+  voided_at: string | null;
+}
+
+export interface PayoutJournalLine {
+  account_code: string;
+  vendor_id: string | null;
+  debit_idr: number;
+  credit_idr: number;
+  memo: string | null;
+}
+
+export interface PayoutJournalEntry {
+  id: string;
+  event_type: string;
+  source_event_key: string;
+  occurred_at: string;
+  memo: string | null;
+  lines: PayoutJournalLine[];
+}
+
+export interface PayoutDetail extends Payout {
+  items: PayoutItem[];
+  journal: PayoutJournalEntry[];
+}
+
+export interface PayoutPage {
+  items: Payout[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface EligiblePayout {
+  vendor_id: string;
+  vendor_name: string;
+  bank_account: {
+    bank_code: string;
+    bank_name: string;
+    account_number_masked: string;
+    account_holder_name: string;
+    cooling_until: string;
+  } | null;
+  bookings: Array<{
+    booking_id: string;
+    booking_code: string;
+    amount_idr: number;
+    released_at: string | null;
+    event_title: string | null;
+  }>;
+  amount_idr: number;
+  ledger_payable_idr: number;
+  minimum_idr: number;
+  eligible: boolean;
+  reason: string | null;
+}
+
+export interface CreatePayoutInput {
+  vendor_id: string;
+  booking_ids?: string[];
+}
+
+export interface PayoutBankAccount {
+  id: string;
+  bank_code: string;
+  bank_name: string;
+  account_number_masked: string;
+  account_holder_name: string;
+  status: 'pending' | 'verified' | 'rejected';
+  cooling_until: string;
+  verified_at: string | null;
+  rejection_reason: string | null;
+  is_primary: boolean;
+  created_at: string;
+}

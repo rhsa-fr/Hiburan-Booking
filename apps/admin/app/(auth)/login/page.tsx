@@ -59,7 +59,8 @@ export default function LoginPage() {
     saveSession({
       operator_name: result.user.email ?? result.user.phone ?? 'Operator',
       role: roleLabel(primaryRole),
-      logged_in_at: new Date().toISOString()
+      logged_in_at: new Date().toISOString(),
+      user_id: result.user.id
     });
     router.replace('/');
   }

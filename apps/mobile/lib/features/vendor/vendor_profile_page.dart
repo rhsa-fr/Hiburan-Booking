@@ -130,6 +130,11 @@ class _VendorProfilePageState extends State<VendorProfilePage> {
     if (mounted) await _load(silent: true);
   }
 
+  Future<void> _openBankAccounts() async {
+    await Navigator.pushNamed(context, Routes.vendorBankAccount);
+    if (mounted) await _load(silent: true);
+  }
+
   Future<void> _leaveVendorMode() async {
     final confirmed = await showModalBottomSheet<bool>(
       context: context,
@@ -294,6 +299,12 @@ class _VendorProfilePageState extends State<VendorProfilePage> {
                   subtitle: 'Harga, durasi, personel, fasilitas, foto paket',
                   trailingIcon: Icons.inventory_2_outlined,
                   onTap: _openManagePackages,
+                ),
+                _InfoRow(
+                  title: 'Rekening pencairan',
+                  subtitle: 'Rekening tujuan transfer, diverifikasi admin',
+                  trailingIcon: Icons.account_balance_outlined,
+                  onTap: _openBankAccounts,
                 ),
                 _InfoRow(
                   title: 'Ketersediaan',

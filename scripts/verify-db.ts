@@ -433,6 +433,41 @@ async function main(): Promise<void> {
     );
     record('kolom komisi D-17 lengkap', Number(comm[0].n) === 7, `${comm[0].n}/7 kolom`);
 
+    // 10. Payout: tabel, guard unik per booking, dan enum status.
+    const { rows: payoutTables } = await client.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM information_schema.tables
+        WHERE table_schema = current_schema()
+          AND table_name IN ('payouts', 'payout_items')`
+    );
+    record(
+      'tabel payouts & payout_items ada',
+      Number(payoutTables[0].n) === 2,
+      `${payoutTables[0].n}/2 tabel`
+    );
+
+    const { rows: payoutIdx } = await client.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM pg_indexes
+        WHERE schemaname = current_schema()
+          AND indexname = 'payout_items_booking_active_uniq'`
+    );
+    record(
+      'payout aktif hanya sekali per booking',
+      Number(payoutIdx[0].n) === 1,
+      `${payoutIdx[0].n} index (harus 1)`
+    );
+
+    const { rows: payoutEnum } = await client.query<{ n: string }>(
+      `SELECT count(*)::text AS n
+         FROM pg_type t
+         JOIN pg_enum e ON e.enumtypid = t.oid
+        WHERE t.typname = 'payout_status'`
+    );
+    record(
+      'enum payout_status lengkap',
+      Number(payoutEnum[0].n) === 7,
+      `${payoutEnum[0].n}/7 nilai`
+    );
+
     await client.query('ROLLBACK');
     // eslint-disable-next-line no-console
     console.log('\n(transaksi ROLLBACK — database target tidak berubah)');

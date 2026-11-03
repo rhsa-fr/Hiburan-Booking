@@ -63,6 +63,19 @@ const EnvSchema = z.object({
     (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
     z.string().url().optional()
   ),
+  /** `local` = deterministic disbursement stub; `iris` = Midtrans Iris. */
+  PAYOUT_PROVIDER: z.enum(['local', 'iris']).default('local'),
+  /** Iris uses its own API key (dashboard Iris), not MIDTRANS_SERVER_KEY. */
+  IRIS_API_KEY: z.string().optional(),
+  IRIS_IS_PRODUCTION: boolFromEnv.default(false),
+  IRIS_BASE_URL: z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    z.string().url().optional()
+  ),
+  /** base64(32 bytes); required only when a vendor saves a bank account. */
+  BANK_ACCOUNT_ENCRYPTION_KEY: z.string().optional(),
+  BANK_ACCOUNT_ENCRYPTION_KEY_PREVIOUS: z.string().optional(),
+  BANK_ACCOUNT_KEY_ID: z.string().default('v1'),
   /** Local upload directory; relative paths resolve from the repo root. */
   UPLOAD_DIR: z.string().default('storage/uploads'),
   /** Optional public origin for media URLs (no trailing /v1). */
