@@ -8,7 +8,7 @@ import '../../core/ui.dart';
 import 'auth_support.dart';
 
 /// Login / daftar, rebuilt from the Stitch "Masuk atau Daftar" screen:
-/// lavender canvas, terracotta CTA, 52 px white fields, and a WhatsApp OTP tab.
+/// lavender canvas, terracotta CTA, 52 px white fields.
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
 
@@ -20,28 +20,18 @@ class _LoginPageState extends State<LoginPage> {
   final _formKey = GlobalKey<FormState>();
   final _email = TextEditingController();
   final _password = TextEditingController();
-  final _phone = TextEditingController();
-  final _code = TextEditingController();
   final _passwordFocus = FocusNode();
-  final _codeFocus = FocusNode();
 
   bool _obscure = true;
   bool _consent = false;
   bool _loading = false;
-  bool _sendingOtp = false;
-  bool _otpSent = false;
-  bool _otpMode = false;
   String? _error;
-  String? _devCode;
 
   @override
   void dispose() {
     _email.dispose();
     _password.dispose();
-    _phone.dispose();
-    _code.dispose();
     _passwordFocus.dispose();
-    _codeFocus.dispose();
     super.dispose();
   }
 
@@ -89,84 +79,6 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
-  Future<void> _requestOtp() async {
-    if (_sendingOtp) return;
-    setState(() => _error = null);
-    if (!_checkConsent()) return;
-    final phone = normalizePhone(_phone.text);
-    final invalid = phoneError(_phone.text);
-    if (invalid != null) {
-      setState(() => _error = invalid);
-      return;
-    }
-
-    FocusScope.of(context).unfocus();
-    final scope = AppScope.of(context);
-    setState(() => _sendingOtp = true);
-
-    try {
-      final payload = await scope.api.post(
-        '/auth/otp/request',
-        auth: false,
-        body: {'phone': phone},
-      );
-      final data = payload is Map ? payload.cast<String, dynamic>() : null;
-      if (!mounted) return;
-      setState(() {
-        _otpSent = true;
-        _devCode = data?['dev_code']?.toString();
-      });
-      _codeFocus.requestFocus();
-    } on ApiException catch (error) {
-      if (!mounted) return;
-      setState(() => _error = authErrorMessage(error));
-    } finally {
-      if (mounted) setState(() => _sendingOtp = false);
-    }
-  }
-
-  Future<void> _verifyOtp() async {
-    if (_loading) return;
-    setState(() => _error = null);
-    if (!_checkConsent()) return;
-    final phone = normalizePhone(_phone.text);
-    if (phoneError(_phone.text) != null) {
-      setState(() => _error = 'Nomor WhatsApp belum benar.');
-      return;
-    }
-    if (_code.text.trim().length < 4) {
-      setState(() => _error = 'Kode verifikasi belum lengkap.');
-      return;
-    }
-
-    FocusScope.of(context).unfocus();
-    final scope = AppScope.of(context);
-    setState(() => _loading = true);
-
-    try {
-      final payload = await scope.api.post(
-        '/auth/otp/verify',
-        auth: false,
-        body: {'phone': phone, 'code': _code.text.trim()},
-      );
-      final data = payload is Map ? payload.cast<String, dynamic>() : null;
-      if (data == null || data['access_token'] is! String) {
-        throw const ApiException(
-          code: 'INTERNAL_ERROR',
-          message: 'Respons masuk tidak lengkap.',
-        );
-      }
-      await scope.session.signIn(data);
-      if (!mounted) return;
-      _goHome();
-    } on ApiException catch (error) {
-      if (!mounted) return;
-      setState(() => _error = authErrorMessage(error));
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
   void _goHome() {
     final session = AppScope.of(context).session;
     if (session.user?.roles.contains('vendor_owner') == true) {
@@ -178,15 +90,6 @@ class _LoginPageState extends State<LoginPage> {
     } else {
       Navigator.pushNamedAndRemoveUntil(context, Routes.home, (_) => false);
     }
-  }
-
-  void _switchMode(bool otp) {
-    setState(() {
-      _otpMode = otp;
-      _error = null;
-      _otpSent = false;
-      _devCode = null;
-    });
   }
 
   @override
@@ -250,8 +153,6 @@ class _LoginPageState extends State<LoginPage> {
                     ),
                   ),
                   const SizedBox(height: Sp.xl),
-                  _AuthTabs(otp: _otpMode, onChanged: _switchMode),
-                  const SizedBox(height: Sp.md),
                   if (notice != null) ...[
                     InfoStrip(
                       message: notice,
@@ -260,12 +161,7 @@ class _LoginPageState extends State<LoginPage> {
                     ),
                     const SizedBox(height: Sp.md),
                   ],
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 160),
-                    child: _otpMode
-                        ? _buildOtpForm(text)
-                        : _buildEmailForm(text),
-                  ),
+                  _buildEmailForm(text),
                   const SizedBox(height: Sp.xl),
                   Center(
                     child: Wrap(
@@ -348,7 +244,7 @@ class _LoginPageState extends State<LoginPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _FieldLabel(
+            const _FieldLabel(
               label: 'Alamat Email',
               trailing: 'Wajib diisi',
             ),
@@ -441,104 +337,6 @@ class _LoginPageState extends State<LoginPage> {
       ),
     );
   }
-
-  Widget _buildOtpForm(TextTheme text) {
-    return Column(
-      key: const ValueKey('otp-form'),
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const _FieldLabel(label: 'Nomor WhatsApp', trailing: 'Wajib diisi'),
-        const SizedBox(height: 6),
-        TextFormField(
-          controller: _phone,
-          keyboardType: TextInputType.phone,
-          textInputAction: TextInputAction.next,
-          style: text.bodyMedium,
-          decoration: authField(
-            hint: '081234567890',
-            prefixIcon: const AuthFieldIcon(Icons.chat_outlined),
-          ),
-          onChanged: (_) {
-            _clearError();
-            if (_otpSent) setState(() => _otpSent = false);
-          },
-        ),
-        if (_otpSent) ...[
-          const SizedBox(height: Sp.lg),
-          const _FieldLabel(label: 'Kode Verifikasi'),
-          const SizedBox(height: 6),
-          TextFormField(
-            controller: _code,
-            focusNode: _codeFocus,
-            keyboardType: TextInputType.number,
-            textInputAction: TextInputAction.done,
-            maxLength: 6,
-            style: text.bodyMedium?.copyWith(letterSpacing: 4),
-            decoration: authField(
-              hint: '6 angka',
-              prefixIcon: const AuthFieldIcon(Icons.password),
-            ).copyWith(counterText: ''),
-            onChanged: (_) => _clearError(),
-            onFieldSubmitted: (_) => _verifyOtp(),
-          ),
-          const SizedBox(height: Sp.sm),
-          Row(
-            children: [
-              const Icon(
-                Icons.info_outline,
-                size: 15,
-                color: AppColors.inkMuted,
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  _devCode == null
-                      ? 'Kode dikirim ke WhatsApp, berlaku 5 menit.'
-                      : 'Kode uji pengembangan: $_devCode',
-                  style: text.bodySmall?.copyWith(
-                    color: _devCode == null
-                        ? AppColors.inkMuted
-                        : AppColors.tertiary,
-                    fontWeight: _devCode == null
-                        ? FontWeight.w400
-                        : FontWeight.w700,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-        const SizedBox(height: Sp.lg),
-        _ConsentBox(
-          value: _consent,
-          onChanged: (value) => setState(() => _consent = value ?? false),
-        ),
-        if (_error != null) AuthInlineError(_error!),
-        const SizedBox(height: Sp.md),
-        if (!_otpSent)
-          _SubmitButton(
-            label: 'Kirim Kode WhatsApp',
-            loadingLabel: 'Mengirim…',
-            loading: _sendingOtp,
-            icon: Icons.chat,
-            onPressed: _requestOtp,
-          )
-        else ...[
-          _SubmitButton(
-            label: 'Masuk ke Akun',
-            loadingLabel: 'Memeriksa…',
-            loading: _loading,
-            onPressed: _verifyOtp,
-          ),
-          const SizedBox(height: Sp.sm),
-          TextButton(
-            onPressed: _sendingOtp ? null : _requestOtp,
-            child: const Text('Kirim ulang kode'),
-          ),
-        ],
-      ],
-    );
-  }
 }
 
 class _FieldLabel extends StatelessWidget {
@@ -571,90 +369,6 @@ class _FieldLabel extends StatelessWidget {
             ),
           ),
       ],
-    );
-  }
-}
-
-class _AuthTabs extends StatelessWidget {
-  const _AuthTabs({required this.otp, required this.onChanged});
-
-  final bool otp;
-  final ValueChanged<bool> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    return Container(
-      padding: const EdgeInsets.all(Sp.xs),
-      decoration: BoxDecoration(
-        color: AppColors.surfaceTint,
-        borderRadius: BorderRadius.circular(Radii.sm),
-      ),
-      child: Row(
-        children: [
-          _tab(
-            context,
-            text,
-            label: 'Akun Email',
-            icon: Icons.mail_outline,
-            selected: !otp,
-            onTap: () => onChanged(false),
-          ),
-          _tab(
-            context,
-            text,
-            label: 'WhatsApp / SMS',
-            icon: Icons.chat_bubble_outline,
-            selected: otp,
-            onTap: () => onChanged(true),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _tab(
-    BuildContext context,
-    TextTheme text, {
-    required String label,
-    required IconData icon,
-    required bool selected,
-    required VoidCallback onTap,
-  }) {
-    return Expanded(
-      child: Material(
-        color: selected ? AppColors.card : Colors.transparent,
-        borderRadius: BorderRadius.circular(8),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(8),
-          child: SizedBox(
-            height: 46,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  icon,
-                  size: 18,
-                  color: selected ? AppColors.primary : AppColors.inkMuted,
-                ),
-                const SizedBox(width: 6),
-                Flexible(
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: text.labelMedium?.copyWith(
-                      color: selected ? AppColors.primary : AppColors.inkMuted,
-                      fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
     );
   }
 }
@@ -731,14 +445,12 @@ class _SubmitButton extends StatelessWidget {
     required this.loadingLabel,
     required this.loading,
     required this.onPressed,
-    this.icon = Icons.arrow_forward,
   });
 
   final String label;
   final String loadingLabel;
   final bool loading;
   final VoidCallback onPressed;
-  final IconData icon;
 
   @override
   Widget build(BuildContext context) {
@@ -768,7 +480,7 @@ class _SubmitButton extends StatelessWidget {
             ),
             if (!loading) ...[
               const SizedBox(width: Sp.sm),
-              Icon(icon, size: 20),
+              const Icon(Icons.arrow_forward, size: 20),
             ],
           ],
         ),

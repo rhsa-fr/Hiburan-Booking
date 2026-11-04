@@ -217,6 +217,12 @@ class _AccountPageState extends State<AccountPage> {
       child: Column(
         children: [
           _MenuRow(
+            icon: Icons.favorite_outline,
+            label: 'Vendor Favorit',
+            onTap: () => Navigator.pushNamed(context, Routes.favorites),
+          ),
+          const Divider(height: 1, thickness: 1, color: AppColors.line),
+          _MenuRow(
             icon: Icons.assignment_return_outlined,
             label: 'Kebijakan pembatalan',
             onTap: () => _openPolicy('cancellation', 'Kebijakan pembatalan'),

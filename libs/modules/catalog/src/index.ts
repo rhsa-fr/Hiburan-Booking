@@ -1,5 +1,9 @@
 export { CatalogModule } from './catalog.module';
 export { CatalogService } from './catalog.service';
+export { FavoriteService } from './favorite.service';
+export { FavoriteController } from './favorite.controller';
+export { ReviewService } from './review.service';
+export { ReviewController } from './review.controller';
 export type {
   CreatePackageInput,
   UpdatePackageInput,

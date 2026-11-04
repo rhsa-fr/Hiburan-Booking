@@ -39,24 +39,44 @@ class _VendorPageState extends State<VendorPage> {
   int _weekIndex = 0;
   String? _packageId;
   String? _date;
+  bool? _isFavorite;
+  bool _favoriteBusy = false;
+  List<Map<String, dynamic>> _reviews = [];
+  int _reviewTotal = 0;
+  bool _reviewsLoading = false;
+  String? _completedBookingId;
+  bool _bookingsChecked = false;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (_started) return;
-    _started = true;
-    _bootstrap();
+    if (!_started) {
+      _started = true;
+      _bootstrap();
+      return;
+    }
+    final authorized = AppScope.of(context).session.authorized;
+    if (_vendor != null && _isFavorite == null && authorized) {
+      _loadFavoriteStatus();
+    }
+    if (_vendor != null && !_bookingsChecked && authorized) {
+      _checkCompletedBooking();
+    }
   }
 
   Future<void> _bootstrap() async {
     await _loadVendor();
     if (!mounted || _vendor == null) return;
+    _loadFavoriteStatus();
+    _loadReviews();
+    _checkCompletedBooking();
     await _loadAvailability();
   }
 
   Future<void> _loadVendor() async {
     setState(() {
       _vendorError = null;
+      _isFavorite = null;
     });
     try {
       final raw = await AppScope.of(
@@ -159,6 +179,137 @@ class _VendorPageState extends State<VendorPage> {
     }
   }
 
+  Future<void> _loadFavoriteStatus() async {
+    final vendor = _vendor;
+    if (vendor == null) return;
+    if (!AppScope.of(context).session.authorized) return;
+
+    try {
+      final raw = await AppScope.of(context).api.get(
+        '/favorites/${vendor.id}',
+      );
+      if (!mounted || _isFavorite != null) return;
+      var isFav = false;
+      if (raw is Map) {
+        if (raw['is_favorite'] is bool) {
+          isFav = raw['is_favorite'] as bool;
+        } else if (raw['data'] is Map && raw['data']['is_favorite'] is bool) {
+          isFav = raw['data']['is_favorite'] as bool;
+        }
+      }
+      if (!mounted || _isFavorite != null) return;
+      setState(() {
+        _isFavorite = isFav;
+      });
+    } catch (_) {
+      if (!mounted || _isFavorite != null) return;
+      setState(() {
+        _isFavorite = false;
+      });
+    }
+  }
+
+  Future<void> _loadReviews() async {
+    final vendor = _vendor;
+    if (vendor == null) return;
+    setState(() => _reviewsLoading = true);
+    try {
+      final raw = await AppScope.of(context).api.get(
+        '/vendors/${vendor.id}/reviews',
+        query: const {'page': '1', 'page_size': '5'},
+      );
+      if (!mounted) return;
+      if (raw is Map && raw['items'] is List) {
+        final items = (raw['items'] as List)
+            .whereType<Map>()
+            .map((item) => item.cast<String, dynamic>())
+            .toList();
+        final total = raw['total'] is num
+            ? (raw['total'] as num).toInt()
+            : items.length;
+        setState(() {
+          _reviews = items;
+          _reviewTotal = total;
+          _reviewsLoading = false;
+        });
+      } else {
+        setState(() {
+          _reviews = const [];
+          _reviewTotal = 0;
+          _reviewsLoading = false;
+        });
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _reviews = const [];
+        _reviewTotal = 0;
+        _reviewsLoading = false;
+      });
+    }
+  }
+
+  Future<void> _checkCompletedBooking() async {
+    final vendor = _vendor;
+    if (vendor == null) return;
+    if (!AppScope.of(context).session.authorized) return;
+
+    _bookingsChecked = true;
+    try {
+      final raw = await AppScope.of(context).api.get(
+        '/bookings',
+        query: const {
+          'status': 'completed',
+          'page': '1',
+          'page_size': '50',
+        },
+      );
+      if (!mounted) return;
+      if (raw is Map && raw['items'] is List) {
+        final items = raw['items'] as List;
+        String? matchingBookingId;
+        for (final item in items) {
+          if (item is Map) {
+            final v = item['vendor'];
+            final vendorId = v is Map ? v['id']?.toString() : item['vendor_id']?.toString();
+            if (vendorId == vendor.id) {
+              matchingBookingId = item['id']?.toString();
+              break;
+            }
+          }
+        }
+        setState(() {
+          _completedBookingId = matchingBookingId;
+        });
+      }
+    } catch (_) {
+      // Background check failure is non-fatal.
+    }
+  }
+
+  Future<void> _openReviewSheet(VendorDetail vendor, String bookingId) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final sent = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.card,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(Radii.lg)),
+      ),
+      builder: (ctx) => _ReviewSheet(
+        vendor: vendor,
+        bookingId: bookingId,
+      ),
+    );
+    if (sent == true && mounted) {
+      setState(() => _completedBookingId = null);
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Ulasan berhasil dikirim!')),
+      );
+      _loadReviews();
+    }
+  }
+
   List<String> _dates() {
     final dates = <String>{
       for (final day in _availability?.days ?? const <AvailabilityDay>[])
@@ -231,6 +382,62 @@ class _VendorPageState extends State<VendorPage> {
         packageId: package.id,
       ),
     );
+  }
+
+  Future<void> _toggleFavorite(VendorDetail vendor) async {
+    if (_favoriteBusy) return;
+    final currentlyFavorite = _isFavorite == true;
+    final next = !currentlyFavorite;
+
+    setState(() {
+      _favoriteBusy = true;
+      _isFavorite = next;
+    });
+
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      if (next) {
+        await AppScope.of(context).api.post(
+          '/favorites/${Uri.encodeComponent(vendor.id)}',
+        );
+        if (!mounted) return;
+        messenger.hideCurrentSnackBar();
+        messenger.showSnackBar(
+          const SnackBar(content: Text('Ditambahkan ke favorit')),
+        );
+      } else {
+        await AppScope.of(context).api.delete(
+          '/favorites/${Uri.encodeComponent(vendor.id)}',
+        );
+        if (!mounted) return;
+        messenger.hideCurrentSnackBar();
+        messenger.showSnackBar(
+          const SnackBar(content: Text('Dihapus dari favorit')),
+        );
+      }
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _isFavorite = currentlyFavorite;
+      });
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(SnackBar(content: Text(error.userMessage)));
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isFavorite = currentlyFavorite;
+      });
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Gagal memperbarui favorit.')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _favoriteBusy = false;
+        });
+      }
+    }
   }
 
   Future<void> _openWhatsApp(String raw) async {
@@ -384,7 +591,93 @@ class _VendorPageState extends State<VendorPage> {
             child: _location(address, transport),
           ),
         ],
+        const Padding(
+          padding: EdgeInsets.fromLTRB(Sp.lg, Sp.lg, Sp.lg, 0),
+          child: Divider(color: AppColors.line),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.md, Sp.lg, 0),
+          child: _reviewsSection(vendor),
+        ),
         const SizedBox(height: 96),
+      ],
+    );
+  }
+
+  Widget? _headerActions(
+    VendorDetail vendor,
+    bool isAuthorized,
+    String? whatsapp,
+  ) {
+    final actions = <Widget>[
+      if (isAuthorized)
+        Tooltip(
+          message: _isFavorite == true
+              ? 'Hapus dari favorit'
+              : 'Tambah ke favorit',
+          child: Material(
+            color: AppColors.card,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(Radii.sm),
+              side: const BorderSide(color: AppColors.line),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: _favoriteBusy ? null : () => _toggleFavorite(vendor),
+              child: SizedBox(
+                width: 38,
+                height: 38,
+                child: Center(
+                  child: Icon(
+                    _isFavorite == true
+                        ? Icons.favorite
+                        : Icons.favorite_border,
+                    size: 19,
+                    color: _isFavorite == true
+                        ? AppColors.danger
+                        : AppColors.ink,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      if (whatsapp != null)
+        Tooltip(
+          message: 'Hubungi via WhatsApp',
+          child: Material(
+            color: AppColors.card,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(Radii.sm),
+              side: const BorderSide(color: AppColors.line),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: () => _openWhatsApp(vendor.whatsapp),
+              child: const SizedBox(
+                width: 38,
+                height: 38,
+                child: Center(
+                  child: Icon(
+                    Icons.chat_outlined,
+                    size: 19,
+                    color: AppColors.ink,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+    ];
+
+    if (actions.isEmpty) return null;
+    if (actions.length == 1) return actions.first;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        actions[0],
+        const SizedBox(width: Sp.sm),
+        actions[1],
       ],
     );
   }
@@ -402,6 +695,7 @@ class _VendorPageState extends State<VendorPage> {
         ? null
         : 'Respons ${(responseRate / 100).round()}%';
     final whatsapp = _waDigits(vendor.whatsapp);
+    final isAuthorized = AppScope.of(context).session.authorized;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -410,26 +704,7 @@ class _VendorPageState extends State<VendorPage> {
           context: context,
           title: 'Detail Grup Hiburan',
           subtitle: vendor.displayName,
-          trailing: whatsapp != null
-              ? Material(
-                  color: AppColors.card,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(Radii.sm),
-                    side: const BorderSide(color: AppColors.line),
-                  ),
-                  clipBehavior: Clip.antiAlias,
-                  child: InkWell(
-                    onTap: () => _openWhatsApp(vendor.whatsapp),
-                    child: const SizedBox(
-                      width: 38,
-                      height: 38,
-                      child: Center(
-                        child: Icon(Icons.chat_outlined, size: 19, color: AppColors.ink),
-                      ),
-                    ),
-                  ),
-                )
-              : null,
+          trailing: _headerActions(vendor, isAuthorized, whatsapp),
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.sm, Sp.lg, 0),
@@ -875,6 +1150,75 @@ class _VendorPageState extends State<VendorPage> {
     );
   }
 
+  Widget _reviewsSection(VendorDetail vendor) {
+    final text = Theme.of(context).textTheme;
+    final displayedReviews = _reviews.take(5).toList(growable: false);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            const Expanded(
+              child: SectionHeader(title: 'Ulasan Pelanggan'),
+            ),
+            if (_completedBookingId != null) ...[
+              const SizedBox(width: Sp.sm),
+              OutlinedButton.icon(
+                onPressed: () => _openReviewSheet(vendor, _completedBookingId!),
+                icon: const Icon(Icons.rate_review_outlined, size: 16),
+                label: const Text('Tulis Ulasan'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.ink,
+                  side: const BorderSide(color: AppColors.line),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(Radii.sm),
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: Sp.md,
+                    vertical: Sp.xs,
+                  ),
+                  textStyle: text.labelSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: Sp.md),
+        if (_reviewsLoading)
+          const AppLoading(rows: 2, label: 'Memuat ulasan')
+        else if (_reviews.isEmpty || _reviewTotal == 0)
+          const InfoStrip(
+            message: 'Belum ada ulasan untuk vendor ini.',
+            icon: Icons.rate_review_outlined,
+            tone: InfoTone.neutral,
+          )
+        else ...[
+          for (var i = 0; i < displayedReviews.length; i++)
+            Padding(
+              padding: EdgeInsets.only(
+                bottom: i == displayedReviews.length - 1 && _reviewTotal <= 5
+                    ? 0
+                    : Sp.sm,
+              ),
+              child: _ReviewCard(review: displayedReviews[i]),
+            ),
+          if (_reviewTotal > 5) ...[
+            const SizedBox(height: Sp.xs),
+            Center(
+              child: Text(
+                'dan ${_reviewTotal - 5} ulasan lainnya',
+                style: text.bodySmall?.copyWith(color: AppColors.inkMuted),
+              ),
+            ),
+          ],
+        ],
+      ],
+    );
+  }
+
   Widget? _bottomBar(VendorDetail vendor) {
     final date = _date == null ? null : DateTime.tryParse(_date!);
     final label = date == null
@@ -1236,7 +1580,7 @@ class _DayCell extends StatelessWidget {
         ? AppColors.inkMuted
         : waiting
         ? AppColors.warning
-        : const Color(0xFF15803D);
+        : AppColors.accent;
     final weekdayColor = selected
         ? AppColors.onPrimary.withValues(alpha: 0.85)
         : AppColors.inkMuted;
@@ -1403,4 +1747,286 @@ String _addonPrice(Addon addon) {
   final per = unit.isEmpty ? '' : ' / $unit';
   final max = addon.maxQty > 0 ? ' · maks ${addon.maxQty}' : '';
   return '${_rp(addon.priceIdr)}$per$max';
+}
+
+class _ReviewCard extends StatelessWidget {
+  const _ReviewCard({required this.review});
+
+  final Map<String, dynamic> review;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final customerName = (review['customer_name'] as String?)?.trim();
+    final name = (customerName != null && customerName.isNotEmpty)
+        ? customerName
+        : 'Pelanggan';
+    final ratingNum = (review['rating'] as num?)?.toInt() ?? 0;
+    final rating = ratingNum.clamp(0, 5);
+    final comment = (review['comment'] as String?)?.trim();
+    final createdAt = review['created_at'] as String?;
+
+    return Container(
+      padding: const EdgeInsets.all(Sp.md),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(Radii.lg),
+        border: Border.all(color: AppColors.line),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  name,
+                  style: text.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.ink,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              if (createdAt != null && createdAt.isNotEmpty) ...[
+                const SizedBox(width: Sp.sm),
+                Text(
+                  formatDateIso(createdAt),
+                  style: text.bodySmall?.copyWith(
+                    color: AppColors.inkMuted,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: Sp.xs),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: List.generate(5, (index) {
+              final filled = index < rating;
+              return Icon(
+                filled ? Icons.star : Icons.star_border,
+                size: 14,
+                color: filled ? AppColors.warning : AppColors.line,
+              );
+            }),
+          ),
+          if (comment != null && comment.isNotEmpty) ...[
+            const SizedBox(height: Sp.sm),
+            Text(
+              comment,
+              style: text.bodyMedium?.copyWith(
+                color: AppColors.ink,
+                height: 1.4,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ReviewSheet extends StatefulWidget {
+  const _ReviewSheet({
+    required this.vendor,
+    required this.bookingId,
+  });
+
+  final VendorDetail vendor;
+  final String bookingId;
+
+  @override
+  State<_ReviewSheet> createState() => _ReviewSheetState();
+}
+
+class _ReviewSheetState extends State<_ReviewSheet> {
+  int _rating = 0;
+  late final TextEditingController _commentController;
+  bool _submitting = false;
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _commentController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _commentController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_rating < 1 || _submitting) return;
+
+    setState(() {
+      _submitting = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final comment = _commentController.text.trim();
+      await AppScope.of(context).api.post(
+        '/bookings/${widget.bookingId}/review',
+        body: {
+          'rating': _rating,
+          if (comment.isNotEmpty) 'comment': comment,
+        },
+      );
+      if (!mounted) return;
+      Navigator.pop(context, true);
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        if (error.statusCode == 409 || error.code == 'CONFLICT') {
+          _errorMessage = 'Kamu sudah memberikan ulasan untuk booking ini.';
+        } else {
+          _errorMessage = error.userMessage;
+        }
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        _errorMessage = 'Gagal mengirim ulasan. Coba lagi sebentar.';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(Sp.xl, Sp.md, Sp.xl, Sp.xl + bottomInset),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: AppColors.neutralSoft,
+                    borderRadius: BorderRadius.circular(Radii.pill),
+                  ),
+                ),
+              ),
+              const SizedBox(height: Sp.md),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Tulis Ulasan',
+                    style: text.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(
+                      Icons.close,
+                      size: 20,
+                      color: AppColors.inkMuted,
+                    ),
+                    onPressed: _submitting
+                        ? null
+                        : () => Navigator.pop(context, false),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ],
+              ),
+              const SizedBox(height: Sp.xs),
+              Text(
+                widget.vendor.displayName,
+                style: text.bodySmall?.copyWith(color: AppColors.inkMuted),
+              ),
+              const SizedBox(height: Sp.lg),
+              Center(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: List.generate(5, (index) {
+                    final starNum = index + 1;
+                    final isFilled = starNum <= _rating;
+                    return IconButton(
+                      iconSize: 32,
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      visualDensity: VisualDensity.compact,
+                      tooltip: '$starNum bintang',
+                      onPressed: _submitting
+                          ? null
+                          : () => setState(() => _rating = starNum),
+                      icon: Icon(
+                        isFilled
+                            ? Icons.star_rounded
+                            : Icons.star_outline_rounded,
+                        color: isFilled ? AppColors.warning : AppColors.line,
+                      ),
+                    );
+                  }),
+                ),
+              ),
+              const SizedBox(height: Sp.lg),
+              TextField(
+                controller: _commentController,
+                maxLength: 500,
+                maxLines: 4,
+                minLines: 3,
+                enabled: !_submitting,
+                decoration: InputDecoration(
+                  hintText: 'Tulis ulasan tentang vendor ini (opsional)...',
+                  hintStyle: text.bodyMedium?.copyWith(
+                    color: AppColors.inkMuted,
+                  ),
+                  filled: true,
+                  fillColor: AppColors.surface,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(Radii.sm),
+                    borderSide: const BorderSide(color: AppColors.line),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(Radii.sm),
+                    borderSide: const BorderSide(color: AppColors.line),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(Radii.sm),
+                    borderSide: const BorderSide(
+                      color: AppColors.primary,
+                      width: 1.5,
+                    ),
+                  ),
+                  counterStyle: text.bodySmall?.copyWith(
+                    color: AppColors.inkMuted,
+                  ),
+                ),
+              ),
+              if (_errorMessage != null) ...[
+                const SizedBox(height: Sp.sm),
+                InfoStrip(
+                  message: _errorMessage!,
+                  tone: InfoTone.danger,
+                  icon: Icons.error_outline,
+                ),
+              ],
+              const SizedBox(height: Sp.lg),
+              PrimaryButton(
+                label: 'Kirim Ulasan',
+                loading: _submitting,
+                onPressed: _rating >= 1 && !_submitting ? _submit : null,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }

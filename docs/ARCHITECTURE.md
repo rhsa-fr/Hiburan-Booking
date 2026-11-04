@@ -51,7 +51,8 @@ Klien Flutter (`ApiClient`) membuka `data` otomatis bila ada.
 | `regions` | referensi wilayah (kode, nama, level) |
 | `vendors` + `vendor_members` | profil vendor, wilayah, harga mulai, `min_dp_bp`, media |
 | `categories` + `vendor_categories` | kategori referensi; satu vendor multi-kategori, satu primer |
-| `favorites` | favorit pelanggan (skema disiapkan; endpoint menyusul) |
+| `favorites` | favorit pelanggan (`GET /favorites`, `POST /favorites/:id`, `DELETE /favorites/:id`) |
+| `reviews` | ulasan & rating booking pelanggan (`014_reviews.sql`) |
 | `packages` + `package_addons` + `package_price_rules` | paket, add-on, aturan harga |
 | `calendar_slots` | ketersediaan per tanggal + sesi, `updated_at` untuk deteksi `stale` |
 | `events` | detail acara (judul, jenis, alamat, tanggal, tamu) |
@@ -66,19 +67,19 @@ Klien Flutter (`ApiClient`) membuka `data` otomatis bila ada.
 | `policy_versions` | teks kebijakan berversi (`code`, `version`, `body`) |
 | `outbox_messages` | antrean event untuk worker |
 | `audit_logs` | aksi admin/operator |
-| `idempotency_keys` | hasil request idempoten (`POST /bookings`, `POST /payments/dp`) |
+| `idempotency_keys` | hasil request idempoten (`POST /bookings`, `POST /payments/dp`, `POST /payments/settlement`) |
 
 Settlement tidak punya tabel sendiri: statusnya hidup di `bookings.settlement_status`
 (`not_eligible`, `held`, `disputed`, `released`, `clawed_back`) plus `released_at`.
-Pelunasan manual dicatat sebagai baris `payments` berjenis `settlement`; migrasi 007
+Pelunasan manual maupun online (Midtrans) dicatat sebagai baris `payments` berjenis `settlement`; migrasi 007
 menjaga hanya satu baris `pending`/`paid` per booking.
 
-Migrasi: `db/migrations/001_core.sql` … `012_catalog_trgm.sql`. Migrasi 002 menambah
+Migrasi: `db/migrations/001_core.sql` … `014_reviews.sql`. Migrasi 002 menambah
 add-on dan snapshot istilah, 003 auth, 004 password admin + `login_attempts`, 005
 Google, 006 metode pembayaran manual, 007 keunikan pelunasan, 008 kategori katalog +
 tabel favorit, 009 kolom media vendor/paket, 010 guard idempotensi booking
 (`client_generated_id`), 011 refresh token + index rate limit IP, 012 index trigram
-pencarian vendor. Nomor berikutnya: `013`.
+pencarian vendor, 013 payout vendor maker-checker, 014 review booking pelanggan. Nomor berikutnya: `015`.
 
 ## 4. Ledger (bagian paling sensitif)
 

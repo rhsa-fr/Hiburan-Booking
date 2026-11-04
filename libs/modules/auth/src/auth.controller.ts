@@ -64,7 +64,7 @@ const RegisterBody = z
   .object({
     email: z.string().trim().max(150).email('email is not valid'),
     password: z.string().min(8).max(200),
-    phone: z.string().min(1).max(20),
+    phone: z.string().min(1).max(20).optional(),
     full_name: z.string().trim().min(1).max(100).optional()
   })
   .strict();

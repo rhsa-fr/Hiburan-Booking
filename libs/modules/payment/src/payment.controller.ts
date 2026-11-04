@@ -21,6 +21,7 @@ import {
   HttpCode,
   Param,
   Post,
+  Query,
   Req,
   UseGuards
 } from '@nestjs/common';
@@ -32,10 +33,17 @@ import {
   PaymentService,
   hashRequest,
   type DpPaymentByBookingResult,
-  type RefundResult
+  type RefundResult,
+  type SettlementChargeResult,
+  type SettlementPaymentByBookingResult
 } from './payment.service';
 
 const DpChargeBody = z.object({
+  booking_id: z.string().uuid(),
+  method: z.enum(PAYMENT_METHODS)
+});
+
+const SettlementChargeBody = z.object({
   booking_id: z.string().uuid(),
   method: z.enum(PAYMENT_METHODS)
 });
@@ -78,6 +86,33 @@ export class PaymentController {
     return { data: result };
   }
 
+  @Post('payments/settlement')
+  @HttpCode(201)
+  async createSettlementCharge(
+    @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @Req() req: AuthenticatedRequest
+  ): Promise<{ data: SettlementChargeResult }> {
+    const parsed = SettlementChargeBody.safeParse(body);
+    if (!parsed.success) {
+      throw new AppError('VALIDATION_ERROR', 'invalid settlement charge request', parsed.error.issues);
+    }
+    if (!idempotencyKey) {
+      throw new AppError('VALIDATION_ERROR', 'Idempotency-Key header is required');
+    }
+
+    const result = await this.payments.createSettlementCharge(
+      parsed.data.booking_id,
+      parsed.data.method,
+      {
+        idempotencyKey,
+        actorId: req.user?.id ?? null,
+        requestHash: hashRequest(parsed.data)
+      }
+    );
+    return { data: result };
+  }
+
   /**
    * The mobile client re-fetches the DP instruction for its own booking. Any
    * role reaches the handler; ownership is enforced by the service.
@@ -85,15 +120,41 @@ export class PaymentController {
   @Get('payments/by-booking/:bookingId')
   async dpByBooking(
     @Param('bookingId') bookingId: string,
+    @Query('kind') kind: string | undefined,
     @Req() req: AuthenticatedRequest
-  ): Promise<{ data: DpPaymentByBookingResult }> {
+  ): Promise<{ data: DpPaymentByBookingResult | SettlementPaymentByBookingResult }> {
+    const parsed = z.string().uuid().safeParse(bookingId);
+    if (!parsed.success) {
+      throw new AppError('VALIDATION_ERROR', 'invalid booking id');
+    }
+
+    if (kind === 'settlement') {
+      return {
+        data: await this.payments.getSettlementPaymentByBooking(parsed.data, {
+          actorId: req.user?.id ?? null
+        })
+      };
+    }
+
+    return {
+      data: await this.payments.getDpPaymentByBooking(parsed.data, {
+        actorId: req.user?.id ?? null
+      })
+    };
+  }
+
+  @Get('payments/settlement/by-booking/:bookingId')
+  async settlementByBooking(
+    @Param('bookingId') bookingId: string,
+    @Req() req: AuthenticatedRequest
+  ): Promise<{ data: SettlementPaymentByBookingResult }> {
     const parsed = z.string().uuid().safeParse(bookingId);
     if (!parsed.success) {
       throw new AppError('VALIDATION_ERROR', 'invalid booking id');
     }
 
     return {
-      data: await this.payments.getDpPaymentByBooking(parsed.data, {
+      data: await this.payments.getSettlementPaymentByBooking(parsed.data, {
         actorId: req.user?.id ?? null
       })
     };

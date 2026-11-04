@@ -6,6 +6,7 @@ import '../features/auth/welcome_page.dart';
 import '../features/booking/create_page.dart';
 import '../features/booking/list_page.dart';
 import '../features/booking/status_page.dart';
+import '../features/discovery/favorites_page.dart';
 import '../features/discovery/home_page.dart';
 import '../features/discovery/vendor_page.dart';
 import '../features/vendor/vendor_bank_account_page.dart';
@@ -38,6 +39,7 @@ abstract final class Routes {
   static const vendorManageProfile = 'vendorManageProfile';
   static const vendorManagePackages = 'vendorManagePackages';
   static const vendorBankAccount = 'vendorBankAccount';
+  static const favorites = 'favorites';
 
   static Route<dynamic> onGenerateRoute(RouteSettings settings) {
     switch (settings.name) {
@@ -85,6 +87,8 @@ abstract final class Routes {
         return _page(const VendorManagePackagesPage(), settings);
       case Routes.vendorBankAccount:
         return _page(const VendorBankAccountPage(), settings);
+      case Routes.favorites:
+        return _page(const FavoritesPage(), settings);
     }
     return _page(const LoginPage(), settings);
   }

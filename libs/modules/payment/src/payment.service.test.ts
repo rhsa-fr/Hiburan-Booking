@@ -221,13 +221,44 @@ class FakeRepository implements PaymentRepository {
     return null;
   }
 
-  async findLatestDpPaymentByBooking(
+  async findActiveSettlementPayment(
     _tx: JournalQueryClient,
     bookingId: string
+  ): Promise<PaymentRecord | null> {
+    for (const payment of this.payments.values()) {
+      if (
+        payment.bookingId === bookingId &&
+        payment.kind === 'settlement' &&
+        (payment.status === 'pending' || payment.status === 'paid')
+      ) {
+        return payment;
+      }
+    }
+    return null;
+  }
+
+  async findLatestDpPaymentByBooking(
+    tx: JournalQueryClient,
+    bookingId: string
+  ): Promise<DpPaymentByBooking | null> {
+    return this.findLatestPaymentByBooking(tx, bookingId, 'dp');
+  }
+
+  async findLatestSettlementPaymentByBooking(
+    tx: JournalQueryClient,
+    bookingId: string
+  ): Promise<DpPaymentByBooking | null> {
+    return this.findLatestPaymentByBooking(tx, bookingId, 'settlement');
+  }
+
+  async findLatestPaymentByBooking(
+    _tx: JournalQueryClient,
+    bookingId: string,
+    kind?: PaymentRecord['kind']
   ): Promise<DpPaymentByBooking | null> {
     const booking = this.bookings.get(bookingId);
     const matches = [...this.payments.values()].filter(
-      (payment) => payment.bookingId === bookingId && payment.kind === 'dp'
+      (payment) => payment.bookingId === bookingId && (kind === undefined || payment.kind === kind)
     );
     const payment = matches[matches.length - 1];
     if (!booking || !payment) return null;
@@ -644,6 +675,213 @@ describe('createDpCharge', () => {
   });
 });
 
+describe('createSettlementCharge', () => {
+  function setupSettlement() {
+    const context = setup();
+    context.repository.seedBooking({
+      lifecycleStatus: 'confirmed',
+      paymentStatus: 'dp_paid',
+      totalCustomerIdr: 4_025_000n,
+      dpAmountIdr: 1_200_000n
+    });
+    return context;
+  }
+
+  it('creates a pending settlement for booking remaining amount (70%) and returns instruction', async () => {
+    const { service, repository } = setupSettlement();
+
+    const result = await service.createSettlementCharge('booking-1', 'qris', { actorId: CUSTOMER });
+
+    expect(result.status).toBe('pending');
+    expect(result.kind).toBe('settlement');
+    expect(result.amount_idr).toBe(2_825_000);
+    expect(result.currency).toBe('IDR');
+    expect(result.payment_instruction.type).toBe('qris');
+    expect(result.payment_instruction.qr_string).toContain(result.provider_ref.replace(/[^A-Za-z0-9]/g, ''));
+    expect(result.payment.id).toBe(result.id);
+    expect(result.payment.amount_idr).toBe(2_825_000);
+    expect(result.payment.kind).toBe('settlement');
+    expect(result.payment.status).toBe('pending');
+
+    expect(repository.payments.size).toBe(1);
+    const stored = [...repository.payments.values()][0];
+    expect(stored?.kind).toBe('settlement');
+    expect(stored?.amountIdr).toBe(2_825_000n);
+    expect(stored?.feeIdr).toBe(19_775n);
+    expect(stored?.expiresAt?.toISOString()).toBe(new Date(AT.getTime() + 24 * 60 * 60 * 1000).toISOString());
+  });
+
+  it('returns a VA instruction for virtual-account methods', async () => {
+    const { service } = setupSettlement();
+    const result = await service.createSettlementCharge('booking-1', 'va_bca', { actorId: CUSTOMER });
+    expect(result.payment_instruction.type).toBe('va');
+    expect(result.payment_instruction.bank).toBe('BCA');
+    expect(result.payment_instruction.va_number).toMatch(/^\d{12}$/);
+  });
+
+  it.each(['gopay', 'ovo', 'dana', 'shopeepay'] as const)(
+    'rejects e-wallet method %s with 400 VALIDATION_ERROR',
+    async (method) => {
+      const { service, repository } = setupSettlement();
+
+      await expect(
+        service.createSettlementCharge('booking-1', method, { actorId: CUSTOMER })
+      ).rejects.toMatchObject({
+        code: 'VALIDATION_ERROR',
+        message: 'Metode e-wallet belum tersedia. Gunakan QRIS atau virtual account.'
+      });
+      expect(repository.payments.size).toBe(0);
+    }
+  );
+
+  it.each(['confirmed', 'in_progress', 'completed'] as const)(
+    'allows settlement in lifecycleStatus %s when dp_paid',
+    async (lifecycleStatus) => {
+      const { service } = setupSettlement();
+      service['repository'].lockBooking = async () => ({
+        id: 'booking-1',
+        customerId: CUSTOMER,
+        vendorId: VENDOR,
+        lifecycleStatus,
+        paymentStatus: 'dp_paid',
+        paymentDeadline: new Date('2026-10-21T10:00:00.000Z'),
+        dpAmountIdr: 1_200_000n,
+        pricePackageIdr: 4_000_000n,
+        serviceFeeIdr: 25_000n,
+        totalCustomerIdr: 4_025_000n
+      });
+
+      const result = await service.createSettlementCharge('booking-1', 'qris', { actorId: CUSTOMER });
+      expect(result.status).toBe('pending');
+    }
+  );
+
+  it.each(['cancelled', 'rejected', 'expired', 'no_show'] as const)(
+    'rejects closed booking in lifecycleStatus %s with CONFLICT',
+    async (lifecycleStatus) => {
+      const { service } = setupSettlement();
+      service['repository'].lockBooking = async () => ({
+        id: 'booking-1',
+        customerId: CUSTOMER,
+        vendorId: VENDOR,
+        lifecycleStatus,
+        paymentStatus: 'dp_paid',
+        paymentDeadline: new Date('2026-10-21T10:00:00.000Z'),
+        dpAmountIdr: 1_200_000n,
+        pricePackageIdr: 4_000_000n,
+        serviceFeeIdr: 25_000n,
+        totalCustomerIdr: 4_025_000n
+      });
+
+      await expect(
+        service.createSettlementCharge('booking-1', 'qris', { actorId: CUSTOMER })
+      ).rejects.toMatchObject({ code: 'CONFLICT' });
+    }
+  );
+
+  it('rejects an unpaid booking with CONFLICT "DP must be paid before settlement"', async () => {
+    const { service, repository } = setupSettlement();
+    repository.seedBooking({ paymentStatus: 'unpaid' });
+
+    await expect(
+      service.createSettlementCharge('booking-1', 'qris', { actorId: CUSTOMER })
+    ).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'DP must be paid before settlement'
+    });
+  });
+
+  it('rejects an already fully paid booking with CONFLICT "booking is already fully paid"', async () => {
+    const { service, repository } = setupSettlement();
+    repository.seedBooking({ paymentStatus: 'fully_paid' });
+
+    await expect(
+      service.createSettlementCharge('booking-1', 'qris', { actorId: CUSTOMER })
+    ).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'booking is already fully paid'
+    });
+  });
+
+  it('rejects if remaining settlement amount is not positive', async () => {
+    const { service, repository } = setupSettlement();
+    repository.seedBooking({
+      lifecycleStatus: 'confirmed',
+      paymentStatus: 'dp_paid',
+      totalCustomerIdr: 1_200_000n,
+      dpAmountIdr: 1_200_000n
+    });
+
+    await expect(
+      service.createSettlementCharge('booking-1', 'qris', { actorId: CUSTOMER })
+    ).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'settlement amount must be positive'
+    });
+  });
+
+  it('replays stored instruction when active settlement payment already exists', async () => {
+    const { service, repository } = setupSettlement();
+    const first = await service.createSettlementCharge('booking-1', 'qris', { actorId: CUSTOMER });
+
+    const second = await service.createSettlementCharge('booking-1', 'qris', { actorId: CUSTOMER });
+
+    expect(second.id).toBe(first.id);
+    expect(second.amount_idr).toBe(first.amount_idr);
+    expect(second.payment_instruction).toEqual(first.payment_instruction);
+    expect(repository.payments.size).toBe(1);
+  });
+
+  it('replays the stored result for the same Idempotency-Key', async () => {
+    const { service, repository } = setupSettlement();
+    const first = await service.createSettlementCharge('booking-1', 'qris', {
+      actorId: CUSTOMER,
+      idempotencyKey: 'idem-settle-0000000000000001'
+    });
+    const second = await service.createSettlementCharge('booking-1', 'qris', {
+      actorId: CUSTOMER,
+      idempotencyKey: 'idem-settle-0000000000000001'
+    });
+    expect(second).toEqual(first);
+    expect(repository.payments.size).toBe(1);
+  });
+
+  it('rejects the same Idempotency-Key with a different request', async () => {
+    const { service } = setupSettlement();
+    await service.createSettlementCharge('booking-1', 'qris', {
+      actorId: CUSTOMER,
+      idempotencyKey: 'idem-settle-0000000000000002'
+    });
+    await expect(
+      service.createSettlementCharge('booking-1', 'va_bca', {
+        actorId: CUSTOMER,
+        idempotencyKey: 'idem-settle-0000000000000002'
+      })
+    ).rejects.toMatchObject({ code: 'IDEMPOTENCY_MISMATCH' });
+  });
+
+  describe('ownership', () => {
+    it('rejects a booking owned by another customer with NOT_FOUND', async () => {
+      const { service, repository } = setupSettlement();
+      repository.seedBooking({ customerId: 'customer-2' });
+
+      await expect(
+        service.createSettlementCharge('booking-1', 'qris', { actorId: CUSTOMER })
+      ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+
+      expect(repository.payments.size).toBe(0);
+    });
+
+    it('requires an authenticated actor', async () => {
+      const { service, repository } = setupSettlement();
+      await expect(service.createSettlementCharge('booking-1', 'qris')).rejects.toMatchObject({
+        code: 'UNAUTHENTICATED'
+      });
+      expect(repository.payments.size).toBe(0);
+    });
+  });
+});
+
 describe('handleWebhook /v1/webhooks/pjp', () => {
   it('rejects a bad signature with UNAUTHENTICATED and writes nothing', async () => {
     const { service, repository } = setup();
@@ -842,7 +1080,7 @@ describe('settlement payment (pelunasan)', () => {
 
     expect(result.status).toBe('processed');
     expect(bookingPort.fullyPaidCalls).toEqual([
-      { bookingId: 'booking-1', amountIdr: OUTSTANDING, now: AT }
+      { bookingId: 'booking-1', amountIdr: OUTSTANDING, now: AT, allowAfterCompletion: true }
     ]);
     expect(bookingPort.fullyPaidClients[0]).toBe(repository.client);
     expect(bookingPort.dpPaidCalls).toHaveLength(0);
@@ -1435,6 +1673,87 @@ describe('getDpPaymentByBooking', () => {
     const { service } = setup();
 
     await expect(service.getDpPaymentByBooking('booking-1')).rejects.toMatchObject({
+      code: 'UNAUTHENTICATED'
+    });
+  });
+});
+
+describe('getSettlementPaymentByBooking', () => {
+  function setupSettlement() {
+    const context = setup();
+    context.repository.seedBooking({
+      lifecycleStatus: 'confirmed',
+      paymentStatus: 'dp_paid',
+      totalCustomerIdr: 4_025_000n,
+      dpAmountIdr: 1_200_000n
+    });
+    return context;
+  }
+
+  it('returns the pending settlement with the instruction rebuilt by the charge helper', async () => {
+    const { service } = setupSettlement();
+    const charge = await service.createSettlementCharge('booking-1', 'qris', { actorId: CUSTOMER });
+
+    const result = await service.getSettlementPaymentByBooking('booking-1', { actorId: CUSTOMER });
+
+    expect(result.payment).toEqual({
+      id: charge.id,
+      booking_id: 'booking-1',
+      kind: 'settlement',
+      status: 'pending',
+      amount_idr: 2_825_000,
+      currency: 'IDR',
+      method: 'qris',
+      provider: 'pjp',
+      provider_ref: charge.provider_ref,
+      expires_at: charge.expires_at,
+      paid_at: null
+    });
+    expect(result.payment_instruction).toEqual(charge.payment_instruction);
+    expect(result.payment_instruction?.type).toBe('qris');
+  });
+
+  it('returns a null instruction once the settlement is paid', async () => {
+    const { service, repository } = setupSettlement();
+    const charge = await service.createSettlementCharge('booking-1', 'qris', { actorId: CUSTOMER });
+    await repository.markPaymentPaid(repository.tx, {
+      paymentId: charge.id,
+      paidAt: AT,
+      providerTxnId: 'PJP-TXN-SETTLE-1',
+      rawPayload: {}
+    });
+
+    const result = await service.getSettlementPaymentByBooking('booking-1', { actorId: CUSTOMER });
+
+    expect(result.payment.status).toBe('paid');
+    expect(result.payment.paid_at).toBe(AT.toISOString());
+    expect(result.payment_instruction).toBeNull();
+  });
+
+  it('answers NOT_FOUND when the booking has no settlement payment', async () => {
+    const { service } = setupSettlement();
+
+    await expect(
+      service.getSettlementPaymentByBooking('booking-1', { actorId: CUSTOMER })
+    ).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+      message: 'Belum ada tagihan pelunasan untuk booking ini'
+    });
+  });
+
+  it('rejects a caller that does not own the booking with NOT_FOUND', async () => {
+    const { service } = setupSettlement();
+    await service.createSettlementCharge('booking-1', 'qris', { actorId: CUSTOMER });
+
+    await expect(
+      service.getSettlementPaymentByBooking('booking-1', { actorId: 'other-customer' })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('rejects an unauthenticated caller', async () => {
+    const { service } = setupSettlement();
+
+    await expect(service.getSettlementPaymentByBooking('booking-1')).rejects.toMatchObject({
       code: 'UNAUTHENTICATED'
     });
   });

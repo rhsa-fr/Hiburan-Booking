@@ -141,7 +141,7 @@ output. "Tidak dijalankan" adalah jawaban yang sah; klaim palsu tidak.
 4. `flutter analyze` + `flutter test`, lalu screenshot 390×844.
 
 **Migrasi DB**
-1. Nomor urut berikutnya di `db/migrations` (terakhir `013`, berikutnya `014`).
+1. Nomor urut berikutnya di `db/migrations` (terakhir `014`, berikutnya `015`).
 2. Idempoten bila memungkinkan; sediakan jalur koreksi ke depan, bukan `DROP` data.
 3. Jalankan `npm run migrate:dry` sebelum `npm run migrate`.
 
@@ -160,13 +160,16 @@ Sudah diperbaiki (jangan dikembalikan tanpa keputusan tertulis):
 - Payout vendor: `payouts`/`payout_items`, rekening terenkripsi AES-256-GCM, maker-checker
   dua endpoint, jurnal `payout_requested`/`payout_settled` + reversal saat provider gagal,
   dan worker `payout_reconcile`.
+- Pelunasan online sisa 70% (`POST /v1/payments/settlement`, `GET /v1/payments/settlement/by-booking/:id`)
+  lewat Midtrans QRIS/VA, terintegrasi ke status booking dan ledger.
+- Ulasan & rating booking pelanggan (`POST /v1/bookings/:id/review`, `GET /v1/vendors/:id/reviews`, migrasi `014_reviews.sql`).
 
 Masih terbuka:
 
 - Tidak ada emulator Android/HP fisik; bukti APK hanya build sukses.
 - Detail vendor sempat kosong pada screenshot E2E otomatis — assertion ukuran body
   sudah ditambahkan; cek manual screenshot sebelum menyatakan selesai.
-- Provider WhatsApp/SMS, review/rating, picker peta, dan UI check-in berbasis GPS belum ada.
+- Provider WhatsApp/SMS, picker peta, dan UI check-in berbasis GPS belum ada.
   Charge/notifikasi/refund QRIS sudah memakai Midtrans sandbox; endpoint check-in/no-show
   basic sudah ada.
 - Integrasi Iris (`PAYOUT_PROVIDER=iris`) belum diuji live: butuh `IRIS_API_KEY` dan saldo

@@ -105,7 +105,7 @@ export interface LoginWithPasswordInput {
 export interface RegisterInput {
   readonly email: string;
   readonly password: string;
-  readonly phone: string;
+  readonly phone?: string;
   readonly full_name?: string;
   readonly ip?: string | null;
   readonly userAgent?: string | null;
@@ -438,7 +438,8 @@ export class AuthService {
    */
   async register(input: RegisterInput): Promise<VerifyOtpResult> {
     const email = normalizeEmail(input.email);
-    const phone = normalizePhone(input.phone);
+    const phone =
+      input.phone && input.phone.trim().length > 0 ? normalizePhone(input.phone) : null;
 
     if (typeof input.password !== 'string' || input.password.length < 8) {
       throw new AppError('VALIDATION_ERROR', 'password must be at least 8 characters');
@@ -446,7 +447,10 @@ export class AuthService {
 
     // One generic conflict message: registration must not reveal which of the
     // two identifiers is already taken.
-    if ((await this.repository.emailExists(email)) || (await this.repository.phoneExists(phone))) {
+    if (
+      (await this.repository.emailExists(email)) ||
+      (phone !== null && (await this.repository.phoneExists(phone)))
+    ) {
       throw new AppError('CONFLICT', 'Email atau nomor sudah terdaftar');
     }
 
@@ -454,7 +458,7 @@ export class AuthService {
     const passwordHash = await hashPassword(input.password);
     const newUser: NewUser = {
       id: this.newId(),
-      phone,
+      phone: phone ?? null,
       email,
       name: input.full_name?.trim() || null,
       passwordHash,

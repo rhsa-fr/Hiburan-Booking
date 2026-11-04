@@ -19,12 +19,13 @@ class _RegisterPageState extends State<RegisterPage> {
   final _formKey = GlobalKey<FormState>();
   final _name = TextEditingController();
   final _email = TextEditingController();
-  final _phone = TextEditingController();
   final _password = TextEditingController();
-  final _phoneFocus = FocusNode();
+  final _confirmPassword = TextEditingController();
   final _emailFocus = FocusNode();
   final _passwordFocus = FocusNode();
+  final _confirmPasswordFocus = FocusNode();
   bool _obscure = true;
+  bool _obscureConfirm = true;
   bool _loading = false;
   String? _error;
 
@@ -32,11 +33,11 @@ class _RegisterPageState extends State<RegisterPage> {
   void dispose() {
     _name.dispose();
     _email.dispose();
-    _phone.dispose();
     _password.dispose();
-    _phoneFocus.dispose();
+    _confirmPassword.dispose();
     _emailFocus.dispose();
     _passwordFocus.dispose();
+    _confirmPasswordFocus.dispose();
     super.dispose();
   }
 
@@ -45,13 +46,17 @@ class _RegisterPageState extends State<RegisterPage> {
     setState(() => _error = null);
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
+    if (_password.text != _confirmPassword.text) {
+      setState(() => _error = 'Konfirmasi kata sandi tidak cocok.');
+      return;
+    }
+
     FocusScope.of(context).unfocus();
     final scope = AppScope.of(context);
     final name = _name.text.trim();
     final body = <String, dynamic>{
       'email': _email.text.trim(),
       'password': _password.text,
-      'phone': normalizePhone(_phone.text),
       if (name.isNotEmpty) 'full_name': name,
     };
 
@@ -97,7 +102,6 @@ class _RegisterPageState extends State<RegisterPage> {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
-    final normalizedPhone = normalizePhone(_phone.text);
     final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
 
     return Scaffold(
@@ -132,7 +136,7 @@ class _RegisterPageState extends State<RegisterPage> {
                   ),
                   const SizedBox(height: Sp.xs),
                   Text(
-                    'Cukup satu kali. Nomor WhatsApp dipakai vendor untuk konfirmasi hari-H.',
+                    'Cukup satu kali untuk mulai memesan hiburan Pantura.',
                     style: text.bodyMedium?.copyWith(
                       color: AppColors.inkMuted,
                       height: 1.45,
@@ -157,44 +161,9 @@ class _RegisterPageState extends State<RegisterPage> {
                             decoration: authField(
                               hint: 'Nama sesuai panggilan',
                             ),
-                            onFieldSubmitted: (_) => _phoneFocus.requestFocus(),
+                            onFieldSubmitted: (_) =>
+                                _emailFocus.requestFocus(),
                           ),
-                          const SizedBox(height: Sp.lg),
-                          const AuthFieldLabel('Nomor WhatsApp'),
-                          const SizedBox(height: 6),
-                          TextFormField(
-                            controller: _phone,
-                            focusNode: _phoneFocus,
-                            keyboardType: TextInputType.phone,
-                            textInputAction: TextInputAction.next,
-                            autofillHints: const [
-                              AutofillHints.telephoneNumber,
-                            ],
-                            inputFormatters: [
-                              FilteringTextInputFormatter.allow(
-                                RegExp(r'[0-9+\s-]'),
-                              ),
-                            ],
-                            style: text.bodyMedium,
-                            decoration: authField(
-                              hint: '081234567890',
-                              prefixIcon: const _PhonePrefix(),
-                              prefixIconConstraints: const BoxConstraints(
-                                minWidth: 0,
-                                minHeight: 48,
-                              ),
-                            ),
-                            validator: phoneError,
-                            onChanged: (_) => setState(() => _error = null),
-                            onFieldSubmitted: (_) => _emailFocus.requestFocus(),
-                          ),
-                          if (normalizedPhone.isNotEmpty) ...[
-                            const SizedBox(height: Sp.xs),
-                            Text(
-                              'Dikirim sebagai $normalizedPhone',
-                              style: text.bodySmall,
-                            ),
-                          ],
                           const SizedBox(height: Sp.lg),
                           const AuthFieldLabel('Email'),
                           const SizedBox(height: 6),
@@ -226,7 +195,7 @@ class _RegisterPageState extends State<RegisterPage> {
                             focusNode: _passwordFocus,
                             obscureText: _obscure,
                             keyboardType: TextInputType.visiblePassword,
-                            textInputAction: TextInputAction.done,
+                            textInputAction: TextInputAction.next,
                             autofillHints: const [AutofillHints.newPassword],
                             style: text.bodyMedium,
                             decoration: authField(
@@ -255,7 +224,8 @@ class _RegisterPageState extends State<RegisterPage> {
                             ),
                             validator: passwordError,
                             onChanged: (_) => _clearError(),
-                            onFieldSubmitted: (_) => _submit(),
+                            onFieldSubmitted: (_) =>
+                                _confirmPasswordFocus.requestFocus(),
                           ),
                           const SizedBox(height: Sp.sm),
                           Row(
@@ -273,6 +243,55 @@ class _RegisterPageState extends State<RegisterPage> {
                                 ),
                               ),
                             ],
+                          ),
+                          const SizedBox(height: Sp.lg),
+                          const AuthFieldLabel('Konfirmasi kata sandi'),
+                          const SizedBox(height: 6),
+                          TextFormField(
+                            controller: _confirmPassword,
+                            focusNode: _confirmPasswordFocus,
+                            obscureText: _obscureConfirm,
+                            keyboardType: TextInputType.visiblePassword,
+                            textInputAction: TextInputAction.done,
+                            autofillHints: const [AutofillHints.newPassword],
+                            style: text.bodyMedium,
+                            decoration: authField(
+                              hint: 'Ulangi kata sandi',
+                              prefixIcon: const AuthFieldIcon(
+                                Icons.lock_outline,
+                              ),
+                              suffixIcon: IconButton(
+                                onPressed: () => setState(
+                                  () => _obscureConfirm = !_obscureConfirm,
+                                ),
+                                tooltip: _obscureConfirm
+                                    ? 'Tampilkan kata sandi'
+                                    : 'Sembunyikan kata sandi',
+                                color: AppColors.inkMuted,
+                                icon: Icon(
+                                  _obscureConfirm
+                                      ? Icons.visibility_outlined
+                                      : Icons.visibility_off_outlined,
+                                  size: 20,
+                                ),
+                                constraints: const BoxConstraints(
+                                  minWidth: 48,
+                                  minHeight: 48,
+                                ),
+                              ),
+                            ),
+                            validator: (value) {
+                              final confirm = value ?? '';
+                              if (confirm.isEmpty) {
+                                return 'Konfirmasi kata sandi wajib diisi';
+                              }
+                              if (confirm != _password.text) {
+                                return 'Konfirmasi kata sandi tidak cocok';
+                              }
+                              return null;
+                            },
+                            onChanged: (_) => _clearError(),
+                            onFieldSubmitted: (_) => _submit(),
                           ),
                           if (_error != null) AuthInlineError(_error!),
                           const SizedBox(height: Sp.lg),
@@ -322,32 +341,6 @@ class _RegisterPageState extends State<RegisterPage> {
               ),
             ),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Locked country segment inside the WhatsApp field.
-class _PhonePrefix extends StatelessWidget {
-  const _PhonePrefix();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 9),
-      padding: const EdgeInsets.symmetric(horizontal: Sp.lg),
-      alignment: Alignment.center,
-      decoration: const BoxDecoration(
-        border: Border(right: BorderSide(color: AppColors.line)),
-      ),
-      child: const Text(
-        '+62',
-        style: TextStyle(
-          fontSize: 15,
-          height: 1.2,
-          fontWeight: FontWeight.w600,
-          color: AppColors.ink,
         ),
       ),
     );

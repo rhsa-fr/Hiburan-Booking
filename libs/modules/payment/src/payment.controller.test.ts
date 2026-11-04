@@ -58,6 +58,14 @@ describe('money routes are guarded', () => {
     ) as string[] | undefined;
     expect(roles).toBeUndefined();
   });
+
+  it('does not require an admin role on the settlement charge route', () => {
+    const roles = Reflect.getMetadata(
+      ROLES_KEY,
+      PaymentController.prototype.createSettlementCharge
+    ) as string[] | undefined;
+    expect(roles).toBeUndefined();
+  });
 });
 
 describe('the PJP webhook route stays open for the provider', () => {
@@ -95,5 +103,109 @@ describe('AuthGuard on the money routes', () => {
     const token = signAccessToken({ sub: 'customer-1', roles: ['customer'] }, 'another-secret-0001', 900);
     const request: FakeRequest = { headers: { authorization: `Bearer ${token}` } };
     expect(() => guard.canActivate(contextFor(request))).toThrowError(AppError);
+  });
+});
+
+describe('PaymentController methods', () => {
+  const fakeService = {
+    createSettlementCharge: async (bookingId: string, method: string, opts: unknown) => ({
+      id: 'pay-settle-1',
+      booking_id: bookingId,
+      kind: 'settlement' as const,
+      status: 'pending' as const,
+      amount_idr: 2_800_000,
+      currency: 'IDR' as const,
+      method: method as any,
+      provider: 'pjp',
+      provider_ref: 'REF-1',
+      expires_at: '2026-10-22T09:00:00.000Z',
+      payment_instruction: { type: 'qris' as const, expires_at: '2026-10-22T09:00:00.000Z' },
+      payment: {
+        id: 'pay-settle-1',
+        booking_id: bookingId,
+        kind: 'settlement' as const,
+        status: 'pending' as const,
+        amount_idr: 2_800_000,
+        currency: 'IDR' as const,
+        method: method as any,
+        provider: 'pjp',
+        provider_ref: 'REF-1',
+        expires_at: '2026-10-22T09:00:00.000Z',
+        paid_at: null
+      }
+    }),
+    getSettlementPaymentByBooking: async (bookingId: string, opts: unknown) => ({
+      payment: {
+        id: 'pay-settle-1',
+        booking_id: bookingId,
+        kind: 'settlement' as const,
+        status: 'pending' as const,
+        amount_idr: 2_800_000,
+        currency: 'IDR' as const,
+        method: 'qris' as any,
+        provider: 'pjp',
+        provider_ref: 'REF-1',
+        expires_at: '2026-10-22T09:00:00.000Z',
+        paid_at: null
+      },
+      payment_instruction: { type: 'qris' as const, expires_at: '2026-10-22T09:00:00.000Z' }
+    }),
+    getDpPaymentByBooking: async (bookingId: string, opts: unknown) => ({
+      payment: {
+        id: 'pay-dp-1',
+        booking_id: bookingId,
+        kind: 'dp' as const,
+        status: 'pending' as const,
+        amount_idr: 1_200_000,
+        currency: 'IDR' as const,
+        method: 'qris' as any,
+        provider: 'pjp',
+        provider_ref: 'REF-DP-1',
+        expires_at: '2026-10-21T10:00:00.000Z',
+        paid_at: null
+      },
+      payment_instruction: { type: 'qris' as const, expires_at: '2026-10-21T10:00:00.000Z' }
+    })
+  };
+
+  const controller = new PaymentController(fakeService as any);
+  const authReq = { user: { id: 'cust-1', roles: ['customer'] } } as any;
+  const validUuid = '123e4567-e89b-12d3-a456-426614174000';
+
+  it('createSettlementCharge validates body and header', async () => {
+    await expect(
+      controller.createSettlementCharge({ booking_id: 'invalid', method: 'qris' }, 'key-1', authReq)
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+
+    await expect(
+      controller.createSettlementCharge({ booking_id: validUuid, method: 'qris' }, undefined, authReq)
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+
+    const res = await controller.createSettlementCharge(
+      { booking_id: validUuid, method: 'qris' },
+      'key-1234567890abcdef',
+      authReq
+    );
+    expect(res.data.id).toBe('pay-settle-1');
+    expect(res.data.kind).toBe('settlement');
+  });
+
+  it('settlementByBooking validates UUID and delegates to service', async () => {
+    await expect(controller.settlementByBooking('bad-id', authReq)).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR'
+    });
+
+    const res = await controller.settlementByBooking(validUuid, authReq);
+    expect(res.data.payment.kind).toBe('settlement');
+  });
+
+  it('dpByBooking delegates to settlement when kind=settlement', async () => {
+    const res = await controller.dpByBooking(validUuid, 'settlement', authReq);
+    expect(res.data.payment.kind).toBe('settlement');
+  });
+
+  it('dpByBooking defaults to dp when kind is omitted', async () => {
+    const res = await controller.dpByBooking(validUuid, undefined, authReq);
+    expect(res.data.payment.kind).toBe('dp');
   });
 });

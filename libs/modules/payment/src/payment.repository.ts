@@ -77,10 +77,12 @@ export interface RefundRecord {
 }
 
 /** Latest DP payment of a booking plus the booking owner, for the read route. */
-export interface DpPaymentByBooking {
+export interface PaymentByBooking {
   readonly payment: PaymentRecord;
   readonly customerId: string;
 }
+
+export type DpPaymentByBooking = PaymentByBooking;
 
 export interface NewPayment {
   readonly bookingId: string;
@@ -163,11 +165,24 @@ export interface PaymentRepository {
   lockBooking(tx: JournalQueryClient, bookingId: string): Promise<BookingSnapshot | null>;
   lockBookingForPayment(tx: JournalQueryClient, paymentId: string): Promise<BookingSnapshot | null>;
   findActiveDpPayment(tx: JournalQueryClient, bookingId: string): Promise<PaymentRecord | null>;
+  findActiveSettlementPayment(
+    tx: JournalQueryClient,
+    bookingId: string
+  ): Promise<PaymentRecord | null>;
   /** Newest DP payment of the booking (any status) with the booking's customer id. */
   findLatestDpPaymentByBooking(
     tx: JournalQueryClient,
     bookingId: string
-  ): Promise<DpPaymentByBooking | null>;
+  ): Promise<PaymentByBooking | null>;
+  findLatestSettlementPaymentByBooking(
+    tx: JournalQueryClient,
+    bookingId: string
+  ): Promise<PaymentByBooking | null>;
+  findLatestPaymentByBooking(
+    tx: JournalQueryClient,
+    bookingId: string,
+    kind?: PaymentKind
+  ): Promise<PaymentByBooking | null>;
   insertPayment(tx: JournalQueryClient, input: NewPayment): Promise<PaymentRecord>;
   findSettlementPayment(
     tx: JournalQueryClient,
@@ -297,12 +312,30 @@ WHERE booking_id = $1 AND kind = 'dp' AND status IN ('pending','paid')
 LIMIT 1
 `;
 
+const SELECT_ACTIVE_SETTLEMENT_SQL = `
+SELECT id, booking_id, kind, method, amount_idr, fee_idr, status, provider, provider_ref,
+       expires_at, paid_at, raw_payload
+FROM payments
+WHERE booking_id = $1 AND kind = 'settlement' AND status IN ('pending','paid')
+LIMIT 1
+`;
+
 const SELECT_LATEST_DP_BY_BOOKING_SQL = `
 SELECT p.id, p.booking_id, p.kind, p.method, p.amount_idr, p.fee_idr, p.status, p.provider,
        p.provider_ref, p.expires_at, p.paid_at, p.raw_payload, b.customer_id
 FROM payments p
 JOIN bookings b ON b.id = p.booking_id
 WHERE p.booking_id = $1 AND p.kind = 'dp'
+ORDER BY p.created_at DESC, p.id DESC
+LIMIT 1
+`;
+
+const SELECT_LATEST_PAYMENT_BY_BOOKING_SQL = `
+SELECT p.id, p.booking_id, p.kind, p.method, p.amount_idr, p.fee_idr, p.status, p.provider,
+       p.provider_ref, p.expires_at, p.paid_at, p.raw_payload, b.customer_id
+FROM payments p
+JOIN bookings b ON b.id = p.booking_id
+WHERE p.booking_id = $1 AND ($2::payment_kind IS NULL OR p.kind = $2::payment_kind)
 ORDER BY p.created_at DESC, p.id DESC
 LIMIT 1
 `;
@@ -476,11 +509,35 @@ export class PgPaymentRepository implements PaymentRepository {
     return row ? mapPayment(row) : null;
   }
 
+  async findActiveSettlementPayment(
+    tx: JournalQueryClient,
+    bookingId: string
+  ): Promise<PaymentRecord | null> {
+    const { rows } = await tx.query(SELECT_ACTIVE_SETTLEMENT_SQL, [bookingId]);
+    const row = rows[0];
+    return row ? mapPayment(row) : null;
+  }
+
   async findLatestDpPaymentByBooking(
     tx: JournalQueryClient,
     bookingId: string
-  ): Promise<DpPaymentByBooking | null> {
-    const { rows } = await tx.query(SELECT_LATEST_DP_BY_BOOKING_SQL, [bookingId]);
+  ): Promise<PaymentByBooking | null> {
+    return this.findLatestPaymentByBooking(tx, bookingId, 'dp');
+  }
+
+  async findLatestSettlementPaymentByBooking(
+    tx: JournalQueryClient,
+    bookingId: string
+  ): Promise<PaymentByBooking | null> {
+    return this.findLatestPaymentByBooking(tx, bookingId, 'settlement');
+  }
+
+  async findLatestPaymentByBooking(
+    tx: JournalQueryClient,
+    bookingId: string,
+    kind?: PaymentKind
+  ): Promise<PaymentByBooking | null> {
+    const { rows } = await tx.query(SELECT_LATEST_PAYMENT_BY_BOOKING_SQL, [bookingId, kind ?? null]);
     const row = rows[0];
     if (!row) return null;
     return { payment: mapPayment(row), customerId: String(row.customer_id) };
@@ -503,6 +560,14 @@ export class PgPaymentRepository implements PaymentRepository {
       return mapPayment(row);
     } catch (error) {
       if (isUniqueViolation(error)) {
+        const constraint = constraintName(error);
+        if (input.kind === 'settlement' || constraint === 'payments_one_settlement') {
+          throw new AppError(
+            'CONFLICT',
+            'an active settlement payment already exists for this booking',
+            { constraint: 'payments_one_settlement' }
+          );
+        }
         throw new AppError(
           'CONFLICT',
           'an active DP payment already exists for this booking',

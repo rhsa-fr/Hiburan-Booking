@@ -41,6 +41,7 @@ class _BrowsePageState extends State<BrowsePage> {
   bool _started = false;
   bool _loading = true;
   bool _loadingMore = false;
+  bool _showFilterPanel = false;
 
   @override
   void initState() {
@@ -49,6 +50,7 @@ class _BrowsePageState extends State<BrowsePage> {
     _search.text = _query;
     final category = widget.initialCategory?.trim() ?? '';
     _category = category.isEmpty ? null : category;
+    _showFilterPanel = _category != null;
   }
 
   @override
@@ -236,6 +238,7 @@ class _BrowsePageState extends State<BrowsePage> {
       _category = null;
       _date = null;
       _region = null;
+      _sort = 0;
     });
     _load(reset: true);
   }
@@ -357,121 +360,405 @@ class _BrowsePageState extends State<BrowsePage> {
 
   Widget _filters() {
     final regions = _regions;
+    final hasActiveFilters =
+        _category != null || _date != null || _region != null || _sort != 0;
+    final activeCount = (_category != null ? 1 : 0) +
+        (_date != null ? 1 : 0) +
+        (_region != null ? 1 : 0) +
+        (_sort != 0 ? 1 : 0);
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.md, Sp.lg, 0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const InfoStrip(
-            message:
-                'DP ditahan di rekening PJP berizin sampai acara selesai. '
-                'Dana diteruskan ke vendor setelah jadwal terlewati.',
-            icon: Icons.shield_outlined,
-            tone: InfoTone.primary,
-          ),
-          const SizedBox(height: Sp.md),
-          if (_categories.isNotEmpty) ...[
-            SizedBox(
-              height: 48,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: _categories.length + 1,
-                separatorBuilder: (_, _) => const SizedBox(width: Sp.sm),
-                itemBuilder: (context, index) {
-                  if (index == 0) {
-                    return SelectChip(
-                      label: 'Semua kategori',
-                      selected: _category == null,
-                      onTap: () => _setCategory(null),
-                    );
-                  }
-                  final category = _categories[index - 1];
-                  return SelectChip(
-                    label: category.name,
-                    selected: _category == category.slug,
-                    onTap: () => _setCategory(category.slug),
-                  );
-                },
+      padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.sm, Sp.lg, 0),
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppColors.card,
+          borderRadius: BorderRadius.circular(Radii.lg),
+          border: Border.all(color: AppColors.line),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x060B1220),
+              blurRadius: 8,
+              offset: Offset(0, 2),
+            ),
+          ],
+        ),
+        padding: const EdgeInsets.all(Sp.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            InkWell(
+              onTap: () => setState(() => _showFilterPanel = !_showFilterPanel),
+              borderRadius: BorderRadius.circular(Radii.sm),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.tune_rounded,
+                            size: 16,
+                            color: (hasActiveFilters || _showFilterPanel)
+                                ? AppColors.primary
+                                : AppColors.inkMuted,
+                          ),
+                          const SizedBox(width: Sp.xs + 2),
+                          Flexible(
+                            child: Text(
+                              'Filter & Urutan',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                color: (hasActiveFilters || _showFilterPanel)
+                                    ? AppColors.primary
+                                    : AppColors.ink,
+                              ),
+                            ),
+                          ),
+                          if (activeCount > 0) ...[
+                            const SizedBox(width: Sp.xs + 2),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: AppColors.primary,
+                                borderRadius: BorderRadius.circular(Radii.pill),
+                              ),
+                              child: Text(
+                                '$activeCount',
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.onPrimary,
+                                ),
+                              ),
+                            ),
+                          ],
+                          const SizedBox(width: Sp.xs),
+                          Icon(
+                            _showFilterPanel
+                                ? Icons.keyboard_arrow_up
+                                : Icons.keyboard_arrow_down,
+                            size: 18,
+                            color: AppColors.inkMuted,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: Sp.sm),
+                    if (hasActiveFilters)
+                      InkWell(
+                        onTap: _resetFilters,
+                        borderRadius: BorderRadius.circular(Radii.sm),
+                        child: const Padding(
+                          padding:
+                              EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.refresh_rounded,
+                                size: 13,
+                                color: AppColors.tertiary,
+                              ),
+                              SizedBox(width: 3),
+                              Text(
+                                'Reset',
+                                style: TextStyle(
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.tertiary,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      )
+                    else
+                      Text(
+                        '$_total vendor',
+                        style: const TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w500,
+                          color: AppColors.inkMuted,
+                        ),
+                      ),
+                  ],
+                ),
               ),
             ),
-            const SizedBox(height: Sp.sm),
-          ],
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _pickDate,
-                  icon: const Icon(Icons.event_outlined, size: 18),
-                  label: Text(
-                    _date == null
-                        ? 'Pilih tanggal acara (tahun & bulan)'
-                        : 'Tanggal: ${formatDate(_date!)}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+            if (_showFilterPanel) ...[
+              const SizedBox(height: Sp.sm),
+              if (_categories.isNotEmpty) ...[
+                SizedBox(
+                  height: 36,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: _categories.length + 1,
+                    separatorBuilder: (_, _) => const SizedBox(width: Sp.sm),
+                    itemBuilder: (context, index) {
+                      if (index == 0) {
+                        return SelectChip(
+                          label: 'Semua kategori',
+                          selected: _category == null,
+                          onTap: () => _setCategory(null),
+                          compact: true,
+                        );
+                      }
+                      final category = _categories[index - 1];
+                      return SelectChip(
+                        label: category.name,
+                        selected: _category == category.slug,
+                        onTap: () => _setCategory(category.slug),
+                        compact: true,
+                      );
+                    },
                   ),
-                  style: OutlinedButton.styleFrom(
-                    minimumSize: const Size.fromHeight(48),
-                    alignment: Alignment.centerLeft,
-                    foregroundColor: _date == null
-                        ? AppColors.ink
-                        : AppColors.primary,
-                    side: BorderSide(
-                      color: _date == null
-                          ? AppColors.line
-                          : AppColors.primary,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(Radii.sm),
-                    ),
+                ),
+                const SizedBox(height: Sp.sm),
+              ],
+              Row(
+                children: [
+                  Expanded(child: _dateTile()),
+                  const SizedBox(width: Sp.sm),
+                  Expanded(child: _regionTile(regions)),
+                ],
+              ),
+              const SizedBox(height: Sp.sm),
+              SegmentBar(
+                items: const ['Termurah', 'Nama A-Z'],
+                index: _sort,
+                onChanged: _setSort,
+              ),
+            ] else ...[
+              const Offstage(
+                offstage: true,
+                child: SizedBox(
+                  height: 0,
+                  child: SelectChip(label: '', selected: false),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _dateTile() {
+    final active = _date != null;
+    return Material(
+      color: active ? AppColors.surfaceTint : AppColors.surfaceSoft,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(Radii.sm),
+        side: BorderSide(
+          color: active ? AppColors.primary : AppColors.line,
+          width: active ? 1.5 : 1.0,
+        ),
+      ),
+      child: InkWell(
+        onTap: _pickDate,
+        borderRadius: BorderRadius.circular(Radii.sm),
+        child: Container(
+          height: 44,
+          padding: const EdgeInsets.symmetric(horizontal: Sp.md),
+          child: Row(
+            children: [
+              Icon(
+                Icons.event_outlined,
+                size: 16,
+                color: active ? AppColors.primary : AppColors.inkMuted,
+              ),
+              const SizedBox(width: Sp.xs + 2),
+              Expanded(
+                child: Text(
+                  active ? formatDate(_date!) : 'Tanggal Acara',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+                    color: active ? AppColors.primary : AppColors.inkMuted,
                   ),
                 ),
               ),
-              if (_date != null) ...[
-                const SizedBox(width: Sp.xs),
-                IconButton(
-                  onPressed: _clearDate,
-                  tooltip: 'Hapus tanggal',
-                  icon: const Icon(Icons.close),
-                  color: AppColors.primary,
+              if (active) ...[
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: _clearDate,
+                  child: const Padding(
+                    padding: EdgeInsets.all(4),
+                    child: Icon(Icons.close, size: 16, color: AppColors.primary),
+                  ),
+                ),
+              ] else ...[
+                const Icon(
+                  Icons.keyboard_arrow_down,
+                  size: 16,
+                  color: AppColors.inkMuted,
                 ),
               ],
             ],
           ),
-          const SizedBox(height: Sp.md),
-          if (regions.isNotEmpty) ...[
-            SizedBox(
-              height: 48,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: regions.length + 1,
-                separatorBuilder: (_, _) => const SizedBox(width: Sp.sm),
-                itemBuilder: (context, index) {
-                  if (index == 0) {
-                    return SelectChip(
-                      label: 'Semua wilayah',
-                      selected: _region == null,
-                      onTap: () => setState(() => _region = null),
-                    );
-                  }
-                  final region = regions[index - 1];
-                  return SelectChip(
-                    label: region,
-                    selected: _region == region,
-                    onTap: () => setState(() => _region = region),
-                  );
-                },
-              ),
-            ),
-            const SizedBox(height: Sp.md),
-          ],
-          SegmentBar(
-            items: const ['Termurah', 'Nama A-Z'],
-            index: _sort,
-            onChanged: _setSort,
-          ),
-          const SizedBox(height: Sp.md),
-        ],
+        ),
       ),
+    );
+  }
+
+  Widget _regionTile(List<String> regions) {
+    final active = _region != null;
+    final hasRegions = regions.isNotEmpty;
+    return Material(
+      color: active ? AppColors.surfaceTint : AppColors.surfaceSoft,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(Radii.sm),
+        side: BorderSide(
+          color: active ? AppColors.primary : AppColors.line,
+          width: active ? 1.5 : 1.0,
+        ),
+      ),
+      child: InkWell(
+        onTap: hasRegions ? () => _openRegionPicker(regions) : null,
+        borderRadius: BorderRadius.circular(Radii.sm),
+        child: Container(
+          height: 44,
+          padding: const EdgeInsets.symmetric(horizontal: Sp.md),
+          child: Row(
+            children: [
+              Icon(
+                Icons.location_on_outlined,
+                size: 16,
+                color: active ? AppColors.primary : AppColors.inkMuted,
+              ),
+              const SizedBox(width: Sp.xs + 2),
+              Expanded(
+                child: Text(
+                  active ? _region! : 'Semua Wilayah',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+                    color: active ? AppColors.primary : AppColors.inkMuted,
+                  ),
+                ),
+              ),
+              if (active) ...[
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => setState(() => _region = null),
+                  child: const Padding(
+                    padding: EdgeInsets.all(4),
+                    child: Icon(Icons.close, size: 16, color: AppColors.primary),
+                  ),
+                ),
+              ] else ...[
+                const Icon(
+                  Icons.keyboard_arrow_down,
+                  size: 16,
+                  color: AppColors.inkMuted,
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openRegionPicker(List<String> regions) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.card,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(Radii.xl)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: Sp.md),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.sm, Sp.lg, Sp.sm),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.location_on_outlined,
+                        size: 20,
+                        color: AppColors.primary,
+                      ),
+                      const SizedBox(width: Sp.sm),
+                      Text(
+                        'Pilih Wilayah Pantura',
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.ink,
+                            ),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(Icons.close, size: 20),
+                        color: AppColors.inkMuted,
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1, color: AppColors.line),
+                ListTile(
+                  leading: Icon(
+                    _region == null
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_off,
+                    color: _region == null ? AppColors.primary : AppColors.inkMuted,
+                  ),
+                  title: const Text(
+                    'Semua Wilayah',
+                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                  ),
+                  selected: _region == null,
+                  onTap: () {
+                    setState(() => _region = null);
+                    Navigator.pop(context);
+                  },
+                ),
+                ...regions.map(
+                  (r) => ListTile(
+                    leading: Icon(
+                      _region == r
+                          ? Icons.radio_button_checked
+                          : Icons.radio_button_off,
+                      color:
+                          _region == r ? AppColors.primary : AppColors.inkMuted,
+                    ),
+                    title: Text(
+                      r,
+                      style: TextStyle(
+                        fontWeight: _region == r
+                            ? FontWeight.w700
+                            : FontWeight.w500,
+                        fontSize: 14,
+                      ),
+                    ),
+                    selected: _region == r,
+                    onTap: () {
+                      setState(() => _region = r);
+                      Navigator.pop(context);
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 

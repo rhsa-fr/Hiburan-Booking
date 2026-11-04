@@ -4,7 +4,11 @@ import { AuthGuard, JWT_SECRET, RolesGuard } from '@tarlink/platform/auth';
 import { CatalogController } from './catalog.controller';
 import { CatalogRepository } from './catalog.repository';
 import { CatalogService } from './catalog.service';
+import { FavoriteController } from './favorite.controller';
+import { FavoriteService } from './favorite.service';
 import { PublicCatalogController } from './public-catalog.controller';
+import { ReviewController } from './review.controller';
+import { ReviewService } from './review.service';
 
 /**
  * Catalog module: vendor lifecycle, packages and the vendor calendar
@@ -16,14 +20,21 @@ import { PublicCatalogController } from './public-catalog.controller';
  * here and both guards are registered in this injector, same as `AdminModule`.
  */
 @Module({
-  controllers: [CatalogController, PublicCatalogController],
+  controllers: [
+    CatalogController,
+    PublicCatalogController,
+    FavoriteController,
+    ReviewController
+  ],
   providers: [
     CatalogRepository,
     CatalogService,
+    FavoriteService,
+    ReviewService,
     { provide: JWT_SECRET, useValue: loadConfig().JWT_SECRET },
     { provide: AuthGuard, useClass: AuthGuard },
     RolesGuard
   ],
-  exports: [CatalogService]
+  exports: [CatalogService, FavoriteService, ReviewService]
 })
 export class CatalogModule {}

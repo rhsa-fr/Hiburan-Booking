@@ -62,6 +62,9 @@ class _BookingStatusPageState extends State<BookingStatusPage>
   bool _cancelBusy = false;
   String? _cancelError;
 
+  bool _noShowBusy = false;
+  String? _noShowError;
+
   Timer? _pollTimer;
   Timer? _tickTimer;
 
@@ -102,21 +105,24 @@ class _BookingStatusPageState extends State<BookingStatusPage>
       final raw = await api.get('/bookings/${widget.bookingId}');
       final next = BookingView.fromJson(_asMap(raw));
       if (!mounted) return;
+      final prevPayment = _booking?.paymentStatus;
       setState(() {
         _booking = next;
         _loading = false;
         _loadError = null;
         _weakSignal = false;
-        if (isDpSettled(next.paymentStatus) ||
+        final dpJustSettled =
+            prevPayment == 'unpaid' && isDpSettled(next.paymentStatus);
+        if (dpJustSettled ||
+            isFullySettled(next.paymentStatus) ||
             next.paymentStatus == 'refunded' ||
             _closedLifecycles.contains(next.lifecycleStatus) ||
-            next.lifecycleStatus == 'completed') {
+            (next.lifecycleStatus == 'completed' &&
+                isFullySettled(next.paymentStatus))) {
           _payment = null;
         }
       });
-      if (!silent &&
-          next.lifecycleStatus == 'accepted' &&
-          next.paymentStatus == 'unpaid') {
+      if (!silent && (_canPay || _canPaySettlement)) {
         await _restoreInstruction();
       }
     } on ApiException catch (error) {
@@ -143,8 +149,30 @@ class _BookingStatusPageState extends State<BookingStatusPage>
     _restoring = true;
     final api = AppScope.of(context).api;
     try {
-      final raw = await api.get('/payments/by-booking/${widget.bookingId}');
-      final restored = PaymentView.fromJson(_asMap(raw));
+      dynamic raw;
+      if (_booking?.paymentStatus == 'dp_paid') {
+        try {
+          raw = await api.get(
+            '/payments/settlement/by-booking/${widget.bookingId}',
+          );
+        } on ApiException catch (error) {
+          if (_isNetwork(error)) rethrow;
+          raw = await api.get(
+            '/payments/by-booking/${widget.bookingId}?kind=settlement',
+          );
+        }
+      } else {
+        raw = await api.get('/payments/by-booking/${widget.bookingId}');
+      }
+      final data = _asMap(raw);
+      final paymentMap =
+          data['payment'] != null ? _asMap(data['payment']) : data;
+      final restored = PaymentView(
+        payment: Payment.fromJson(paymentMap),
+        instruction: data['payment_instruction'] == null
+            ? null
+            : PaymentInstruction.fromJson(_asMap(data['payment_instruction'])),
+      );
       if (!mounted) return;
       if (restored.instruction != null) {
         setState(() {
@@ -153,7 +181,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
         });
       }
     } on ApiException catch (error) {
-      // No DP invoice yet is a normal state, not an error for the customer.
+      // No DP/settlement invoice yet is a normal state, not an error for the customer.
       if (_isNetwork(error) && mounted) {
         setState(() => _weakSignal = true);
       }
@@ -165,12 +193,13 @@ class _BookingStatusPageState extends State<BookingStatusPage>
 
   void _syncPolling() {
     final booking = _booking;
+    final hasActiveInstruction = _payment?.instruction != null;
     final shouldPoll =
         booking != null &&
         !_closedLifecycles.contains(booking.lifecycleStatus) &&
-        booking.lifecycleStatus != 'completed' &&
-        !isDpSettled(booking.paymentStatus) &&
-        booking.paymentStatus != 'refunded';
+        !isFullySettled(booking.paymentStatus) &&
+        booking.paymentStatus != 'refunded' &&
+        (!isDpSettled(booking.paymentStatus) || hasActiveInstruction);
     if (!shouldPoll) {
       _pollTimer?.cancel();
       _pollTimer = null;
@@ -185,7 +214,8 @@ class _BookingStatusPageState extends State<BookingStatusPage>
     final needsTick =
         _payment?.instruction != null &&
         booking != null &&
-        booking.paymentStatus == 'unpaid';
+        !isFullySettled(booking.paymentStatus) &&
+        !_closedLifecycles.contains(booking.lifecycleStatus);
     if (!needsTick) {
       _tickTimer?.cancel();
       _tickTimer = null;
@@ -213,6 +243,14 @@ class _BookingStatusPageState extends State<BookingStatusPage>
         booking.paymentStatus == 'unpaid';
   }
 
+  bool get _canPaySettlement {
+    final booking = _booking;
+    return booking != null &&
+        !_closedLifecycles.contains(booking.lifecycleStatus) &&
+        booking.paymentStatus == 'dp_paid' &&
+        booking.outstandingIdr > 0;
+  }
+
   bool get _canCancel {
     final booking = _booking;
     if (booking == null) return false;
@@ -228,6 +266,22 @@ class _BookingStatusPageState extends State<BookingStatusPage>
       default:
         return false;
     }
+  }
+
+  bool get _canNoShow {
+    final booking = _booking;
+    if (booking == null || booking.lifecycleStatus != 'confirmed') {
+      return false;
+    }
+    final parsed = DateTime.tryParse(booking.event.startDate) ??
+        (booking.slots.isNotEmpty
+            ? DateTime.tryParse(booking.slots.first.date)
+            : null);
+    if (parsed == null) return false;
+    final session = booking.slots.isNotEmpty ? booking.slots.first.session : null;
+    final hour = session == 'night' ? 19 : 8;
+    final eventStart = DateTime(parsed.year, parsed.month, parsed.day, hour);
+    return DateTime.now().isAfter(eventStart.add(const Duration(hours: 2)));
   }
 
   Future<void> _pay() async {
@@ -264,6 +318,53 @@ class _BookingStatusPageState extends State<BookingStatusPage>
         _keyMethod = null;
         _weakSignal = false;
       });
+      _syncTick();
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _paying = false;
+        _payError = error.message;
+      });
+    }
+  }
+
+  Future<void> _paySettlement() async {
+    final booking = _booking;
+    if (booking == null || _paying) return;
+    if (_idempotencyKey == null || _keyMethod != _method) {
+      _idempotencyKey = uuidV4();
+      _keyMethod = _method;
+    }
+    final key = _idempotencyKey!;
+    final api = AppScope.of(context).api;
+    setState(() {
+      _paying = true;
+      _payError = null;
+    });
+    try {
+      final raw = await api.post(
+        '/payments/settlement',
+        headers: {'Idempotency-Key': key},
+        body: {'booking_id': booking.id, 'method': _method},
+      );
+      final data = _asMap(raw);
+      final paymentMap =
+          data['payment'] != null ? _asMap(data['payment']) : data;
+      final result = PaymentView(
+        payment: Payment.fromJson(paymentMap),
+        instruction: data['payment_instruction'] == null
+            ? null
+            : PaymentInstruction.fromJson(_asMap(data['payment_instruction'])),
+      );
+      if (!mounted) return;
+      setState(() {
+        _payment = result;
+        _paying = false;
+        _idempotencyKey = null;
+        _keyMethod = null;
+        _weakSignal = false;
+      });
+      _syncPolling();
       _syncTick();
     } on ApiException catch (error) {
       if (!mounted) return;
@@ -339,6 +440,46 @@ class _BookingStatusPageState extends State<BookingStatusPage>
     return 'Pembayaran ${rupiah(paid)} yang sudah masuk tidak otomatis kembali '
         'kalau booking dibatalkan. Hubungi vendor atau Tarlink untuk mengurus '
         'pengembaliannya.';
+  }
+
+  Future<void> _noShow() async {
+    final booking = _booking;
+    if (booking == null || _noShowBusy) return;
+    final reason = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.card,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(Radii.lg)),
+      ),
+      builder: (_) => _NoShowSheet(booking: booking),
+    );
+    if (reason == null || !mounted) return;
+    final api = AppScope.of(context).api;
+    setState(() {
+      _noShowBusy = true;
+      _noShowError = null;
+    });
+    try {
+      await api.post(
+        '/bookings/${booking.id}/no-show',
+        body: {'reason': reason},
+      );
+      await _fetch();
+      if (!mounted) return;
+      setState(() {
+        _noShowBusy = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Vendor ditandai tidak hadir.')),
+      );
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _noShowBusy = false;
+        _noShowError = error.message;
+      });
+    }
   }
 
   Future<void> _openWhatsApp() async {
@@ -575,7 +716,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
         ),
         const SizedBox(height: Sp.lg),
       ],
-      if (_canPay || _payment != null) ...[
+      if (_canPay || _canPaySettlement || _payment != null) ...[
         _paymentSection(booking, text),
         const SizedBox(height: Sp.xl),
       ],
@@ -602,6 +743,13 @@ class _BookingStatusPageState extends State<BookingStatusPage>
         Semantics(
           liveRegion: true,
           child: AppError(message: _cancelError!, compact: true),
+        ),
+      ],
+      if (_noShowError != null) ...[
+        const SizedBox(height: Sp.md),
+        Semantics(
+          liveRegion: true,
+          child: AppError(message: _noShowError!, compact: true),
         ),
       ],
     ];
@@ -683,7 +831,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
             caption: 'Booking ${booking.code}',
           ),
           const SizedBox(height: Sp.md),
-          BookingPanel(child: _instructionView(view, text)),
+          BookingPanel(child: _instructionView(booking, view, text)),
         ],
       );
     }
@@ -708,6 +856,83 @@ class _BookingStatusPageState extends State<BookingStatusPage>
                   onPressed: _refresh,
                   icon: const Icon(Icons.refresh),
                   label: const Text('Muat ulang'),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+
+    if (_canPaySettlement) {
+      final outstanding =
+          moneyValue(booking.pricing, 'outstanding_idr') ??
+          booking.outstandingIdr;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SectionHeader(
+            title: 'Pelunasan Pembayaran',
+            caption: 'Sisa tagihan ${booking.code}',
+          ),
+          const SizedBox(height: Sp.md),
+          BookingPanel(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Text('Sisa Tagihan', style: text.bodySmall),
+                    const SizedBox(width: Sp.sm),
+                    const Spacer(),
+                    Flexible(
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerRight,
+                        child: Text(
+                          rupiah(outstanding),
+                          style: text.titleLarge?.copyWith(
+                            fontFeatures: _tabularFigures,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: Sp.md),
+                for (final method in _paymentMethods) ...[
+                  _MethodOption(
+                    label: method.label,
+                    selected: _method == method.value,
+                    onTap: _paying
+                        ? null
+                        : () => setState(() {
+                            _method = method.value;
+                            _payError = null;
+                            _idempotencyKey = null;
+                            _keyMethod = null;
+                          }),
+                  ),
+                  const SizedBox(height: Sp.sm),
+                ],
+                if (_payError != null) ...[
+                  const SizedBox(height: Sp.xs),
+                  Semantics(
+                    liveRegion: true,
+                    child: AppError(message: _payError!, compact: true),
+                  ),
+                  const SizedBox(height: Sp.md),
+                ],
+                PrimaryButton(
+                  label: 'Bayar Sisa Tagihan',
+                  loadingLabel: 'Membuat tagihan…',
+                  loading: _paying,
+                  onPressed: _paySettlement,
+                ),
+                const SizedBox(height: Sp.sm),
+                Text(
+                  'Jangan tutup layar ini saat tagihan dibuat.',
+                  style: text.bodySmall,
                 ),
               ],
             ),
@@ -784,13 +1009,21 @@ class _BookingStatusPageState extends State<BookingStatusPage>
     );
   }
 
-  Widget _instructionView(PaymentView view, TextTheme text) {
+  Widget _instructionView(
+    BookingView booking,
+    PaymentView view,
+    TextTheme text,
+  ) {
     final instruction = view.instruction!;
     final expires = _expiryMoment(view);
+    final isSettlement = booking.paymentStatus == 'dp_paid';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text('Bayar DP', style: text.bodySmall),
+        Text(
+          isSettlement ? 'Pelunasan Sisa' : 'Bayar DP',
+          style: text.bodySmall,
+        ),
         const SizedBox(height: 2),
         Text(
           rupiah(view.payment.amountIdr),
@@ -805,7 +1038,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
         const SizedBox(height: Sp.lg),
         if (instruction.type == 'qris' &&
             (instruction.qrString != null || instruction.qrUrl != null))
-          _qrisBlock(instruction, text)
+          _qrisBlock(instruction, text, isSettlement: isSettlement)
         else if (instruction.type == 'va' && instruction.vaNumber != null)
           _vaBlock(instruction, text)
         else
@@ -824,7 +1057,11 @@ class _BookingStatusPageState extends State<BookingStatusPage>
     return DateTime.tryParse(iso)?.toLocal();
   }
 
-  Widget _qrisBlock(PaymentInstruction instruction, TextTheme text) {
+  Widget _qrisBlock(
+    PaymentInstruction instruction,
+    TextTheme text, {
+    bool isSettlement = false,
+  }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -836,7 +1073,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
               borderRadius: BorderRadius.circular(Radii.sm),
               border: Border.all(color: AppColors.line),
             ),
-            child: _qrImage(instruction, 200),
+            child: _qrImage(instruction, 200, isSettlement: isSettlement),
           ),
         ),
         const SizedBox(height: Sp.sm),
@@ -847,7 +1084,8 @@ class _BookingStatusPageState extends State<BookingStatusPage>
         ),
         const SizedBox(height: Sp.md),
         OutlinedButton.icon(
-          onPressed: () => _showQrSheet(instruction, text),
+          onPressed: () =>
+              _showQrSheet(instruction, text, isSettlement: isSettlement),
           icon: const Icon(Icons.download_outlined, size: 20),
           label: const Text('Simpan kode QR'),
           style: OutlinedButton.styleFrom(
@@ -860,7 +1098,13 @@ class _BookingStatusPageState extends State<BookingStatusPage>
     );
   }
 
-  Widget _qrImage(PaymentInstruction instruction, double size) {
+  Widget _qrImage(
+    PaymentInstruction instruction,
+    double size, {
+    bool isSettlement = false,
+  }) {
+    final label =
+        isSettlement ? 'Kode QRIS pelunasan sisa' : 'Kode QRIS pembayaran DP';
     final url = instruction.qrUrl;
     if (url != null) {
       return Image.network(
@@ -868,7 +1112,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
         width: size,
         height: size,
         fit: BoxFit.contain,
-        semanticLabel: 'Kode QRIS pembayaran DP',
+        semanticLabel: label,
         loadingBuilder: (context, child, progress) => progress == null
             ? child
             : SizedBox(
@@ -901,7 +1145,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
         dataModuleShape: QrDataModuleShape.square,
         color: AppColors.ink,
       ),
-      semanticsLabel: 'Kode QRIS pembayaran DP',
+      semanticsLabel: label,
     );
   }
 
@@ -946,7 +1190,11 @@ class _BookingStatusPageState extends State<BookingStatusPage>
     );
   }
 
-  Future<void> _showQrSheet(PaymentInstruction instruction, TextTheme text) async {
+  Future<void> _showQrSheet(
+    PaymentInstruction instruction,
+    TextTheme text, {
+    bool isSettlement = false,
+  }) async {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -971,13 +1219,17 @@ class _BookingStatusPageState extends State<BookingStatusPage>
                     borderRadius: BorderRadius.circular(Radii.sm),
                     border: Border.all(color: AppColors.line),
                   ),
-                  child: _qrImage(instruction, 240),
+                  child: _qrImage(
+                    instruction,
+                    240,
+                    isSettlement: isSettlement,
+                  ),
                 ),
               ),
               const SizedBox(height: Sp.lg),
               Text(
                 'Screenshot layar ini untuk menyimpan kode QR. Kode ini dipakai '
-                'sekali untuk membayar DP.',
+                'sekali untuk membayar ${isSettlement ? 'pelunasan sisa' : 'DP'}.',
                 textAlign: TextAlign.center,
                 style: text.bodyMedium,
               ),
@@ -1187,6 +1439,27 @@ class _BookingStatusPageState extends State<BookingStatusPage>
                   borderRadius: BorderRadius.circular(Radii.sm),
                 ),
                 textStyle: text.labelLarge?.copyWith(color: AppColors.danger),
+              ),
+            ),
+          ],
+          if (_canNoShow) ...[
+            const SizedBox(height: Sp.sm),
+            OutlinedButton.icon(
+              onPressed: _noShowBusy ? null : _noShow,
+              icon: const Icon(Icons.warning_amber_rounded, size: 20),
+              label: Text(
+                _noShowBusy
+                    ? 'Menandai tidak hadir…'
+                    : 'Tandai vendor tidak hadir',
+              ),
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size.fromHeight(52),
+                foregroundColor: AppColors.warning,
+                side: const BorderSide(color: AppColors.warning),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(Radii.sm),
+                ),
+                textStyle: text.labelLarge?.copyWith(color: AppColors.warning),
               ),
             ),
           ],
@@ -1444,6 +1717,110 @@ class _CancelSheetState extends State<_CancelSheet> {
                       minimumSize: const Size.fromHeight(48),
                     ),
                     child: const Text('Batalkan booking'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _NoShowSheet extends StatefulWidget {
+  const _NoShowSheet({required this.booking});
+
+  final BookingView booking;
+
+  @override
+  State<_NoShowSheet> createState() => _NoShowSheetState();
+}
+
+class _NoShowSheetState extends State<_NoShowSheet> {
+  final _reason = TextEditingController();
+  String? _error;
+
+  @override
+  void dispose() {
+    _reason.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final value = _reason.text.trim();
+    if (value.length < 10) {
+      setState(() => _error = 'Alasan minimal 10 karakter.');
+      return;
+    }
+    Navigator.pop(context, value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(Sp.xl, Sp.xl, Sp.xl, Sp.xl + bottomInset),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('Vendor tidak hadir?', style: text.titleLarge),
+            const SizedBox(height: Sp.xs),
+            Text(
+              '${widget.booking.code} · ${widget.booking.vendor.displayName}',
+              style: text.bodySmall,
+            ),
+            const SizedBox(height: Sp.lg),
+            const InfoStrip(
+              message:
+                  'Tandai hanya jika vendor tidak hadir di lokasi acara. '
+                  'Laporan ini akan diverifikasi oleh tim Tarlink.',
+              icon: Icons.warning_amber_rounded,
+              tone: InfoTone.warning,
+            ),
+            const SizedBox(height: Sp.lg),
+            TextField(
+              controller: _reason,
+              autofocus: true,
+              minLines: 2,
+              maxLines: 4,
+              maxLength: 500,
+              decoration: InputDecoration(
+                labelText: 'Alasan',
+                hintText: 'Tulis alasan minimal 10 karakter',
+                errorText: _error,
+                counterText: '',
+              ),
+              onChanged: (_) {
+                if (_error != null) setState(() => _error = null);
+              },
+            ),
+            const SizedBox(height: Sp.sm),
+            Row(
+              children: [
+                Expanded(
+                  child: TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    style: TextButton.styleFrom(
+                      minimumSize: const Size.fromHeight(48),
+                    ),
+                    child: const Text('Kembali'),
+                  ),
+                ),
+                const SizedBox(width: Sp.sm),
+                Expanded(
+                  flex: 2,
+                  child: FilledButton(
+                    onPressed: _submit,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppColors.warning,
+                      foregroundColor: AppColors.onPrimary,
+                      minimumSize: const Size.fromHeight(48),
+                    ),
+                    child: const Text('Tandai tidak hadir'),
                   ),
                 ),
               ],

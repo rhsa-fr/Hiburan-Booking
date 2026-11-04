@@ -219,3 +219,36 @@ export interface PolicyDocument {
   effective_from: string;
   body: Record<string, unknown>;
 }
+
+export interface FavoriteListResult {
+  items: PublicVendorCard[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface ReviewResult {
+  id: string;
+  booking_id: string;
+  vendor_id: string;
+  customer_id: string;
+  rating: number;
+  comment: string | null;
+  created_at: string;
+}
+
+export interface ReviewListItem {
+  id: string;
+  rating: number;
+  comment: string | null;
+  customer_name: string;
+  created_at: string;
+}
+
+export interface ReviewListResult {
+  items: ReviewListItem[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+

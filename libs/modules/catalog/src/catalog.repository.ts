@@ -129,7 +129,7 @@ const PUBLIC_VENDOR_WHERE = `
 `;
 
 /** Primary category for the card: a vendor may belong to many, one flagged. */
-const PUBLIC_VENDOR_CATEGORY_JOIN = `
+export const PUBLIC_VENDOR_CATEGORY_JOIN = `
   LEFT JOIN LATERAL (
     SELECT c.slug, c.name
       FROM vendor_categories vc
@@ -141,7 +141,7 @@ const PUBLIC_VENDOR_CATEGORY_JOIN = `
   ) cat ON true
 `;
 
-const PUBLIC_VENDOR_LIST_COLUMNS = `
+export const PUBLIC_VENDOR_LIST_COLUMNS = `
   v.id,
   v.slug,
   v.display_name,

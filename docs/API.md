@@ -48,7 +48,7 @@ Query: `page` (mulai 1, default 1), `page_size` (default 20, maks 100).
 **Uang** — selalu integer rupiah (`1500000`), tidak pernah string atau desimal.
 Format tampilan dilakukan klien.
 
-**Idempotensi** — `POST /bookings` dan `POST /payments/dp` mewajibkan header
+**Idempotensi** — `POST /bookings`, `POST /payments/dp`, dan `POST /payments/settlement` mewajibkan header
 `Idempotency-Key` (16–80 karakter). Request dengan key dan payload sama
 mengembalikan hasil yang sama; replay ditandai header `Idempotency-Replayed: true`.
 `POST /bookings` juga menerima `client_generated_id` (UUID) sebagai fallback dan
@@ -193,6 +193,28 @@ Sesi: `day`, `night`, `full`. Bila `stale` benar, UI **wajib** menampilkan perin
 
 Seed hanya berisi `cancellation`; kode lain bisa 404 — jangan mengarang teks hukum.
 
+### `GET /favorites`
+
+Daftar vendor favorit pelanggan. Wajib bearer token (peran `customer`).
+Query: `page` (default 1), `page_size` (default 20, maks 100).
+Mengembalikan `{ items, total, page, page_size }` berisi ringkasan vendor.
+
+### `POST /favorites/:vendorId`
+
+Menambahkan vendor ke daftar favorit pelanggan. Wajib bearer token.
+Status: `204 No Content`. Idempoten jika sudah difavoritkan.
+
+### `DELETE /favorites/:vendorId`
+
+Menghapus vendor dari daftar favorit pelanggan. Wajib bearer token.
+Status: `204 No Content`. Idempoten jika belum difavoritkan.
+
+### `GET /vendors/:vendorId/reviews`
+
+Daftar ulasan publik untuk vendor.
+Query: `page` (default 1), `page_size` (default 20, maks 100).
+Mengembalikan `{ items, total, page, page_size }` dengan item `{ id, booking_id, customer_name, rating, comment, created_at }`.
+
 ---
 
 ## Booking
@@ -281,6 +303,21 @@ agar dana tidak bisa dirilis.
 
 Konflik status → `409`.
 
+### `POST /bookings/:bookingId/review`
+
+Mengirim ulasan dan rating untuk booking yang sudah `completed`. Wajib bearer token pemilik booking.
+Status: `201 Created`.
+
+```json
+{
+  "rating": 5,
+  "comment": "Pelayanan sangat memuaskan, suara jernih dan tepat waktu."
+}
+```
+
+`rating` wajib integer `1` sampai `5`. `comment` opsional (maks 500 karakter).
+Hanya satu ulasan per booking (`409` bila booking sudah diulas).
+
 ---
 
 ## Pembayaran
@@ -326,6 +363,30 @@ Bentuk `instruction` per rail:
 ### `GET /payments/by-booking/:bookingId`
 
 Mengembalikan pembayaran terakhir + instruksi. `404` bila belum ada tagihan.
+Mendukung filter jenis via query parameter: `?kind=dp` (default) atau `?kind=settlement`.
+
+### `POST /payments/settlement`
+
+Pelunasan online (sisa 70% booking). Header wajib: `Idempotency-Key: <16–80 char>`, `Authorization: Bearer <token>`.
+
+```json
+{ "booking_id": "uuid", "method": "qris" }
+```
+
+`method`: `qris`, `va_bca`, `va_bni`, `va_bri`, `va_mandiri`.
+E-wallet (`gopay`, `ovo`, `dana`, `shopeepay`) ditolak `400 VALIDATION_ERROR`.
+
+Aturan status:
+- `lifecycle_status` tidak boleh ditutup (`cancelled`, `rejected`, `expired`, `no_show`).
+- `payment_status` harus `dp_paid` (`unpaid` → `409` DP must be paid before settlement, `fully_paid` → `409` booking is already fully paid).
+- Sisa tagihan dihitung otomatis di server (`total_customer_idr - dp_amount_idr`).
+
+Bentuk respons sama dengan DP (`payment` + `payment_instruction`).
+
+### `GET /payments/settlement/by-booking/:bookingId`
+
+Mengembalikan tagihan pelunasan terakhir untuk booking. `404` bila belum ada tagihan pelunasan.
+Wajib bearer token dan divalidasi kepemilikan booking.
 
 ### `POST /payments/:id/refund`
 

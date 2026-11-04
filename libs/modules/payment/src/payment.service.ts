@@ -62,6 +62,7 @@ const REQUEST_ID_MAX_LENGTH = 40;
 
 export const IDEMPOTENCY_SCOPE = {
   createDpCharge: 'POST /v1/payments/dp',
+  createSettlementCharge: 'POST /v1/payments/settlement',
   refund: 'POST /v1/payments/:id/refund',
   advanceRefund: 'payment.refund.advance'
 } as const;
@@ -125,6 +126,33 @@ export interface DpChargeResult {
   readonly payment_instruction: PaymentInstruction;
 }
 
+export interface SettlementChargeResult {
+  readonly id: string;
+  readonly booking_id: string;
+  readonly kind: 'settlement';
+  readonly status: 'pending';
+  readonly amount_idr: number;
+  readonly currency: 'IDR';
+  readonly method: PaymentMethod;
+  readonly provider: string;
+  readonly provider_ref: string;
+  readonly expires_at: string;
+  readonly payment_instruction: PaymentInstruction;
+  readonly payment: {
+    readonly id: string;
+    readonly booking_id: string;
+    readonly kind: 'settlement';
+    readonly status: 'pending';
+    readonly amount_idr: number;
+    readonly currency: 'IDR';
+    readonly method: PaymentMethod;
+    readonly provider: string;
+    readonly provider_ref: string;
+    readonly expires_at: string;
+    readonly paid_at: string | null;
+  };
+}
+
 /** `GET /payments/by-booking/:bookingId` body. */
 export interface DpPaymentByBookingResult {
   readonly payment: {
@@ -141,6 +169,24 @@ export interface DpPaymentByBookingResult {
     readonly paid_at: string | null;
   };
   /** Rebuilt with the same helper as `POST /payments/dp`; null when not pending. */
+  readonly payment_instruction: PaymentInstruction | null;
+}
+
+/** `GET /payments/settlement/by-booking/:bookingId` body. */
+export interface SettlementPaymentByBookingResult {
+  readonly payment: {
+    readonly id: string;
+    readonly booking_id: string;
+    readonly kind: 'settlement';
+    readonly status: PaymentStatus;
+    readonly amount_idr: number;
+    readonly currency: 'IDR';
+    readonly method: PaymentMethod;
+    readonly provider: string;
+    readonly provider_ref: string;
+    readonly expires_at: string | null;
+    readonly paid_at: string | null;
+  };
   readonly payment_instruction: PaymentInstruction | null;
 }
 
@@ -440,6 +486,180 @@ export class PaymentService {
         id: payment.id,
         booking_id: payment.bookingId,
         kind: 'dp',
+        status: payment.status,
+        amount_idr: jsonRupiah(payment.amountIdr),
+        currency: 'IDR',
+        method: payment.method,
+        provider: payment.provider,
+        provider_ref: payment.providerRef,
+        expires_at: payment.expiresAt ? payment.expiresAt.toISOString() : null,
+        paid_at: payment.paidAt ? payment.paidAt.toISOString() : null
+      },
+      payment_instruction: payment.status === 'pending' ? this.buildInstruction(payment) : null
+    };
+  }
+
+  /* ------------------------------------------------------ settlement charge */
+
+  async createSettlementCharge(
+    bookingId: string,
+    method: PaymentMethod,
+    opts: RequestOptions = {}
+  ): Promise<SettlementChargeResult> {
+    if (!bookingId) throw new AppError('VALIDATION_ERROR', 'bookingId is required');
+    if (!PAYMENT_METHODS.includes(method)) {
+      throw new AppError('VALIDATION_ERROR', `unsupported payment method: ${String(method)}`);
+    }
+    if (!SUPPORTED_DP_METHODS.has(method)) {
+      throw new AppError(
+        'VALIDATION_ERROR',
+        'Metode e-wallet belum tersedia. Gunakan QRIS atau virtual account.'
+      );
+    }
+    const actorId = opts.actorId ?? null;
+    if (!actorId) {
+      throw new AppError('UNAUTHENTICATED', 'an authenticated actor is required');
+    }
+
+    const requestHash = opts.requestHash ?? hashRequest({ booking_id: bookingId, method });
+    return this.runIdempotent(IDEMPOTENCY_SCOPE.createSettlementCharge, opts, requestHash, async () => {
+      const now = this.now();
+      const payment = await this.repository.transaction(async (tx) => {
+        const booking = await this.repository.lockBooking(tx, bookingId);
+        if (!booking) throw new AppError('NOT_FOUND', `booking ${bookingId} not found`);
+
+        if (booking.customerId !== actorId) {
+          throw new AppError('NOT_FOUND', `booking ${bookingId} not found`);
+        }
+
+        if (booking.paymentStatus === 'unpaid') {
+          throw new AppError('CONFLICT', 'DP must be paid before settlement');
+        }
+        if (booking.paymentStatus === 'fully_paid') {
+          throw new AppError('CONFLICT', 'booking is already fully paid');
+        }
+        if (booking.paymentStatus !== 'dp_paid') {
+          throw new AppError(
+            'CONFLICT',
+            `booking payment_status must be dp_paid (current: ${booking.paymentStatus})`
+          );
+        }
+
+        const CLOSED_LIFECYCLE_STATUSES = new Set(['cancelled', 'rejected', 'expired', 'no_show']);
+        if (CLOSED_LIFECYCLE_STATUSES.has(booking.lifecycleStatus)) {
+          throw new AppError(
+            'CONFLICT',
+            `cannot settle booking in lifecycle_status: ${booking.lifecycleStatus}`
+          );
+        }
+        const ALLOWED_SETTLEMENT_LIFECYCLES = new Set([
+          'confirmed',
+          'in_progress',
+          'completed'
+        ]);
+        if (!ALLOWED_SETTLEMENT_LIFECYCLES.has(booking.lifecycleStatus)) {
+          throw new AppError(
+            'CONFLICT',
+            `booking lifecycle_status must be confirmed, in_progress, or completed (current: ${booking.lifecycleStatus})`
+          );
+        }
+
+        const amountIdr = booking.totalCustomerIdr - booking.dpAmountIdr;
+        if (amountIdr <= 0n) {
+          throw new AppError('CONFLICT', 'settlement amount must be positive');
+        }
+
+        const active = await this.repository.findActiveSettlementPayment(tx, bookingId);
+        if (active) {
+          if (this.instructionFromPayment(active)) return active;
+          throw new AppError(
+            'CONFLICT',
+            'an active settlement payment already exists for this booking',
+            { paymentId: active.id, status: active.status }
+          );
+        }
+
+        const paymentId = this.newId();
+        const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+        return this.repository.insertPayment(tx, {
+          bookingId,
+          kind: 'settlement',
+          method,
+          amountIdr,
+          feeIdr: computeGatewayFee(amountIdr),
+          provider: this.provider,
+          providerRef: this.newProviderRef(paymentId, method),
+          expiresAt
+        });
+      });
+
+      const storedInstruction = this.instructionFromPayment(payment);
+      if (storedInstruction) return this.toSettlementChargeResult(payment, storedInstruction);
+
+      if (!payment.expiresAt) {
+        throw new AppError('INTERNAL_ERROR', 'pending payment without expires_at');
+      }
+
+      let charge;
+      try {
+        charge = await this.gateway.createCharge({
+          paymentId: payment.id,
+          orderId: payment.providerRef,
+          amountIdr: payment.amountIdr,
+          method: payment.method,
+          expiresAt: payment.expiresAt
+        });
+      } catch (error) {
+        await this.repository
+          .transaction((tx) =>
+            this.repository.markPaymentFailed(tx, {
+              paymentId: payment.id,
+              status: 'failed',
+              failureCode: 'CHARGE_FAILED',
+              rawPayload: { error: error instanceof Error ? error.message : String(error) }
+            })
+          )
+          .catch(() => undefined);
+        throw error;
+      }
+
+      const updated = await this.repository.transaction((tx) =>
+        this.repository.updatePaymentCharge(tx, {
+          paymentId: payment.id,
+          providerTxnId: charge.providerTxnId,
+          rawPayload: this.rawWithInstruction(charge.rawPayload, charge.instruction),
+          expiresAt: charge.expiresAt ?? payment.expiresAt
+        })
+      );
+      return this.toSettlementChargeResult(updated, charge.instruction);
+    });
+  }
+
+  /* --------------------------------------------- settlement read route */
+
+  async getSettlementPaymentByBooking(
+    bookingId: string,
+    opts: RequestOptions = {}
+  ): Promise<SettlementPaymentByBookingResult> {
+    if (!bookingId) throw new AppError('VALIDATION_ERROR', 'bookingId is required');
+    const actorId = opts.actorId ?? null;
+    if (!actorId) {
+      throw new AppError('UNAUTHENTICATED', 'an authenticated actor is required');
+    }
+
+    const found = await this.repository.transaction((tx) =>
+      this.repository.findLatestSettlementPaymentByBooking(tx, bookingId)
+    );
+    if (!found || found.customerId !== actorId) {
+      throw new AppError('NOT_FOUND', 'Belum ada tagihan pelunasan untuk booking ini');
+    }
+
+    const payment = found.payment;
+    return {
+      payment: {
+        id: payment.id,
+        booking_id: payment.bookingId,
+        kind: 'settlement',
         status: payment.status,
         amount_idr: jsonRupiah(payment.amountIdr),
         currency: 'IDR',
@@ -952,7 +1172,7 @@ export class PaymentService {
     // settlement webhook is replayed. The booking module treats that as a
     // no-op; the payment module does not even ask.
     if (booking.paymentStatus === 'fully_paid') return;
-    await this.booking.applyFullyPaid(input, client);
+    await this.booking.applyFullyPaid({ ...input, allowAfterCompletion: true }, client);
   }
 
   /* ----------------------------------------------------------------- refund */
@@ -1285,6 +1505,46 @@ export class PaymentService {
       expires_at: payment.expiresAt.toISOString(),
       payment_instruction:
         instruction ?? this.instructionFromPayment(payment) ?? this.buildInstruction(payment)
+    };
+  }
+
+  private toSettlementChargeResult(
+    payment: PaymentRecord,
+    instruction?: GatewayInstruction
+  ): SettlementChargeResult {
+    if (!payment.expiresAt) {
+      throw new AppError('INTERNAL_ERROR', 'pending payment without expires_at');
+    }
+    const paymentInstruction =
+      instruction ?? this.instructionFromPayment(payment) ?? this.buildInstruction(payment);
+    const amountNum = jsonRupiah(payment.amountIdr);
+    const expiresAtStr = payment.expiresAt.toISOString();
+
+    return {
+      id: payment.id,
+      booking_id: payment.bookingId,
+      kind: 'settlement',
+      status: 'pending',
+      amount_idr: amountNum,
+      currency: 'IDR',
+      method: payment.method,
+      provider: payment.provider,
+      provider_ref: payment.providerRef,
+      expires_at: expiresAtStr,
+      payment_instruction: paymentInstruction,
+      payment: {
+        id: payment.id,
+        booking_id: payment.bookingId,
+        kind: 'settlement',
+        status: 'pending',
+        amount_idr: amountNum,
+        currency: 'IDR',
+        method: payment.method,
+        provider: payment.provider,
+        provider_ref: payment.providerRef,
+        expires_at: expiresAtStr,
+        paid_at: payment.paidAt ? payment.paidAt.toISOString() : null
+      }
     };
   }
 

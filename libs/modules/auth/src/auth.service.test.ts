@@ -679,6 +679,34 @@ describe('AuthService.register', () => {
 
     expect(repository.users).toHaveLength(1);
   });
+
+  it('registers a customer without a phone number', async () => {
+    const { repository, service } = makeHarness();
+
+    const result = await service.register({
+      email: 'no.phone@tarlink.id',
+      password: NEW_PASSWORD,
+      full_name: 'Tanpa Nomor'
+    });
+    const claims = verifyAccessToken(result.access_token, SECRET);
+
+    expect(result.user.roles).toEqual(['customer']);
+    expect(claims.roles).toEqual(['customer']);
+    expect(result.user.email).toBe('no.phone@tarlink.id');
+    expect(result.user.phone).toBeNull();
+    expect(claims.sub).toBe(repository.users[0]?.id);
+
+    const stored = repository.users[0];
+    expect(stored).toMatchObject({
+      phone: null,
+      email: 'no.phone@tarlink.id',
+      name: 'Tanpa Nomor',
+      googleSub: null,
+      emailVerifiedAt: null
+    });
+    expect(stored?.passwordHash).toMatch(/^scrypt\$/);
+    expect(repository.roles).toEqual([{ userId: stored?.id, role: 'customer' }]);
+  });
 });
 
 describe('AuthService.loginWithGoogle', () => {
@@ -846,6 +874,34 @@ describe('AuthController.register', () => {
         role: 'vendor_owner'
       })
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+  });
+
+  it('accepts registration without a phone number', async () => {
+    let capturedInput: unknown;
+    const service = {
+      register: async (input: unknown) => {
+        capturedInput = input;
+        return {
+          access_token: 'fake-token',
+          refresh_token: 'fake-refresh',
+          token_type: 'Bearer',
+          expires_in: 900,
+          user: { id: 'fake-id', phone: null, roles: ['customer'], email: 'user@tarlink.id' }
+        };
+      }
+    } as unknown as AuthService;
+    const controller = new AuthController(service);
+
+    await controller.register(
+      { email: 'user@tarlink.id', password: 'kata-sandi-2026' },
+      '203.0.113.1'
+    );
+    expect(capturedInput).toMatchObject({
+      email: 'user@tarlink.id',
+      password: 'kata-sandi-2026',
+      ip: '203.0.113.1'
+    });
+    expect((capturedInput as { phone?: string }).phone).toBeUndefined();
   });
 });
 

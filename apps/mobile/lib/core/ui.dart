@@ -921,19 +921,22 @@ class SelectChip extends StatelessWidget {
     required this.selected,
     this.onTap,
     this.icon,
+    this.compact = false,
   });
 
   final String label;
   final bool selected;
   final VoidCallback? onTap;
   final IconData? icon;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     final foreground = selected ? AppColors.onPrimary : AppColors.ink;
-    final background = selected ? AppColors.primary : AppColors.surfaceTint;
+    final background = selected ? AppColors.primary : AppColors.surfaceSoft;
     final border = selected ? AppColors.primary : AppColors.line;
+    final radius = compact ? Radii.pill : Radii.sm;
     return Semantics(
       button: onTap != null,
       selected: selected,
@@ -942,14 +945,14 @@ class SelectChip extends StatelessWidget {
         curve: Curves.easeOut,
         decoration: BoxDecoration(
           color: background,
-          borderRadius: BorderRadius.circular(Radii.sm),
+          borderRadius: BorderRadius.circular(radius),
           border: Border.all(color: border),
           boxShadow: selected
-              ? const [
+              ? [
                   BoxShadow(
-                    color: Color(0x120F172A),
-                    blurRadius: 6,
-                    offset: Offset(0, 2),
+                    color: const Color(0x120F172A),
+                    blurRadius: compact ? 4 : 6,
+                    offset: Offset(0, compact ? 1 : 2),
                   ),
                 ]
               : null,
@@ -959,33 +962,40 @@ class SelectChip extends StatelessWidget {
           color: Colors.transparent,
           child: InkWell(
             onTap: onTap,
+            borderRadius: BorderRadius.circular(radius),
             child: ConstrainedBox(
-              constraints: const BoxConstraints(minHeight: 48),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: Sp.md,
-                  vertical: Sp.sm,
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (icon != null) ...[
-                      Icon(icon, size: 18, color: foreground),
-                      const SizedBox(width: Sp.sm),
-                    ],
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 200),
-                      child: Text(
-                        label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: text.labelMedium?.copyWith(
-                          color: foreground,
-                          fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+              constraints: BoxConstraints(minHeight: compact ? 34 : 48),
+              child: Center(
+                widthFactor: 1.0,
+                child: Padding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: Sp.md,
+                    vertical: compact ? Sp.xs : Sp.sm,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (icon != null) ...[
+                        Icon(icon, size: compact ? 15 : 18, color: foreground),
+                        SizedBox(width: compact ? Sp.xs + 2 : Sp.sm),
+                      ],
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 200),
+                        child: Text(
+                          label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: text.labelMedium?.copyWith(
+                            fontSize: compact ? 12.5 : null,
+                            color: foreground,
+                            fontWeight: selected
+                                ? FontWeight.w700
+                                : (compact ? FontWeight.w500 : FontWeight.w600),
+                          ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -1016,8 +1026,8 @@ class SegmentBar extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(Sp.xs),
       decoration: BoxDecoration(
-        color: AppColors.surfaceTint,
-        borderRadius: BorderRadius.circular(Radii.sm),
+        color: AppColors.surfaceSoft,
+        borderRadius: BorderRadius.circular(Radii.lg),
         border: Border.all(color: AppColors.line),
       ),
       child: Row(
@@ -1031,13 +1041,13 @@ class SegmentBar extends StatelessWidget {
                   color: i == index ? AppColors.primary : Colors.transparent,
                   clipBehavior: Clip.antiAlias,
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(Radii.sm),
                   ),
                   child: InkWell(
                     onTap: () => onChanged(i),
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(Radii.sm),
                     child: SizedBox(
-                      height: 46,
+                      height: 34,
                       child: Center(
                         child: Padding(
                           padding: const EdgeInsets.symmetric(
@@ -1054,7 +1064,7 @@ class SegmentBar extends StatelessWidget {
                                   : AppColors.inkMuted,
                               fontWeight: i == index
                                   ? FontWeight.w700
-                                  : FontWeight.w600,
+                                  : FontWeight.w500,
                             ),
                           ),
                         ),
