@@ -76,6 +76,8 @@ sebagai guard unik per pelanggan.
 | POST | `/auth/refresh` | `{ refresh_token }` | Rotasi sesi; tanpa body memakai Bearer lama (legacy) |
 | POST | `/auth/logout` | `{ refresh_token? }` | Mencabut sesi; tanpa body memakai Bearer |
 | GET | `/auth/me` | — | Profil + peran pengguna |
+| DELETE | `/auth/me` | `{ confirm: "HAPUS AKUN", reason? }` | Hapus akun mandiri (anonimisasi, FR-101) |
+| GET | `/auth/account-deletion` | — | Status permintaan hapus akun terbaru |
 
 Respons login (dibungkus `data`):
 
@@ -92,6 +94,19 @@ Respons login (dibungkus `data`):
 
 `GET /auth/me` mengembalikan `{ "data": { "user": { id, phone, email, full_name,
 roles, created_at } } }`. Peran diambil dari database, bukan dari isi token.
+
+`DELETE /auth/me` adalah hapus akun mandiri (FR-101). Body wajib berisi
+`confirm: "HAPUS AKUN"`; tanpa itu `400 VALIDATION_ERROR`. Data pribadi dianonimkan
+di tempat (`phone`, `email`, `name`, `password_hash`, `google_sub`), semua sesi dan
+peran dicabut, lalu permintaan dicatat di `account_deletion_requests`. Baris `users`
+tetap ada agar booking/pembayaran/payout tidak kehilangan relasi. Respons:
+
+```json
+{ "data": { "id": "uuid", "status": "completed", "reason": "…", "requested_at": "…", "completed_at": "…" } }
+```
+
+Panggilan kedua mengembalikan catatan yang sama (idempoten).
+`GET /auth/account-deletion` mengembalikan `{ "data": null }` bila akun masih utuh.
 
 ---
 
@@ -390,12 +405,36 @@ Wajib bearer token dan divalidasi kepemilikan booking.
 
 ### `POST /payments/:id/refund`
 
-Peran admin. Body: `{ amount_idr?, reason }`.
+Peran `admin_finance` / `admin_super`. Body: `{ amount_idr, reason, evidence_url? }`.
+`evidence_url` adalah tautan bukti (maks 500 karakter).
+
+**Maker-checker (FR-128):** refund dengan nominal **> `REFUND_APPROVAL_THRESHOLD_IDR`**
+(default Rp1.000.000) tidak langsung dieksekusi. Respons `201` berisi refund
+berstatus `requested` dengan `requires_approval: true` dan belum ada jurnal.
+Refund pada atau di bawah ambang dieksekusi langsung seperti sebelumnya.
 
 Untuk Midtrans, refund QRIS dipanggil ke `POST /v2/{order_id}/refund` dengan
 `refund_key` = id refund, lalu status refund langsung difinalkan (`succeeded`) dan
 jurnal `refund_disbursed` diposting. **Refund VA/Mandiri ditolak** karena Midtrans
 tidak mendukung refund bank transfer; catat transfer manual.
+
+### `POST /payments/refunds/:id/approve`
+
+Peran `admin_finance` / `admin_super`. Approver **wajib berbeda** dari pembuat
+permintaan (four-eyes; `409 CONFLICT` bila sama). Setelah disetujui, provider
+dipanggil, jurnal pengakuan + `refund_disbursed` diposting, status menjadi
+`succeeded` (atau `failed` bila provider menolak).
+
+### `POST /payments/refunds/:id/reject`
+
+Peran `admin_finance` / `admin_super`. Body: `{ note }` minimal 5 karakter. Hanya
+refund berstatus `requested` yang bisa ditolak; tidak ada pergerakan uang.
+
+### `GET /payments/refunds/by-booking/:bookingId`
+
+Pelanggan pemilik booking atau admin. Mengembalikan refund terbaru
+(`{ "data": { "refund": … } }`) atau `{ "data": null }`. Pelanggan lain mendapat
+`404 NOT_FOUND` (FR-133: status refund terlihat pelanggan).
 
 ---
 
@@ -435,6 +474,51 @@ toleransi 300 detik. Event yang diproses: `payment.paid` (idempoten berdasarkan
 
 ---
 
+## Registrasi vendor (FR-002 / FR-003)
+
+Pelanggan mengajukan diri sebagai vendor, lalu `admin_super` memutuskan. Akun tetap
+`customer` sampai disetujui; persetujuan membuat baris `vendors`, memberi peran
+`vendor_owner`, dan menyalin objek KTP privat ke `vendors.ktp_object_key`.
+
+| Method | Path | Peran | Fungsi |
+|---|---|---|---|
+| GET | `/regions` | publik | Daftar kabupaten/kota untuk formulir |
+| POST | `/vendor-applications/ktp` | `customer` | Upload foto KTP (multipart `file`, maks 5 MB) → `{ ktp_object_key }` |
+| POST | `/vendor-applications` | `customer` | Kirim pengajuan |
+| GET | `/vendor-applications/me` | `customer` | Status pengajuan terbaru (`null` bila belum ada) |
+| GET | `/admin/vendor-applications` | `admin_support`, `admin_super` | Antrean (`status`, `page`, `page_size`) |
+| GET | `/admin/vendor-applications/:id/ktp` | `admin_super` | Stream foto KTP privat |
+| POST | `/admin/vendor-applications/:id/approve` | `admin_super` | Setujui |
+| POST | `/admin/vendor-applications/:id/reject` | `admin_super` | Tolak (`{ note? }`) |
+
+Body pengajuan:
+
+```json
+{
+  "display_name": "Tarling Dian Malam",
+  "legal_name": "CV Tarling Dian Malam",
+  "nik": "3212010101010001",
+  "region_code": "3212",
+  "base_address": "Jl. Pantura No. 1, Indramayu",
+  "ktp_object_key": "ktp/<userId>/<uuid>.jpg"
+}
+```
+
+- `ktp_object_key` wajib berawalan `ktp/<userId pengaju>/`; kunci milik akun lain
+  ditolak `400`. File disimpan di `PRIVATE_UPLOAD_DIR`, **dienkripsi AES-256-GCM**
+  sebelum ditulis, dan **tidak** diserve lewat `/v1/media`.
+- Akses file KTP hanya untuk `admin_super`; setiap unduhan dicatat sebagai
+  `vendor.application.ktp_access` di `audit_logs`.
+- NIK penuh hanya dikembalikan ke `admin_super`; `admin_support` dan pemilik
+  melihat NIK tersamar (`************0001`).
+- Saat pengajuan ditolak atau akun dihapus, referensi KTP dikosongkan dan file
+  terenkripsinya dihapus (data minimisation).
+- Satu akun hanya boleh punya satu pengajuan terbuka (`submitted`). Setelah
+  ditolak, pengajuan baru diperbolehkan.
+- Syarat menyetujui: peserta belum punya vendor, wilayah valid, dan file KTP ada.
+
+---
+
 ## Portal vendor
 
 Semua route di bawah butuh bearer token dengan peran `vendor_owner`. Vendor
@@ -454,7 +538,10 @@ dari klien, sehingga satu vendor tidak bisa mengubah vendor lain.
 | PATCH | `/vendor/packages/:id` | Ubah paket milik sendiri |
 | DELETE | `/vendor/packages/:id` | Nonaktifkan paket (soft delete) |
 | PUT | `/vendor/calendar` | Set `available`/`blocked` untuk rentang tanggal |
-| POST | `/vendor/media` | Upload satu gambar (multipart field `file`) |
+| POST | `/vendor/media` | Upload gambar (multipart: `file`, `kind`, `package_id?`, `license_statement`) → status `pending` |
+| POST | `/vendor/media/link` | Ajukan media berupa tautan (JSON: `url`, `kind`, `package_id?`, `license_statement`) → `pending` |
+| GET | `/vendor/media` | Semua media milik vendor beserta status moderasinya |
+| DELETE | `/vendor/media/:id` | Batalkan media yang masih `pending` |
 | GET | `/media/:filename` | Sajikan gambar upload (publik) |
 | GET | `/vendor/bank-accounts` | Daftar rekening pencairan (masked, tanpa yang superseded) |
 | POST | `/vendor/bank-accounts` | Daftarkan rekening tujuan payout |
@@ -562,14 +649,64 @@ string kosong mengosongkan kolom nullable.
 Hanya `available`/`blocked`. Slot `held`/`booked` tidak ditimpa. `source`
 disimpan sebagai `vendor`.
 
-### Media
+### Media (moderasi wajib)
 
-`POST /vendor/media` menerima `multipart/form-data` dengan field `file`.
-Hanya JPEG/PNG/WebP asli (dicek dari magic bytes), maksimal 5 MB. Respons:
+Setiap media vendor melewati moderasi (FR-107). Unggahan **tidak** langsung tampil
+di katalog publik: ia tersimpan di tabel `vendor_media` berstatus `pending` dan baru
+masuk ke kolom publik (`vendors.avatar_url`, `banner_url`, `photo_urls`, `video_url`,
+`packages.photo_url`) setelah admin menyetujui.
+
+`POST /vendor/media` menerima `multipart/form-data`:
+
+| Field | Wajib | Isi |
+|---|---|---|
+| `file` | ya | JPEG/PNG/WebP asli (dicek dari magic bytes), maksimal 5 MB |
+| `kind` | tidak | `avatar`, `banner`, `gallery`, `package_photo`, `video` (default `gallery`) |
+| `package_id` | hanya `package_photo` | UUID paket milik vendor itu |
+| `license_statement` | ya | Pernyataan hak/lisensi, minimal 10 karakter |
+
+Respons `201`:
 
 ```json
-{ "url": "http://host/v1/media/<uuid>.jpg", "filename": "<uuid>.jpg" }
+{
+  "data": {
+    "media": {
+      "id": "uuid",
+      "vendor_id": "uuid",
+      "package_id": null,
+      "kind": "gallery",
+      "url": "http://host/v1/media/<uuid>.jpg",
+      "status": "pending",
+      "license_statement": "Saya pemilik media ini",
+      "review_note": null,
+      "reviewed_at": null,
+      "created_at": "2026-11-04T13:00:00.000Z"
+    }
+  }
+}
 ```
+
+`POST /vendor/media/link` memakai body JSON yang sama tanpa `file`, untuk video atau
+media yang sudah dihosting di tempat lain.
+
+`PATCH /vendor/me` menolak URL media yang belum disetujui:
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Media belum disetujui: https://…",
+    "details": { "reason": "MEDIA_NOT_APPROVED" }
+  }
+}
+```
+
+Mengosongkan media (`null` atau `""`) tetap diizinkan.
+
+Aturan yang sama berlaku untuk `photo_url` pada `POST/PATCH /vendor/packages`: nilainya
+harus URL media yang sudah `approved` milik vendor itu, kalau tidak responsnya
+`VALIDATION_ERROR` dengan `details.reason = "MEDIA_NOT_APPROVED"`. Untuk paket baru,
+unggah foto setelah paket tersimpan (foto paket butuh `package_id`).
 
 `GET /media/:filename` publik, cache immutable, hanya nama file yang dibuat
 server (aman dari path traversal).
@@ -588,6 +725,9 @@ Semua butuh peran `admin`/`operator`.
 | POST | `/admin/bookings/:id/settle` | Pelunasan manual |
 | GET | `/admin/vendors` | Daftar vendor |
 | GET | `/admin/vendors/:id` | Detail vendor |
+| GET | `/admin/media` | Antrean moderasi media (`status`, `page`, `page_size`) |
+| POST | `/admin/media/:id/approve` | Setujui media → tayang di kolom publik |
+| POST | `/admin/media/:id/reject` | Tolak media (body `{ note }`, minimal 5 karakter) |
 | GET | `/admin/release/queue` | Antrean pelepasan dana |
 | POST | `/admin/release/preview` | Pratinjau jurnal pelepasan |
 | POST | `/admin/release` | Eksekusi pelepasan |
@@ -619,6 +759,49 @@ Semua butuh peran `admin`/`operator`.
 `PATCH /admin/vendors/:id` juga menerima `avatar_url`, `banner_url`,
 `photo_urls`, `video_url`. `POST/PATCH .../packages` menerima
 `personnel_count`, `inclusions[]`, dan `photo_url` (sama seperti portal vendor).
+
+### Moderasi media
+
+Antrean moderasi dipakai peran `admin_support`/`admin_super`.
+
+`GET /admin/media?status=pending&page=1&page_size=20` mengembalikan media milik
+vendor beserta konteksnya:
+
+```json
+{
+  "data": {
+    "items": [
+      {
+        "id": "uuid",
+        "vendor_id": "uuid",
+        "vendor_name": "Putra Dermayu Tarling Group",
+        "vendor_region_code": "IDM",
+        "package_id": null,
+        "package_name": null,
+        "kind": "gallery",
+        "url": "http://host/v1/media/<uuid>.jpg",
+        "status": "pending",
+        "license_statement": "Saya pemilik media ini",
+        "review_note": null,
+        "reviewed_at": null,
+        "created_at": "2026-11-04T13:00:00.000Z"
+      }
+    ],
+    "total": 1,
+    "page": 1,
+    "page_size": 20
+  }
+}
+```
+
+`POST /admin/media/:id/approve` menerapkan media ke kolom publik dalam satu
+transaksi: `avatar`/`banner`/`video` menimpa kolomnya, `gallery` menambah ke
+`photo_urls` (maksimum 8, selebihnya `VALIDATION_ERROR` dengan
+`details.reason = "GALLERY_FULL"`), dan `package_photo` menimpa `packages.photo_url`
+hanya bila paket itu milik vendor yang sama.
+
+`POST /admin/media/:id/reject` wajib menyertakan `note` (minimal 5 karakter).
+Media yang sudah diproses tidak bisa diproses ulang (`CONFLICT`).
 
 ### Payout vendor
 

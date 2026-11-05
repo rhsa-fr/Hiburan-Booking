@@ -141,7 +141,7 @@ output. "Tidak dijalankan" adalah jawaban yang sah; klaim palsu tidak.
 4. `flutter analyze` + `flutter test`, lalu screenshot 390×844.
 
 **Migrasi DB**
-1. Nomor urut berikutnya di `db/migrations` (terakhir `014`, berikutnya `015`).
+1. Nomor urut berikutnya di `db/migrations` (terakhir `017`, berikutnya `018`).
 2. Idempoten bila memungkinkan; sediakan jalur koreksi ke depan, bukan `DROP` data.
 3. Jalankan `npm run migrate:dry` sebelum `npm run migrate`.
 
@@ -163,12 +163,31 @@ Sudah diperbaiki (jangan dikembalikan tanpa keputusan tertulis):
 - Pelunasan online sisa 70% (`POST /v1/payments/settlement`, `GET /v1/payments/settlement/by-booking/:id`)
   lewat Midtrans QRIS/VA, terintegrasi ke status booking dan ledger.
 - Ulasan & rating booking pelanggan (`POST /v1/bookings/:id/review`, `GET /v1/vendors/:id/reviews`, migrasi `014_reviews.sql`).
+- Moderasi media vendor (FR-107/FR-140): unggahan masuk `vendor_media` berstatus `pending`,
+  kolom publik hanya berubah setelah admin menyetujui (`GET/POST /admin/media/*`, migrasi `016`).
+  Migrasi `015` mengosongkan seed foto stok Unsplash dan video contoh dari migrasi `009`.
+- Refund maker-checker (FR-128/FR-133): refund > `REFUND_APPROVAL_THRESHOLD_IDR`
+  berhenti di `requested`, disetujui admin lain, menolak self-approval, menyimpan
+  `evidence_url`/`review_note`, dan statusnya dapat dibaca pelanggan.
+- Hapus akun mandiri (FR-101): `DELETE /auth/me` menganonimkan PII, mencabut sesi +
+  peran, mencatat `account_deletion_requests`, dan idempoten.
+- Registrasi vendor mandiri (FR-002/FR-003): `vendor_applications`, upload KTP privat
+  (`PRIVATE_UPLOAD_DIR`, bukan `/v1/media`), approval `admin_super` membuat vendor +
+  peran `vendor_owner`; `GET /regions` untuk formulir (migrasi `017`).
+- KTP dienkripsi AES-256-GCM sebelum ditulis (`KTP_ENCRYPTION_KEY`, wajib di
+  production), permission 0600/0700, akses hanya `admin_super` dan dicatat di
+  `audit_logs`; reject/hapus akun menghapus file dan referensinya.
 
 Masih terbuka:
 
 - Tidak ada emulator Android/HP fisik; bukti APK hanya build sukses.
 - Detail vendor sempat kosong pada screenshot E2E otomatis — assertion ukuran body
   sudah ditambahkan; cek manual screenshot sebelum menyatakan selesai.
+- Admin panel belum punya layar antrean pengajuan vendor; keputusan FR-004 saat ini
+  lewat API. Formulir mobile ada di Profil → "Daftar jadi vendor".
+- Kolom `vendor_applications.nik` masih plaintext di DB, 2FA admin belum ada, dan
+  access token tidak dicek terhadap `sessions` per request (jendela 15 menit setelah
+  logout/hapus akun). Ini risiko yang tersisa untuk data identitas.
 - Provider WhatsApp/SMS, picker peta, dan UI check-in berbasis GPS belum ada.
   Charge/notifikasi/refund QRIS sudah memakai Midtrans sandbox; endpoint check-in/no-show
   basic sudah ada.
