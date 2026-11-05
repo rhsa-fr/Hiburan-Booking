@@ -85,9 +85,17 @@ class ApiClient {
   Future<dynamic> delete(
     String path, {
     Map<String, String?>? query,
+    Object? body,
     Map<String, String>? headers,
     bool auth = true,
-  }) => _send('DELETE', path, query: query, headers: headers, auth: auth);
+  }) => _send(
+    'DELETE',
+    path,
+    query: query,
+    body: body,
+    headers: headers,
+    auth: auth,
+  );
 
   /// Multipart upload (vendor media). Rebuilds the request on a 401 retry
   /// because a sent multipart stream cannot be reused.

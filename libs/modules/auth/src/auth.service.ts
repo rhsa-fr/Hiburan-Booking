@@ -29,7 +29,13 @@ import { Injectable } from '@nestjs/common';
 import { AppError } from '@tarlink/core/errors';
 import { signAccessToken, type Role } from '@tarlink/platform/auth';
 import type { GoogleTokenVerifier } from './google-verifier';
-import type { AuthRepository, AuthUserRecord, NewUser, OtpChannel } from './auth.repository';
+import type {
+  AccountDeletionRecord,
+  AuthRepository,
+  AuthUserRecord,
+  NewUser,
+  OtpChannel
+} from './auth.repository';
 
 export const OTP_TTL_SECONDS = 5 * 60;
 export const OTP_MAX_ATTEMPTS = 5;
@@ -59,6 +65,15 @@ const SCRYPT_MIN_N = 1_024;
 
 export type AuthEnvironment = 'development' | 'test' | 'production';
 
+/** Response of the account deletion request (FR-101 / UU PDP). */
+export interface AccountDeletionResult {
+  readonly id: string;
+  readonly status: 'requested' | 'completed' | 'cancelled';
+  readonly reason: string | null;
+  readonly requested_at: string;
+  readonly completed_at: string | null;
+}
+
 export interface AuthServiceDeps {
   readonly repository: AuthRepository;
   readonly jwtSecret: string;
@@ -74,6 +89,8 @@ export interface AuthServiceDeps {
   readonly googleVerifier?: GoogleTokenVerifier | null;
   readonly now?: () => Date;
   readonly newId?: () => string;
+  /** Removes encrypted private documents (KTP) after account deletion. */
+  readonly removePrivateFiles?: (keys: readonly string[]) => Promise<void>;
 }
 
 export interface RequestOtpInput {
@@ -269,6 +286,7 @@ export class AuthService {
   private readonly googleVerifier: GoogleTokenVerifier | null;
   private readonly now: () => Date;
   private readonly newId: () => string;
+  private readonly removePrivateFiles?: (keys: readonly string[]) => Promise<void>;
 
   constructor(deps: AuthServiceDeps) {
     this.repository = deps.repository;
@@ -282,6 +300,7 @@ export class AuthService {
     this.googleVerifier = deps.googleVerifier ?? null;
     this.now = deps.now ?? (() => new Date());
     this.newId = deps.newId ?? (() => randomUUID());
+    this.removePrivateFiles = deps.removePrivateFiles;
   }
 
   async requestOtp(input: RequestOtpInput): Promise<RequestOtpResult> {
@@ -546,6 +565,51 @@ export class AuthService {
         full_name: user.name,
         created_at: user.createdAt.toISOString()
       }
+    };
+  }
+
+  /**
+   * FR-101: anonymises the caller's personal data and revokes every session and
+   * role. The user row is kept so bookings/payments/payouts keep their foreign
+   * keys; the response records the completed request. Safe to call twice.
+   */
+  async deleteAccount(userId: string, reason?: string | null): Promise<AccountDeletionResult> {
+    if (!userId) throw new AppError('VALIDATION_ERROR', 'userId is required');
+
+    // The repository is idempotent and also returns any leftover private
+    // document keys, so a retry can finish a half-completed file cleanup.
+    const outcome = await this.repository.deleteAccount(
+      userId,
+      reason?.trim() || null,
+      this.now()
+    );
+
+    if (outcome.privateObjectKeys.length > 0 && this.removePrivateFiles) {
+      try {
+        await this.removePrivateFiles(outcome.privateObjectKeys);
+      } catch {
+        // The database no longer references the files; an operator can remove
+        // them from PRIVATE_UPLOAD_DIR if the filesystem call failed.
+      }
+    }
+
+    return this.toDeletionResult(outcome.record);
+  }
+
+  /** Status of the newest deletion request, or null when the account is intact. */
+  async getDeletionStatus(userId: string): Promise<AccountDeletionResult | null> {
+    if (!userId) throw new AppError('VALIDATION_ERROR', 'userId is required');
+    const existing = await this.repository.findDeletionRequest(userId);
+    return existing ? this.toDeletionResult(existing) : null;
+  }
+
+  private toDeletionResult(record: AccountDeletionRecord): AccountDeletionResult {
+    return {
+      id: record.id,
+      status: record.status,
+      reason: record.reason,
+      requested_at: record.requestedAt.toISOString(),
+      completed_at: record.completedAt ? record.completedAt.toISOString() : null
     };
   }
 

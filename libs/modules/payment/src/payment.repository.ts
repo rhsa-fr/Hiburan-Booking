@@ -72,7 +72,12 @@ export interface RefundRecord {
   readonly feeIdr: bigint;
   readonly status: string;
   readonly reasonCode: string;
+  readonly reasonNote: string | null;
+  readonly evidenceUrl: string | null;
+  readonly reviewNote: string | null;
   readonly requestedBy: string | null;
+  readonly approvedBy: string | null;
+  readonly approvedAt: Date | null;
   readonly createdAt: Date;
 }
 
@@ -110,6 +115,7 @@ export interface NewRefund {
   readonly feeIdr: bigint;
   readonly reasonCode: string;
   readonly reasonNote?: string;
+  readonly evidenceUrl?: string | null;
   readonly requestedBy?: string | null;
 }
 
@@ -229,6 +235,20 @@ export interface PaymentRepository {
   insertRefund(tx: JournalQueryClient, input: NewRefund): Promise<RefundRecord>;
   lockRefund(tx: JournalQueryClient, refundId: string): Promise<RefundRecord | null>;
   advanceRefundStatus(tx: JournalQueryClient, input: RefundTransition): Promise<RefundRecord>;
+  /**
+   * Marks a pending refund as rejected with an auditable note. Only a refund
+   * still in `requested` can be rejected, so an approved disbursement is never
+   * silently undone.
+   */
+  rejectRefund(
+    tx: JournalQueryClient,
+    input: { refundId: string; actorId: string; note: string }
+  ): Promise<RefundRecord>;
+  /** Newest refund of a booking, any status; used by the customer status route. */
+  findLatestRefundByBooking(
+    tx: JournalQueryClient,
+    bookingId: string
+  ): Promise<{ refund: RefundRecord; customerId: string } | null>;
 
   insertWebhookEvent(tx: JournalQueryClient, input: NewWebhookEvent): Promise<WebhookEventRecord | null>;
   findWebhookEvent(
@@ -414,19 +434,36 @@ FROM refunds
 WHERE payment_id = $1 AND status IN ('requested','approved','processing','succeeded')
 `;
 
+const REFUND_COLUMNS = `
+  id, booking_id, payment_id, amount_idr, fee_idr, status, reason_code, reason_note,
+  evidence_url, review_note, requested_by, approved_by, approved_at, created_at
+`;
+
 const INSERT_REFUND_SQL = `
 INSERT INTO refunds
   (booking_id, payment_id, amount_idr, currency, fee_idr, fee_bearer, status,
-   reason_code, reason_note, requested_by)
-VALUES ($1, $2, $3, 'IDR', $4, 'customer', 'requested', $5, $6, $7)
-RETURNING id, booking_id, payment_id, amount_idr, fee_idr, status, reason_code, requested_by, created_at
+   reason_code, reason_note, evidence_url, requested_by)
+VALUES ($1, $2, $3, 'IDR', $4, 'customer', 'requested', $5, $6, $7, $8)
+RETURNING ${REFUND_COLUMNS}
 `;
 
 const SELECT_REFUND_SQL = `
-SELECT id, booking_id, payment_id, amount_idr, fee_idr, status, reason_code, requested_by, created_at
+SELECT ${REFUND_COLUMNS}
 FROM refunds
 WHERE id = $1
 FOR UPDATE
+`;
+
+const SELECT_REFUND_BY_BOOKING_SQL = `
+SELECT r.id, r.booking_id, r.payment_id, r.amount_idr, r.fee_idr, r.status,
+       r.reason_code, r.reason_note, r.evidence_url, r.review_note,
+       r.requested_by, r.approved_by, r.approved_at, r.created_at,
+       b.customer_id
+FROM refunds r
+JOIN bookings b ON b.id = r.booking_id
+WHERE r.booking_id = $1
+ORDER BY r.created_at DESC
+LIMIT 1
 `;
 
 /**
@@ -442,7 +479,16 @@ SET status = $2::refund_status,
     provider_refund_id = COALESCE($4, provider_refund_id),
     updated_at = now()
 WHERE id = $1 AND status = $5::refund_status
-RETURNING id, booking_id, payment_id, amount_idr, fee_idr, status, reason_code, requested_by, created_at
+RETURNING ${REFUND_COLUMNS}
+`;
+
+const REJECT_REFUND_SQL = `
+UPDATE refunds
+SET status = 'rejected',
+    review_note = $2,
+    updated_at = now()
+WHERE id = $1 AND status = 'requested'
+RETURNING ${REFUND_COLUMNS}
 `;
 
 const INSERT_WEBHOOK_SQL = `
@@ -697,6 +743,7 @@ export class PgPaymentRepository implements PaymentRepository {
         input.feeIdr.toString(),
         input.reasonCode,
         input.reasonNote ?? null,
+        input.evidenceUrl ?? null,
         input.requestedBy ?? null
       ]);
       const row = rows[0];
@@ -742,6 +789,31 @@ export class PgPaymentRepository implements PaymentRepository {
       );
     }
     return mapRefund(row);
+  }
+
+  async rejectRefund(
+    tx: JournalQueryClient,
+    input: { refundId: string; actorId: string; note: string }
+  ): Promise<RefundRecord> {
+    const { rows } = await tx.query(REJECT_REFUND_SQL, [input.refundId, input.note]);
+    const row = rows[0];
+    if (!row) {
+      throw new AppError(
+        'CONFLICT',
+        `refund ${input.refundId} is no longer awaiting approval`
+      );
+    }
+    return mapRefund(row);
+  }
+
+  async findLatestRefundByBooking(
+    tx: JournalQueryClient,
+    bookingId: string
+  ): Promise<{ refund: RefundRecord; customerId: string } | null> {
+    const { rows } = await tx.query(SELECT_REFUND_BY_BOOKING_SQL, [bookingId]);
+    const row = rows[0];
+    if (!row) return null;
+    return { refund: mapRefund(row), customerId: String(row.customer_id) };
   }
 
   async insertWebhookEvent(
@@ -826,7 +898,12 @@ function mapRefund(row: Record<string, unknown>): RefundRecord {
     feeIdr: toBigInt(row.fee_idr, 'refunds.fee_idr'),
     status: String(row.status),
     reasonCode: String(row.reason_code),
+    reasonNote: row.reason_note === null || row.reason_note === undefined ? null : String(row.reason_note),
+    evidenceUrl: row.evidence_url === null || row.evidence_url === undefined ? null : String(row.evidence_url),
+    reviewNote: row.review_note === null || row.review_note === undefined ? null : String(row.review_note),
     requestedBy: row.requested_by === null || row.requested_by === undefined ? null : String(row.requested_by),
+    approvedBy: row.approved_by === null || row.approved_by === undefined ? null : String(row.approved_by),
+    approvedAt: toDateOrNull(row.approved_at),
     createdAt: toDateOrNull(row.created_at) ?? new Date()
   };
 }

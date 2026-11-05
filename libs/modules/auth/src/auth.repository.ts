@@ -80,6 +80,22 @@ export interface NewSession {
   readonly parentId: string | null;
 }
 
+/** Deletion record plus the private object keys whose files must be removed. */
+export interface AccountDeletionOutcome {
+  readonly record: AccountDeletionRecord;
+  readonly privateObjectKeys: string[];
+}
+
+/** Outcome of an account deletion request (UU PDP / FR-101). */
+export interface AccountDeletionRecord {
+  readonly id: string;
+  readonly userId: string;
+  readonly status: 'requested' | 'completed' | 'cancelled';
+  readonly reason: string | null;
+  readonly requestedAt: Date;
+  readonly completedAt: Date | null;
+}
+
 /** Row used by refresh rotation and reuse detection. */
 export interface SessionRefreshRecord {
   readonly jti: string;
@@ -146,6 +162,14 @@ export interface AuthRepository {
   revokeFamily(familyId: string, at: Date): Promise<number>;
   /** Revokes the session owning `refreshTokenHash` (logout by refresh token). */
   revokeByRefreshHash(refreshTokenHash: string, at: Date): Promise<number>;
+  /**
+   * Anonymises the user's personal data, revokes sessions and roles, and
+   * records a completed deletion request in one transaction. The row is kept so
+   * bookings, payments and payouts keep their foreign keys.
+   */
+  deleteAccount(userId: string, reason: string | null, at: Date): Promise<AccountDeletionOutcome>;
+  /** Newest deletion request of the user, or null when none exists. */
+  findDeletionRequest(userId: string): Promise<AccountDeletionRecord | null>;
 }
 
 interface OtpRow {
@@ -181,6 +205,33 @@ interface SessionRefreshRow {
   family_id: string | null;
   revoked_at: Date | null;
   refresh_expires_at: Date | null;
+}
+
+interface DeletionRow {
+  id: string;
+  user_id: string;
+  status: 'requested' | 'completed' | 'cancelled';
+  reason: string | null;
+  requested_at: Date;
+  completed_at: Date | null;
+}
+
+const SELECT_DELETION_SQL = `
+SELECT id, user_id, status, reason, requested_at, completed_at
+FROM account_deletion_requests
+WHERE user_id = $1
+ORDER BY requested_at DESC
+`;
+
+function mapDeletion(row: DeletionRow): AccountDeletionRecord {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    status: row.status,
+    reason: row.reason,
+    requestedAt: row.requested_at,
+    completedAt: row.completed_at
+  };
 }
 
 function isUniqueViolation(err: unknown): boolean {
@@ -540,5 +591,124 @@ export class PgAuthRepository implements AuthRepository {
       [refreshTokenHash, at]
     );
     return rows.length;
+  }
+
+  async deleteAccount(
+    userId: string,
+    reason: string | null,
+    at: Date
+  ): Promise<AccountDeletionOutcome> {
+    return withTransaction(async (client) => {
+      const users = await client.query<{ id: string; status: string }>(
+        'SELECT id, status FROM users WHERE id = $1 FOR UPDATE',
+        [userId]
+      );
+      const user = users.rows[0];
+      if (!user) throw new AppError('NOT_FOUND', 'User not found');
+
+      let record: AccountDeletionRecord | null = null;
+
+      // Idempotent: a repeated request reuses the completed record instead of
+      // anonymising twice or creating a second audit row.
+      if (user.status === 'deleted') {
+        const existing = await client.query<DeletionRow>(
+          `${SELECT_DELETION_SQL} LIMIT 1`,
+          [userId]
+        );
+        const row = existing.rows[0];
+        if (row) record = mapDeletion(row);
+      } else {
+        await client.query(
+          `UPDATE users
+              SET phone = NULL,
+                  email = NULL,
+                  name = 'Pengguna dihapus',
+                  avatar_object_key = NULL,
+                  password_hash = NULL,
+                  google_sub = NULL,
+                  status = 'deleted',
+                  deletion_requested_at = COALESCE(deletion_requested_at, $2),
+                  updated_at = $2
+            WHERE id = $1`,
+          [userId, at]
+        );
+
+        await client.query(
+          `UPDATE sessions
+              SET revoked_at = $2,
+                  revoke_reason = COALESCE(revoke_reason, 'account_deleted')
+            WHERE user_id = $1 AND revoked_at IS NULL`,
+          [userId, at]
+        );
+
+        await client.query(
+          `UPDATE user_roles
+              SET revoked_at = $2
+            WHERE user_id = $1 AND revoked_at IS NULL`,
+          [userId, at]
+        );
+      }
+
+      if (!record) {
+        const inserted = await client.query<DeletionRow>(
+          `INSERT INTO account_deletion_requests
+             (user_id, status, reason, requested_at, completed_at)
+           VALUES ($1, 'completed', $2, $3, $3)
+           RETURNING id, user_id, status, reason, requested_at, completed_at`,
+          [userId, reason, at]
+        );
+        const row = inserted.rows[0];
+        if (!row) {
+          throw new AppError('INTERNAL_ERROR', 'deletion request insert returned no row');
+        }
+        record = mapDeletion(row);
+      }
+
+      // Read the old keys first: `RETURNING` after a UPDATE reports the new
+      // value, which is exactly the NULL/'' we are writing. KTP is national
+      // identity data, so the caller must delete the encrypted bytes too.
+      const vendorKeys = await client.query<{ ktp_object_key: string }>(
+        `SELECT ktp_object_key
+           FROM vendors
+          WHERE owner_user_id = $1 AND ktp_object_key IS NOT NULL
+          FOR UPDATE`,
+        [userId]
+      );
+      const applicationKeys = await client.query<{ ktp_object_key: string }>(
+        `SELECT ktp_object_key
+           FROM vendor_applications
+          WHERE user_id = $1 AND ktp_object_key <> ''
+          FOR UPDATE`,
+        [userId]
+      );
+
+      await client.query(
+        `UPDATE vendors
+            SET ktp_object_key = NULL,
+                updated_at = $2
+          WHERE owner_user_id = $1 AND ktp_object_key IS NOT NULL`,
+        [userId, at]
+      );
+      await client.query(
+        `UPDATE vendor_applications
+            SET ktp_object_key = ''
+          WHERE user_id = $1 AND ktp_object_key <> ''`,
+        [userId]
+      );
+
+      return {
+        record,
+        privateObjectKeys: [
+          ...vendorKeys.rows.map((row) => row.ktp_object_key),
+          ...applicationKeys.rows.map((row) => row.ktp_object_key)
+        ]
+      };
+    });
+  }
+
+  async findDeletionRequest(userId: string): Promise<AccountDeletionRecord | null> {
+    const rows = await query<DeletionRow>(`${SELECT_DELETION_SQL} LIMIT 1`, [userId]);
+    const row = rows[0];
+    return row ? mapDeletion(row) : null;
   }
 }

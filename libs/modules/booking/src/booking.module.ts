@@ -8,14 +8,17 @@ import { AvailabilityController } from './availability.controller';
 import { BookingController } from './booking.controller';
 import { BookingRepository } from './booking.repository';
 import { BOOKING_IDEMPOTENCY_STORE, BookingService } from './booking.service';
+import { InvoiceController } from './invoice.controller';
+import { InvoiceService } from './invoice.service';
 import { RequestIdInterceptor } from './request-context';
 
 @Module({
   imports: [CalendarModule],
-  controllers: [BookingController, AvailabilityController],
+  controllers: [BookingController, AvailabilityController, InvoiceController],
   providers: [
     BookingRepository,
     BookingService,
+    InvoiceService,
     {
       provide: BOOKING_IDEMPOTENCY_STORE,
       useFactory: () => new PgIdempotencyStore(getPool())
@@ -30,6 +33,6 @@ import { RequestIdInterceptor } from './request-context';
     { provide: AuthGuard, useClass: AuthGuard },
     RolesGuard
   ],
-  exports: [BookingRepository, BookingService]
+  exports: [BookingRepository, BookingService, InvoiceService]
 })
 export class BookingModule {}

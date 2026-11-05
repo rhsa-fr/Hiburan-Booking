@@ -74,12 +74,46 @@ Settlement tidak punya tabel sendiri: statusnya hidup di `bookings.settlement_st
 Pelunasan manual maupun online (Midtrans) dicatat sebagai baris `payments` berjenis `settlement`; migrasi 007
 menjaga hanya satu baris `pending`/`paid` per booking.
 
-Migrasi: `db/migrations/001_core.sql` … `014_reviews.sql`. Migrasi 002 menambah
+Migrasi: `db/migrations/001_core.sql` … `017_refund_approval_account_deletion.sql`. Migrasi 002 menambah
 add-on dan snapshot istilah, 003 auth, 004 password admin + `login_attempts`, 005
 Google, 006 metode pembayaran manual, 007 keunikan pelunasan, 008 kategori katalog +
 tabel favorit, 009 kolom media vendor/paket, 010 guard idempotensi booking
 (`client_generated_id`), 011 refresh token + index rate limit IP, 012 index trigram
-pencarian vendor, 013 payout vendor maker-checker, 014 review booking pelanggan. Nomor berikutnya: `015`.
+pencarian vendor, 013 payout vendor maker-checker, 014 review booking pelanggan,
+015 pembersihan media stok bawaan 009, 016 moderasi media vendor (`vendor_media`),
+017 maker-checker refund + bukti, hapus akun mandiri, dan pengajuan vendor
+(`vendor_applications`). Nomor berikutnya: `018`.
+
+### 3.1 Moderasi media
+
+Media vendor tidak lagi ditulis langsung ke kolom publik. Alurnya:
+
+```
+vendor unggah → vendor_media (status=pending) → admin approve → kolom publik berubah
+                                             → admin reject  → hanya tercatat + alasan
+```
+
+- `vendors.avatar_url`, `banner_url`, `photo_urls`, `video_url`, dan
+  `packages.photo_url` adalah **hasil** moderasi, bukan input vendor.
+- `PATCH /vendor/me` menolak URL yang tidak punya baris `vendor_media` berstatus
+  `approved` (`details.reason = MEDIA_NOT_APPROVED`).
+- Galeri dibatasi 8 URL; approve ke-9 gagal dengan `GALLERY_FULL`.
+- Backfill 016 menandai unggahan lama (`/v1/media/...`) sebagai `approved` dengan
+  catatan `pra-moderasi`; seed stok Unsplash/YouTube dihapus oleh 015.
+
+### 3.2 KTP vendor (dokumen identitas)
+
+- File KTP disimpan di `PRIVATE_UPLOAD_DIR`, **tidak** di `UPLOAD_DIR` publik.
+- Bytes dienkripsi AES-256-GCM (`IV || authTag || ciphertext`) sebelum ditulis;
+  kunci `KTP_ENCRYPTION_KEY` (base64 32 byte) wajib di production. Dev/test memakai
+  turunan `JWT_SECRET` supaya data lokal tetap tidak plaintext.
+- Permission direktori `0700`, file `0600` (POSIX).
+- Hanya `admin_super` yang bisa membuka file; setiap akses menulis
+  `vendor.application.ktp_access` ke `audit_logs`. `admin_support` melihat NIK tersamar.
+- Data minimisation: reject pengajuan dan hapus akun mengosongkan referensi KTP dan
+  menghapus file terenkripsinya.
+- Belum ada: enkripsi kolom `nik` di DB, 2FA admin, dan pengecekan sesi per-request
+  (access token 15 menit tetap berlaku setelah sesi dicabut).
 
 ## 4. Ledger (bagian paling sensitif)
 
@@ -127,6 +161,15 @@ credit  gateway_clearing            nominal
 Bila provider menolak, jurnal `payout_requested` **dibalik** (`reversal`), bukan dihapus;
 booking yang tercakup dikembalikan ke antrean payout.
 
+### Refund maker-checker (FR-128/FR-133)
+
+Refund di atas `REFUND_APPROVAL_THRESHOLD_IDR` (default Rp1.000.000) berhenti di
+status `requested` tanpa jurnal. Admin lain (`POST /v1/payments/refunds/:id/approve`)
+wajib berbeda dari pembuat permintaan; setelah disetujui barulah provider dipanggil
+dan jurnal pengakuan + `refund_disbursed` diposting. Penolakan menyimpan
+`review_note` tanpa pergerakan uang. Pelanggan melihat status refund lewat
+`GET /v1/payments/refunds/by-booking/:bookingId`.
+
 ### Aturan yang dijaga test
 - Setiap jurnal seimbang (`assertBalanced`).
 - Tidak ada update/delete pada tabel jurnal (dijaga trigger DB).
@@ -166,6 +209,10 @@ untuk nilai ≥ Rp10 juta, 48 jam.
 6. Kuota login/OTP dicek per email/phone **dan** per IP (`login_attempts`,
    `otp_requests.requester_ip`); `TRUST_PROXY=true` diperlukan di belakang proxy.
    OTP `dev_code` hanya keluar bila `NODE_ENV != production` dan `OTP_DEV_MODE=true`.
+7. Hapus akun mandiri (FR-101): `DELETE /auth/me` menganonimkan kolom pribadi
+   (`phone`, `email`, `name`, `password_hash`, `google_sub`), mencabut semua sesi dan
+   peran, lalu mencatat `account_deletion_requests`. Baris `users` dipertahankan agar
+   foreign key booking/payment/payout tetap utuh. Idempoten.
 
 ## 7. Worker
 
@@ -175,6 +222,7 @@ Poller PostgreSQL, interval pendek, tanpa broker.
 |---|---|
 | `expire-holds` | melepas hold kalender yang kedaluwarsa |
 | `expire-unpaid` | menandai booking `unpaid` yang lewat batas sebagai `expired` |
+| `expire-unresponsive` | menandai booking `requested` yang tidak direspons vendor dalam batas waktu sebagai `expired` |
 | `auto-complete` | menutup acara yang sudah lewat |
 | `auto-release` | melepas dana ke vendor setelah jendela sengketa |
 | `payout-reconcile` | mengirim ulang payout `approved` dan menanyakan status `processing` ke provider |
@@ -282,8 +330,10 @@ snapshot, rate limit per IP, index trigram pencarian, guard `dev_code`, refresh 
 panjang, pemangkasan sesi, dan penolakan e-wallet yang eksplisit.
 
 Yang masih terbuka (lihat [AGENTS.md § Batasan](../AGENTS.md#batasan-yang-diketahui)):
-provider WhatsApp/SMS, review/rating, picker peta lokasi acara, UI check-in berbasis GPS,
-dan token admin HttpOnly. Integrasi charge + notifikasi + refund QRIS sekarang memakai
-Midtrans sandbox; endpoint check-in/no-show basic sudah ada. Payout vendor + rekening
-terenkripsi sudah ada; integrasi Iris tersedia di balik `PAYOUT_PROVIDER=iris`, tetapi
-pengujian live bergantung pada kredensial dan saldo merchant Iris sandbox.
+provider WhatsApp/SMS, picker peta lokasi acara, UI check-in berbasis GPS,
+token admin HttpOnly, dan 2FA admin. Integrasi
+charge + notifikasi + refund QRIS memakai Midtrans sandbox; endpoint check-in/no-show
+basic sudah ada. Payout vendor + rekening terenkripsi sudah ada; integrasi Iris
+tersedia di balik `PAYOUT_PROVIDER=iris`, tetapi pengujian live bergantung pada
+kredensial dan saldo merchant Iris sandbox. Review/rating dan favorit sudah selesai
+(014), moderasi media sudah selesai (016).

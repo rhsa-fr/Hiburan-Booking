@@ -53,6 +53,8 @@ const EnvSchema = z.object({
   TRUST_PROXY: boolFromEnv.default(false),
   /** `local` = deterministic no-network gateway; `midtrans` = Core API (sandbox by default). */
   PJP_PROVIDER: z.string().default('local'),
+  /** FR-128: refunds above this amount need a second, different admin. */
+  REFUND_APPROVAL_THRESHOLD_IDR: z.coerce.number().int().nonnegative().default(1_000_000),
   PJP_MERCHANT_ID: z.string().optional(),
   PJP_API_KEY: z.string().optional(),
   PJP_WEBHOOK_SECRET: z.string().optional(),
@@ -78,6 +80,8 @@ const EnvSchema = z.object({
   BANK_ACCOUNT_KEY_ID: z.string().default('v1'),
   /** Local upload directory; relative paths resolve from the repo root. */
   UPLOAD_DIR: z.string().default('storage/uploads'),
+  /** Private uploads (KTP). Never served by the public media route. */
+  PRIVATE_UPLOAD_DIR: z.string().default('storage/private'),
   /** Optional public origin for media URLs (no trailing /v1). */
   MEDIA_PUBLIC_BASE_URL: z.preprocess(
     (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),

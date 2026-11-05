@@ -73,13 +73,15 @@ class _VendorPackageEditPageState extends State<VendorPackageEditPage> {
   }
 
   Future<void> _pickPhoto() async {
+    if (_id == null) return;
     setState(() => _uploadingPhoto = true);
-    final url = await pickAndUploadVendorImage(context);
+    await pickAndUploadVendorImage(
+      context,
+      kind: 'package_photo',
+      packageId: _id,
+    );
     if (!mounted) return;
-    setState(() {
-      _uploadingPhoto = false;
-      if (url != null) _photoUrl = url;
-    });
+    setState(() => _uploadingPhoto = false);
   }
 
   Future<void> _save() async {
@@ -143,7 +145,13 @@ class _VendorPackageEditPageState extends State<VendorPackageEditPage> {
       Navigator.pop(context, true);
     } on ApiException catch (error) {
       if (!mounted) return;
-      _notice(apiMessage(error));
+      final details = error.details;
+      if (error.code == 'MEDIA_NOT_APPROVED' ||
+          (details is Map && details['reason'] == 'MEDIA_NOT_APPROVED')) {
+        _notice('Foto paket belum disetujui admin.');
+      } else {
+        _notice(apiMessage(error));
+      }
     } catch (error) {
       if (!mounted) return;
       _notice('Gagal menyimpan paket: $error');
@@ -159,7 +167,7 @@ class _VendorPackageEditPageState extends State<VendorPackageEditPage> {
 
   @override
   Widget build(BuildContext context) {
-    final isNew = widget.initial == null;
+    final isNew = _id == null;
     return Scaffold(
       backgroundColor: VendorColors.canvas,
       appBar: VendorHeader(
@@ -242,13 +250,32 @@ class _VendorPackageEditPageState extends State<VendorPackageEditPage> {
             ),
             const VendorSectionTitle(label: 'Foto paket'),
             VendorCard(
-              child: VendorMediaTile(
-                label: 'Foto utama paket',
-                url: _photoUrl,
-                busy: _uploadingPhoto,
-                height: 150,
-                onPick: _pickPhoto,
-                onClear: () => setState(() => _photoUrl = null),
+              color: isNew ? VendorColors.softFill : VendorColors.cardWhite,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  IgnorePointer(
+                    ignoring: isNew,
+                    child: Opacity(
+                      opacity: isNew ? 0.6 : 1.0,
+                      child: VendorMediaTile(
+                        label: 'Foto utama paket',
+                        url: _photoUrl,
+                        busy: _uploadingPhoto,
+                        height: 150,
+                        onPick: isNew ? null : _pickPhoto,
+                        onClear: isNew ? null : () => setState(() => _photoUrl = null),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    isNew
+                        ? 'Simpan paket terlebih dahulu sebelum menambahkan foto.'
+                        : 'Perubahan media tampil setelah disetujui admin.',
+                    style: vendorText(size: 10.5, color: VendorColors.muted),
+                  ),
+                ],
               ),
             ),
             const VendorSectionTitle(label: 'Status'),

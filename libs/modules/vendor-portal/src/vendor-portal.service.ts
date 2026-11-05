@@ -9,6 +9,8 @@ import {
   type UpdatePackageInput,
   type WriteCalendarInput
 } from '@tarlink/modules/catalog';
+import { MEDIA_NOT_APPROVED_CODE } from './media.contracts';
+import { MediaRepository } from './media.repository';
 import type {
   CreatePackageBody,
   UpdatePackageBody,
@@ -21,15 +23,32 @@ import { VendorPortalRepository } from './vendor-portal.repository';
 export class VendorPortalService {
   constructor(
     private readonly repo: VendorPortalRepository,
-    private readonly catalog: CatalogService
+    private readonly catalog: CatalogService,
+    private readonly mediaRepo: MediaRepository
   ) {}
 
-  private async requireVendor(userId: string) {
+  async requireVendor(userId: string) {
     const v = await this.repo.findVendorByOwner(userId);
     if (!v) {
       throw new AppError('NOT_FOUND', 'Vendor tidak ditemukan untuk akun ini.');
     }
     return v;
+  }
+
+  /**
+   * FR-107: kolom media publik hanya boleh berisi URL yang sudah disetujui.
+   * Dipakai `updateMe`, `createPackage`, dan `updatePackage` supaya tidak ada
+   * jalur tulis yang melewati moderasi.
+   */
+  private async assertApprovedMedia(vendorId: string, urls: string[]): Promise<void> {
+    const approvedSet = await this.mediaRepo.findApprovedUrls(vendorId, urls);
+    for (const url of urls) {
+      if (!approvedSet.has(url)) {
+        throw new AppError('VALIDATION_ERROR', `Media belum disetujui: ${url}`, {
+          reason: MEDIA_NOT_APPROVED_CODE
+        });
+      }
+    }
   }
 
   async getMe(userId: string) {
@@ -38,6 +57,29 @@ export class VendorPortalService {
 
   async updateMe(userId: string, input: VendorSelfUpdateInput) {
     const vendor = await this.requireVendor(userId);
+
+    const urlsToCheck: string[] = [];
+    if (typeof input.avatar_url === 'string' && input.avatar_url.trim().length > 0) {
+      urlsToCheck.push(input.avatar_url.trim());
+    }
+    if (typeof input.banner_url === 'string' && input.banner_url.trim().length > 0) {
+      urlsToCheck.push(input.banner_url.trim());
+    }
+    if (typeof input.video_url === 'string' && input.video_url.trim().length > 0) {
+      urlsToCheck.push(input.video_url.trim());
+    }
+    if (Array.isArray(input.photo_urls)) {
+      for (const url of input.photo_urls) {
+        if (typeof url === 'string' && url.trim().length > 0) {
+          urlsToCheck.push(url.trim());
+        }
+      }
+    }
+
+    if (urlsToCheck.length > 0) {
+      await this.assertApprovedMedia(vendor.id, urlsToCheck);
+    }
+
     const row = await this.repo.updateOwnProfile(vendor.id, {
       ...input,
       transport_fee_per_km_idr:
@@ -56,6 +98,9 @@ export class VendorPortalService {
 
   async createPackage(userId: string, input: CreatePackageBody): Promise<PackageRow> {
     const vendor = await this.requireVendor(userId);
+    if (input.photo_url) {
+      await this.assertApprovedMedia(vendor.id, [input.photo_url]);
+    }
     return this.catalog.createPackage(vendor.id, input as CreatePackageInput);
   }
 
@@ -65,6 +110,9 @@ export class VendorPortalService {
     input: UpdatePackageBody
   ): Promise<PackageRow> {
     const vendor = await this.requireVendor(userId);
+    if (input.photo_url) {
+      await this.assertApprovedMedia(vendor.id, [input.photo_url]);
+    }
     return this.catalog.updatePackage(vendor.id, packageId, input as UpdatePackageInput);
   }
 

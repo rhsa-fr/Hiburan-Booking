@@ -5,6 +5,7 @@ import {
   Banknote,
   BookOpen,
   CalendarDays,
+  Image as ImageIcon,
   LayoutDashboard,
   Menu,
   ScrollText,
@@ -52,6 +53,7 @@ const NAV_GROUPS: SidebarNavGroupModel[] = [
       { id: 'dashboard', label: 'Dashboard', href: '/', icon: <LayoutDashboard className="h-[18px] w-[18px]" /> },
       { id: 'bookings', label: 'Booking', href: '/bookings', icon: <CalendarDays className="h-[18px] w-[18px]" /> },
       { id: 'vendors', label: 'Vendor', href: '/vendors', icon: <Store className="h-[18px] w-[18px]" /> },
+      { id: 'moderation', label: 'Moderasi', href: '/moderation', icon: <ImageIcon className="h-[18px] w-[18px]" /> },
       { id: 'release', label: 'Release', href: '/release', icon: <Wallet className="h-[18px] w-[18px]" /> },
       { id: 'payouts', label: 'Payout', href: '/payouts', icon: <Banknote className="h-[18px] w-[18px]" /> }
     ]
@@ -84,6 +86,7 @@ const NAV_GROUPS: SidebarNavGroupModel[] = [
 ];
 
 const SECTION_LABELS: Array<[string, string]> = [
+  ['/moderation', 'Vendor'],
   ['/ledger', 'Transaksi'],
   ['/payments', 'Transaksi'],
   ['/disputes', 'Transaksi'],

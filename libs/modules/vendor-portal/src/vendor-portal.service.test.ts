@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AppError } from '@tarlink/core/errors';
 import type { CatalogService } from '@tarlink/modules/catalog';
+import { MEDIA_NOT_APPROVED_CODE } from './media.contracts';
+import { MediaRepository } from './media.repository';
 import { VendorPortalRepository } from './vendor-portal.repository';
 import { VendorPortalService } from './vendor-portal.service';
 
@@ -30,9 +32,17 @@ const MOCK_VENDOR = {
   whatsapp: null
 };
 
-function createService(repoOverrides: Partial<VendorPortalRepository> = {}) {
+function createService(
+  repoOverrides: Partial<VendorPortalRepository> = {},
+  mediaRepoOverrides: Partial<MediaRepository> = {}
+) {
   const repo = new VendorPortalRepository();
   Object.assign(repo, repoOverrides);
+  const mediaRepo = new MediaRepository();
+  Object.assign(mediaRepo, {
+    findApprovedUrls: vi.fn().mockResolvedValue(new Set()),
+    ...mediaRepoOverrides
+  });
   const catalog = {
     listPackages: vi.fn(),
     createPackage: vi.fn(),
@@ -41,9 +51,14 @@ function createService(repoOverrides: Partial<VendorPortalRepository> = {}) {
     writeCalendar: vi.fn()
   };
   return {
-    service: new VendorPortalService(repo, catalog as unknown as CatalogService),
+    service: new VendorPortalService(
+      repo,
+      catalog as unknown as CatalogService,
+      mediaRepo as unknown as MediaRepository
+    ),
     repo,
-    catalog
+    catalog,
+    mediaRepo
   };
 }
 
@@ -355,6 +370,49 @@ describe('VendorPortalService', () => {
         USER_ID,
         'vendor'
       );
+    });
+
+    it('rejects profile update with unapproved media URL with VALIDATION_ERROR and MEDIA_NOT_APPROVED code', async () => {
+      const { service, mediaRepo } = createService({
+        findVendorByOwner: vi.fn().mockResolvedValue(MOCK_VENDOR)
+      });
+      // Mock findApprovedUrls returning empty set (URL not approved)
+      (mediaRepo.findApprovedUrls as any).mockResolvedValue(new Set());
+
+      await expect(
+        service.updateMe(USER_ID, {
+          avatar_url: 'https://example.com/unapproved-avatar.jpg'
+        })
+      ).rejects.toMatchObject({
+        code: 'VALIDATION_ERROR',
+        details: { reason: MEDIA_NOT_APPROVED_CODE }
+      });
+    });
+
+    it('allows profile update when media URLs are approved', async () => {
+      const approvedUrl = 'https://example.com/approved-avatar.jpg';
+      const update = vi.fn().mockResolvedValue({ ...MOCK_VENDOR, avatar_url: approvedUrl });
+      const { service, mediaRepo } = createService({
+        findVendorByOwner: vi.fn().mockResolvedValue(MOCK_VENDOR),
+        updateOwnProfile: update
+      });
+      (mediaRepo.findApprovedUrls as any).mockResolvedValue(new Set([approvedUrl]));
+
+      const res = await service.updateMe(USER_ID, { avatar_url: approvedUrl });
+      expect(res.avatar_url).toBe(approvedUrl);
+      expect(update).toHaveBeenCalled();
+    });
+
+    it('allows clearing media fields with null or empty without checking approved URLs', async () => {
+      const update = vi.fn().mockResolvedValue({ ...MOCK_VENDOR, avatar_url: null, photo_urls: [] });
+      const { service, mediaRepo } = createService({
+        findVendorByOwner: vi.fn().mockResolvedValue(MOCK_VENDOR),
+        updateOwnProfile: update
+      });
+
+      await service.updateMe(USER_ID, { avatar_url: null, photo_urls: [] });
+      expect(mediaRepo.findApprovedUrls).not.toHaveBeenCalled();
+      expect(update).toHaveBeenCalled();
     });
   });
 });

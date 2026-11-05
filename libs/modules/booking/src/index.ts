@@ -34,6 +34,18 @@ export type {
 } from './booking.repository';
 export { BookingController } from './booking.controller';
 export { AvailabilityController } from './availability.controller';
+export { InvoiceController } from './invoice.controller';
+export { InvoiceService, INVOICE_QUERY_FN } from './invoice.service';
+export type {
+  InvoiceAddonView,
+  InvoiceBookingView,
+  InvoiceCustomerView,
+  InvoiceEventView,
+  InvoicePaymentView,
+  InvoicePricingView,
+  InvoiceQueryFn,
+  InvoiceView
+} from './invoice.service';
 export { CurrentUser } from './current-user.decorator';
 export type { AuthUser } from './current-user.decorator';
 export {

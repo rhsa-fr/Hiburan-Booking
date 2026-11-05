@@ -1,4 +1,6 @@
 import { Module } from '@nestjs/common';
+import { promises as fs } from 'node:fs';
+import { resolve, sep } from 'node:path';
 import { loadConfig } from '@tarlink/core/config';
 import { AuthGuard, JWT_SECRET, RolesGuard } from '@tarlink/platform/auth';
 import { AuthController } from './auth.controller';
@@ -39,7 +41,16 @@ import { GoogleTokenInfoVerifier } from './google-verifier';
           otpDevMode: cfg.OTP_DEV_MODE,
           loginIpRateLimitMax: cfg.LOGIN_IP_RATE_LIMIT_MAX,
           otpIpRateLimitMax: cfg.OTP_IP_RATE_LIMIT_MAX,
-          googleVerifier: googleClientId ? new GoogleTokenInfoVerifier(googleClientId) : null
+          googleVerifier: googleClientId ? new GoogleTokenInfoVerifier(googleClientId) : null,
+          removePrivateFiles: async (keys) => {
+            const root = resolve(process.cwd(), cfg.PRIVATE_UPLOAD_DIR);
+            for (const key of keys) {
+              if (!/^ktp\/[0-9a-f-]{36}\/[0-9a-f-]{36}\.(jpg|png|webp)$/.test(key)) continue;
+              const target = resolve(root, key);
+              if (!target.startsWith(`${root}${sep}`)) continue;
+              await fs.rm(target, { force: true });
+            }
+          }
         });
       }
     }

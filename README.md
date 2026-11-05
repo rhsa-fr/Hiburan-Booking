@@ -18,7 +18,7 @@ Repositori ini berisi **API**, **panel admin**, **worker**, **library domain**, 
 | `apps/mobile` — portal vendor | 6 layar, kelola profil/paket/kalender + upload media | login akun `vendor_owner` |
 | Payout vendor + rekening | `payouts`/`payout_items`, rekening terenkripsi, maker-checker, worker rekonsiliasi | `PAYOUT_PROVIDER=local` (default) |
 | Ledger double-entry | 788 test backend lulus (3 skip) | `npm test` |
-| Skema DB | migrasi `001`–`013` | `npm run migrate` |
+| Skema DB | migrasi `001`–`016` | `npm run migrate` |
 
 ## Stack
 
@@ -38,7 +38,7 @@ Repositori ini berisi **API**, **panel admin**, **worker**, **library domain**, 
 | `apps/worker` | Job: `expire-unpaid`, `expire-holds`, `auto-complete`, `auto-release`, `payout-reconcile`, `outbox`, `cleanup-auth` |
 | `libs/modules/*` | Domain: `auth`, `booking`, `payment`, `payout`, `ledger`, `catalog`, `calendar`, `admin`, `vendor-portal` |
 | `libs/platform/*` | Fondasi: db, config, auth (JWT + `jti`), error, uang, idempotensi |
-| `db/migrations` | Skema PostgreSQL `001`–`013` |
+| `db/migrations` | Skema PostgreSQL `001`–`016` |
 | `scripts/` | Migrasi, seed, smoke test, webhook PJP, probe browser |
 | `opendesain/` | Ekspor HTML acuan desain pelanggan & vendor (bukan aplikasi) — lihat [docs/DESIGN-REFERENCES.md](docs/DESIGN-REFERENCES.md) |
 | `docs/` | PRD, tech design, UX flow, brief legal, SOP, arsitektur, API |
@@ -170,7 +170,8 @@ Yang masih terbuka:
 - Disbursement/payout ke rekening vendor sekarang tersedia (rekening terenkripsi +
   maker-checker + adapter Iris di balik `PAYOUT_PROVIDER=iris`), tetapi pengujian live Iris
   belum dilakukan karena butuh kredensial dan saldo merchant sandbox. Provider WhatsApp/SMS,
-  review/rating, picker peta lokasi acara, dan UI check-in berbasis GPS belum ada.
+  picker peta lokasi acara, UI check-in berbasis GPS, invoice/nota, hapus akun mandiri, dan
+  2FA admin belum ada. Review/rating, favorit, dan moderasi media sudah selesai.
   Charge/notifikasi/refund QRIS sudah memakai Midtrans sandbox; endpoint check-in basic
   sudah ada.
 

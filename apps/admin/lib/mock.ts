@@ -4,6 +4,9 @@ import { formatDayLabelID, formatIDR, statusLabel } from './format';
 import type {
   Account,
   ActionQueueItem,
+  AdminMediaItem,
+  AdminMediaQueue,
+  AdminMediaStatus,
   AuditLog,
   Booking,
   BookingFilters,
@@ -906,6 +909,73 @@ const INITIAL_ENTRIES: JournalEntry[] = [
   }
 ];
 
+const INITIAL_MEDIA_QUEUE: AdminMediaItem[] = [
+  {
+    id: 'med-01',
+    vendor_id: 'v-bintang',
+    vendor_name: 'Bintang Pantura Sound',
+    vendor_region_code: 'id-jb-crb',
+    package_id: null,
+    package_name: null,
+    kind: 'banner',
+    url: '/v1/media/0192a3b4-5c6d-7e8f-9a0b-1c2d3e4f5a6b.jpg',
+    status: 'pending',
+    license_statement:
+      'Saya menyatakan memiliki hak cipta penuh atas foto dokumentasi panggung ini untuk keperluan promosi.',
+    review_note: null,
+    reviewed_at: null,
+    created_at: '2026-10-20T14:30:00+07:00'
+  },
+  {
+    id: 'med-02',
+    vendor_id: 'v-melati',
+    vendor_name: 'Melati Rias & Busana',
+    vendor_region_code: 'id-jb-bgr',
+    package_id: 'pkg-melati-01',
+    package_name: 'Paket Rias Pengantin Lengkap',
+    kind: 'package_photo',
+    url: '/v1/media/0283b4c5-6d7e-8f9a-0b1c-2d3e4f5a6b7c.jpg',
+    status: 'pending',
+    license_statement:
+      'Foto hasil riasan resmi portofolio pribadi salon Melati dengan izin klien pengantin.',
+    review_note: null,
+    reviewed_at: null,
+    created_at: '2026-10-21T08:15:00+07:00'
+  },
+  {
+    id: 'med-04',
+    vendor_id: 'v-bintang',
+    vendor_name: 'Bintang Pantura Sound',
+    vendor_region_code: 'id-jb-crb',
+    package_id: null,
+    package_name: null,
+    kind: 'video',
+    url: 'https://www.youtube.com/watch?v=TarlinkDemo01',
+    status: 'pending',
+    license_statement:
+      'Rekaman penampilan milik sendiri, diunggah dari kanal resmi grup untuk portofolio.',
+    review_note: null,
+    reviewed_at: null,
+    created_at: '2026-10-22T09:45:00+07:00'
+  },
+  {
+    id: 'med-03',
+    vendor_id: 'v-surya',
+    vendor_name: 'Surya Nada Entertainment',
+    vendor_region_code: 'id-jt-tegal',
+    package_id: null,
+    package_name: null,
+    kind: 'avatar',
+    url: '/v1/media/0394c5d6-7e8f-9a0b-1c2d-3e4f5a6b7c8d.jpg',
+    status: 'approved',
+    license_statement:
+      'Logo resmi Surya Nada Entertainment karya studio grafis in-house.',
+    review_note: null,
+    reviewed_at: '2026-10-19T11:00:00+07:00',
+    created_at: '2026-10-19T09:00:00+07:00'
+  }
+];
+
 const state = {
   settings: INITIAL_SETTINGS,
   bookings: BOOKINGS,
@@ -913,7 +983,8 @@ const state = {
   payments: buildPayments(),
   entries: INITIAL_ENTRIES,
   disputes: INITIAL_DISPUTES,
-  latestReleaseJournalCodes: [] as string[]
+  latestReleaseJournalCodes: [] as string[],
+  mediaQueue: [...INITIAL_MEDIA_QUEUE]
 };
 
 function sameWibDay(aIso: string, bIso: string): boolean {
@@ -1567,4 +1638,56 @@ export function mockGetOperators(): Operator[] {
   return [...OPERATORS];
 }
 
+export function mockGetMediaQueue(params: {
+  status?: AdminMediaStatus;
+  page?: number;
+  page_size?: number;
+} = {}): AdminMediaQueue {
+  const status = params.status;
+  const page = params.page ?? 1;
+  const pageSize = params.page_size ?? 20;
+
+  const filtered = state.mediaQueue.filter((item) => {
+    if (status && item.status !== status) return false;
+    return true;
+  });
+
+  const total = filtered.length;
+  const start = (page - 1) * pageSize;
+  const items = filtered.slice(start, start + pageSize);
+
+  return {
+    items,
+    total,
+    page,
+    page_size: pageSize
+  };
+}
+
+export function mockApproveMedia(id: string): AdminMediaItem {
+  const item = state.mediaQueue.find((m) => m.id === id);
+  if (!item) {
+    throw new ApiError('Media tidak ditemukan.', 404);
+  }
+  item.status = 'approved';
+  item.reviewed_at = MOCK_NOW;
+  return { ...item };
+}
+
+export function mockRejectMedia(id: string, note: string): AdminMediaItem {
+  const trimmed = (note ?? '').trim();
+  if (trimmed.length < 5) {
+    throw new ApiError('Alasan penolakan minimal 5 karakter.', 400);
+  }
+  const item = state.mediaQueue.find((m) => m.id === id);
+  if (!item) {
+    throw new ApiError('Media tidak ditemukan.', 404);
+  }
+  item.status = 'rejected';
+  item.review_note = trimmed;
+  item.reviewed_at = MOCK_NOW;
+  return { ...item };
+}
+
 export { ACCOUNT_NAMES as MOCK_ACCOUNT_NAMES };
+

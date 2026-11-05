@@ -10,6 +10,7 @@ import '../../core/models.dart';
 import '../../core/ui.dart';
 import '../../core/widgets.dart';
 import '../booking/booking_support.dart';
+import 'vendor_apply_page.dart';
 
 /// Support line the customer can reach from the account tab.
 const _supportWhatsApp = '6281234567890';
@@ -28,6 +29,7 @@ class _AccountPageState extends State<AccountPage> {
   String? _error;
   bool _started = false;
   bool _signingOut = false;
+  bool _deletingAccount = false;
 
   @override
   void didChangeDependencies() {
@@ -132,6 +134,40 @@ class _AccountPageState extends State<AccountPage> {
     Navigator.pushNamedAndRemoveUntil(context, Routes.login, (_) => false);
   }
 
+  /// FR-101: anonymise the account, clear the session, and return to login.
+  Future<void> _confirmDeleteAccount() async {
+    if (_deletingAccount || _signingOut) return;
+    final confirmed = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: AppColors.card,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(Radii.lg)),
+      ),
+      builder: (_) => const _DeleteAccountSheet(),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final scope = AppScope.of(context);
+    setState(() => _deletingAccount = true);
+    try {
+      await scope.api.delete(
+        '/auth/me',
+        body: const {'confirm': 'HAPUS AKUN'},
+      );
+      await scope.session.signOut();
+      if (!mounted) return;
+      Navigator.pushNamedAndRemoveUntil(context, Routes.login, (_) => false);
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() => _deletingAccount = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(apiMessage(error))));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = _user;
@@ -217,6 +253,17 @@ class _AccountPageState extends State<AccountPage> {
       child: Column(
         children: [
           _MenuRow(
+            icon: Icons.storefront_outlined,
+            label: 'Daftar jadi vendor',
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute<void>(
+                builder: (_) => const VendorApplyPage(),
+              ),
+            ),
+          ),
+          const Divider(height: 1, thickness: 1, color: AppColors.line),
+          _MenuRow(
             icon: Icons.favorite_outline,
             label: 'Vendor Favorit',
             onTap: () => Navigator.pushNamed(context, Routes.favorites),
@@ -238,6 +285,22 @@ class _AccountPageState extends State<AccountPage> {
             icon: Icons.chat_bubble_outline,
             label: 'Bantuan via WhatsApp',
             onTap: _openWhatsApp,
+          ),
+          const Divider(height: 1, thickness: 1, color: AppColors.line),
+          _MenuRow(
+            icon: Icons.delete_forever_outlined,
+            label: 'Hapus akun',
+            danger: true,
+            onTap: (_deletingAccount || _signingOut)
+                ? null
+                : _confirmDeleteAccount,
+            trailing: _deletingAccount
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : null,
           ),
           const Divider(height: 1, thickness: 1, color: AppColors.line),
           _MenuRow(
@@ -460,6 +523,113 @@ class _SignOutSheet extends StatelessWidget {
                       foregroundColor: AppColors.onPrimary,
                     ),
                     child: const Text('Keluar'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DeleteAccountSheet extends StatefulWidget {
+  const _DeleteAccountSheet();
+
+  @override
+  State<_DeleteAccountSheet> createState() => _DeleteAccountSheetState();
+}
+
+class _DeleteAccountSheetState extends State<_DeleteAccountSheet> {
+  static const _phrase = 'HAPUS AKUN';
+  final _controller = TextEditingController();
+  bool _matches = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          Sp.xl,
+          Sp.sm,
+          Sp.xl,
+          Sp.xl + MediaQuery.viewInsetsOf(context).bottom,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Center(
+              child: Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.neutralSoft,
+                  borderRadius: BorderRadius.circular(Radii.pill),
+                ),
+              ),
+            ),
+            const SizedBox(height: Sp.xl),
+            Text('Hapus akun?', style: text.titleLarge),
+            const SizedBox(height: Sp.sm),
+            Text(
+              'Data pribadi (nama, email, nomor WhatsApp) akan dianonimkan dan '
+              'semua sesi dicabut. Riwayat booking dan pembayaran tetap '
+              'tersimpan untuk kewajiban pembukuan. Tindakan ini tidak bisa '
+              'dibatalkan.',
+              style: text.bodyMedium?.copyWith(color: AppColors.inkMuted),
+            ),
+            const SizedBox(height: Sp.lg),
+            TextField(
+              controller: _controller,
+              textCapitalization: TextCapitalization.characters,
+              decoration: const InputDecoration(
+                labelText: 'Ketik HAPUS AKUN untuk melanjutkan',
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (value) {
+                final matches = value.trim() == _phrase;
+                if (matches != _matches) setState(() => _matches = matches);
+              },
+            ),
+            const SizedBox(height: Sp.xl),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(52),
+                      foregroundColor: AppColors.ink,
+                      side: const BorderSide(color: AppColors.line),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(Radii.sm),
+                      ),
+                    ),
+                    child: const Text('Batal'),
+                  ),
+                ),
+                const SizedBox(width: Sp.md),
+                Expanded(
+                  child: FilledButton(
+                    onPressed: _matches
+                        ? () => Navigator.pop(context, true)
+                        : null,
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size.fromHeight(52),
+                      backgroundColor: AppColors.danger,
+                      foregroundColor: AppColors.onPrimary,
+                    ),
+                    child: const Text('Hapus akun'),
                   ),
                 ),
               ],
