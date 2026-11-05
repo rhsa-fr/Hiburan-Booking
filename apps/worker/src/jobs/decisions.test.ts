@@ -6,8 +6,10 @@ import {
   shouldAutoRelease,
   shouldExpireHold,
   shouldExpireUnpaid,
+  shouldExpireUnresponsive,
   type AutoCompleteCandidate,
-  type AutoReleaseCandidate
+  type AutoReleaseCandidate,
+  type UnresponsiveCandidate
 } from './decisions';
 
 const NOW = new Date('2026-03-10T12:00:00.000Z');
@@ -99,6 +101,40 @@ describe('shouldExpireUnpaid (L-14)', () => {
     expect(shouldExpireUnpaid({ ...base, payment_status: 'dp_paid' }, NOW)).toBe(false);
     expect(shouldExpireUnpaid({ ...base, lifecycle_status: 'confirmed' }, NOW)).toBe(false);
     expect(shouldExpireUnpaid({ ...base, payment_deadline: null }, NOW)).toBe(false);
+  });
+});
+
+describe('shouldExpireUnresponsive (L-05: respond_deadline_passed)', () => {
+  const base: UnresponsiveCandidate = {
+    lifecycle_status: 'requested',
+    respond_deadline: new Date(NOW.getTime() - 1)
+  };
+
+  it('matches requested + past deadline', () => {
+    expect(shouldExpireUnresponsive(base, NOW)).toBe(true);
+  });
+
+  it('matches requested + exact deadline (<= now)', () => {
+    expect(shouldExpireUnresponsive({ ...base, respond_deadline: NOW }, NOW)).toBe(true);
+  });
+
+  it('ignores future deadline', () => {
+    expect(
+      shouldExpireUnresponsive(
+        { ...base, respond_deadline: new Date(NOW.getTime() + 1000) },
+        NOW
+      )
+    ).toBe(false);
+  });
+
+  it('ignores accepted, confirmed, and other statuses', () => {
+    for (const lifecycle_status of ['accepted', 'confirmed', 'in_progress', 'completed', 'cancelled', 'expired']) {
+      expect(shouldExpireUnresponsive({ ...base, lifecycle_status }, NOW)).toBe(false);
+    }
+  });
+
+  it('ignores null deadline', () => {
+    expect(shouldExpireUnresponsive({ ...base, respond_deadline: null }, NOW)).toBe(false);
   });
 });
 

@@ -60,6 +60,18 @@ export function shouldExpireUnpaid(candidate: ExpireUnpaidCandidate, now: Date):
   return now.getTime() > candidate.payment_deadline.getTime();
 }
 
+export interface UnresponsiveCandidate {
+  lifecycle_status: string;
+  respond_deadline: Date | null;
+}
+
+/** L-05: requested, respond_deadline passed. */
+export function shouldExpireUnresponsive(candidate: UnresponsiveCandidate, now: Date): boolean {
+  if (candidate.lifecycle_status !== 'requested') return false;
+  if (!candidate.respond_deadline) return false;
+  return candidate.respond_deadline.getTime() <= now.getTime();
+}
+
 export interface AutoReleaseCandidate {
   lifecycle_status: string;
   payment_status: string;
