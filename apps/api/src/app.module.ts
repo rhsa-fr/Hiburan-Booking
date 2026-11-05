@@ -15,6 +15,7 @@ import { CatalogModule } from '@tarlink/modules/catalog';
 import { PaymentModule } from '@tarlink/modules/payment';
 import { PayoutModule } from '@tarlink/modules/payout';
 import { VendorPortalModule } from '@tarlink/modules/vendor-portal';
+import { VendorOnboardingModule } from '@tarlink/modules/vendor-onboarding';
 import { AuthGuard, JWT_SECRET, RolesGuard } from '@tarlink/platform/auth';
 import { IdempotencyService, PgIdempotencyStore } from '@tarlink/platform/idempotency';
 import { SystemClock } from '@tarlink/platform/clock';
@@ -87,6 +88,7 @@ class AllExceptionsFilter implements ExceptionFilter {
     BookingModule,
     PaymentModule,
     VendorPortalModule,
+    VendorOnboardingModule,
     PayoutModule
   ],
   controllers: [HealthController],
