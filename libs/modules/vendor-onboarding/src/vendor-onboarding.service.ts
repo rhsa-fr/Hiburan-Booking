@@ -4,6 +4,7 @@ import { slugify } from '@tarlink/modules/catalog';
 import type { UploadedImage } from '@tarlink/modules/vendor-portal';
 import {
   type ListVendorApplicationsQuery,
+  type VendorApplicationRecord,
   type ReviewVendorApplicationInput,
   type SubmitVendorApplicationInput,
   type VendorApplicationList,
@@ -59,13 +60,40 @@ export class VendorOnboardingService {
       throw new AppError('VALIDATION_ERROR', 'Foto KTP tidak ditemukan. Unggah ulang.');
     }
 
-    const record = await this.repository.insertApplication(userId, input);
-    return toApplicationView(record, { revealNik: false });
+    const secret = this.storage.encryptNik(input.nik);
+    const record = await this.repository.insertApplication(userId, input, secret);
+    return toApplicationView({ ...record, nik: input.nik }, { revealNik: false });
   }
 
   async myApplication(userId: string): Promise<VendorApplicationView | null> {
     const record = await this.repository.findLatestByUser(userId);
-    return record ? toApplicationView(record, { revealNik: false }) : null;
+    if (!record) return null;
+    return toApplicationView(await this.hydrateNik(record), { revealNik: false });
+  }
+
+  /**
+   * Returns a record whose `nik` is readable. Rows written before migration 019
+   * still contain plaintext: encrypt it, clear the column, keep serving the
+   * value from memory so the admin queue never breaks mid-migration.
+   */
+  private async hydrateNik(
+    record: VendorApplicationRecord
+  ): Promise<VendorApplicationRecord> {
+    if (record.nik.length > 0) {
+      try {
+        const secret = this.storage.encryptNik(record.nik);
+        await this.repository.setNikCiphertext(record.id, secret.ciphertext, secret.keyId);
+      } catch {
+        // Leave the legacy row untouched; the next read retries.
+      }
+      return record;
+    }
+    if (!record.nikCiphertext) return record;
+    try {
+      return { ...record, nik: this.storage.decryptNik(record.nikCiphertext) };
+    } catch {
+      return record;
+    }
   }
 
   async list(
@@ -77,8 +105,9 @@ export class VendorOnboardingService {
       page: query.page,
       pageSize: query.page_size
     });
+    const hydrated = await Promise.all(result.items.map((record) => this.hydrateNik(record)));
     return {
-      items: result.items.map((record) =>
+      items: hydrated.map((record) =>
         toApplicationView(record, { revealNik: options.revealNik })
       ),
       total: result.total,
@@ -116,7 +145,7 @@ export class VendorOnboardingService {
       } catch {
         // Left for the operator; the key is already blanked in the database.
       }
-      return toApplicationView(rejected, { revealNik: true });
+      return toApplicationView(await this.hydrateNik(rejected), { revealNik: true });
     }
 
     // Short suffix guarantees a unique slug without a read-modify-write race.
@@ -131,7 +160,7 @@ export class VendorOnboardingService {
         now: new Date()
       })
     );
-    return toApplicationView(approved, { revealNik: true });
+    return toApplicationView(await this.hydrateNik(approved), { revealNik: true });
   }
 
   async ktpFile(

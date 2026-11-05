@@ -74,7 +74,11 @@ export interface VendorApplicationRecord {
   readonly status: VendorApplicationStatus;
   readonly displayName: string;
   readonly legalName: string;
+  /** Empty when only the encrypted form is stored; hydrate before displaying. */
   readonly nik: string;
+  /** AES-256-GCM payload for new rows (migrasi 019). */
+  readonly nikCiphertext: Buffer | null;
+  readonly nikKeyId: string | null;
   readonly regionCode: string;
   readonly baseAddress: string;
   readonly ktpObjectKey: string;

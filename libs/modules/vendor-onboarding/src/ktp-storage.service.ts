@@ -135,6 +135,18 @@ export class KtpStorageService implements OnModuleInit {
     return { buffer, mime, size: buffer.length };
   }
 
+  /**
+   * NIK uses the same key ring as the KTP file but a separate payload:
+   * `nik_ciphertext` is IV || tag || ciphertext, exactly like the file bytes.
+   */
+  encryptNik(nik: string): { ciphertext: Buffer; keyId: string } {
+    return { ciphertext: this.encrypt(Buffer.from(nik, 'utf8')), keyId: 'ktp-v1' };
+  }
+
+  decryptNik(payload: Buffer): string {
+    return this.decrypt(payload).toString('utf8');
+  }
+
   /** Best-effort removal used when an application is rejected or an account is deleted. */
   async remove(objectKey: string): Promise<void> {
     if (!KTP_KEY_PATTERN.test(objectKey)) return;

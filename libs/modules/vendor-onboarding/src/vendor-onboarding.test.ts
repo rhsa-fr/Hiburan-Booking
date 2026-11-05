@@ -26,6 +26,8 @@ function record(overrides: Partial<VendorApplicationRecord> = {}): VendorApplica
     displayName: INPUT.display_name,
     legalName: INPUT.legal_name,
     nik: INPUT.nik,
+    nikCiphertext: null,
+    nikKeyId: null,
     regionCode: INPUT.region_code,
     baseAddress: INPUT.base_address,
     ktpObjectKey: INPUT.ktp_object_key,
@@ -54,12 +56,19 @@ class FakeRepository {
   async regionExists(): Promise<boolean> {
     return this.region;
   }
+  insertedSecret: { ciphertext: Buffer; keyId: string } | null = null;
+
   async insertApplication(
     _userId: string,
-    input: SubmitVendorApplicationInput
+    input: SubmitVendorApplicationInput,
+    secret: { ciphertext: Buffer; keyId: string }
   ): Promise<VendorApplicationRecord> {
     this.inserted = input;
-    return record({ status: 'submitted' });
+    this.insertedSecret = secret;
+    return record({ status: 'submitted', nik: '' });
+  }
+  async setNikCiphertext(): Promise<void> {
+    return undefined;
   }
   async listForAdmin(): Promise<{ items: VendorApplicationRecord[]; total: number }> {
     return { items: [record()], total: 1 };
@@ -94,6 +103,12 @@ class FakeStorage {
   }
   async remove(objectKey: string): Promise<void> {
     this.removed = objectKey;
+  }
+  encryptNik(nik: string): { ciphertext: Buffer; keyId: string } {
+    return { ciphertext: Buffer.from(nik, 'utf8'), keyId: 'test' };
+  }
+  decryptNik(payload: Buffer): string {
+    return payload.toString('utf8');
   }
 }
 
@@ -159,6 +174,9 @@ describe('VendorOnboardingService.submit', () => {
     const view = await service.submit(USER_ID, INPUT);
 
     expect(repository.inserted).toEqual(INPUT);
+    // NIK leaves the request path as ciphertext; the plaintext is never inserted.
+    expect(repository.insertedSecret).not.toBeNull();
+    expect(repository.insertedSecret?.keyId).toBeTruthy();
     expect(view.status).toBe('submitted');
     expect(view.nik).toBe('************0001');
     expect(view.vendor_id).toBeNull();

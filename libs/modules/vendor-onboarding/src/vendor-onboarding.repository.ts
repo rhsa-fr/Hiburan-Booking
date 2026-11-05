@@ -9,8 +9,9 @@ import type {
 } from './vendor-onboarding.contracts';
 
 const APPLICATION_COLUMNS = `
-  id, user_id, status, display_name, legal_name, nik, region_code, base_address,
-  ktp_object_key, review_note, reviewed_by, reviewed_at, vendor_id, created_at
+  id, user_id, status, display_name, legal_name, nik, nik_ciphertext, nik_key_id,
+  region_code, base_address, ktp_object_key, review_note, reviewed_by, reviewed_at,
+  vendor_id, created_at
 `;
 
 interface ApplicationRow {
@@ -19,7 +20,9 @@ interface ApplicationRow {
   status: VendorApplicationStatus;
   display_name: string;
   legal_name: string;
-  nik: string;
+  nik: string | null;
+  nik_ciphertext: Buffer | null;
+  nik_key_id: string | null;
   region_code: string;
   base_address: string;
   ktp_object_key: string;
@@ -37,7 +40,9 @@ function mapApplication(row: ApplicationRow): VendorApplicationRecord {
     status: row.status,
     displayName: row.display_name,
     legalName: row.legal_name,
-    nik: row.nik,
+    nik: row.nik ?? '',
+    nikCiphertext: row.nik_ciphertext ?? null,
+    nikKeyId: row.nik_key_id ?? null,
     regionCode: row.region_code,
     baseAddress: row.base_address,
     ktpObjectKey: row.ktp_object_key,
@@ -125,19 +130,22 @@ export class VendorOnboardingRepository {
 
   async insertApplication(
     userId: string,
-    input: SubmitVendorApplicationInput
+    input: SubmitVendorApplicationInput,
+    secret: { ciphertext: Buffer; keyId: string }
   ): Promise<VendorApplicationRecord> {
     try {
       const rows = await query<ApplicationRow>(
         `INSERT INTO vendor_applications
-           (user_id, display_name, legal_name, nik, region_code, base_address, ktp_object_key)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+           (user_id, display_name, legal_name, nik, nik_ciphertext, nik_key_id,
+            region_code, base_address, ktp_object_key)
+         VALUES ($1, $2, $3, NULL, $4, $5, $6, $7, $8)
          RETURNING ${APPLICATION_COLUMNS}`,
         [
           userId,
           input.display_name,
           input.legal_name,
-          input.nik,
+          secret.ciphertext,
+          secret.keyId,
           input.region_code,
           input.base_address,
           input.ktp_object_key
@@ -155,6 +163,20 @@ export class VendorOnboardingRepository {
       }
       throw error;
     }
+  }
+
+  /** Lazy backfill for a row that still holds a plaintext NIK (pre-019). */
+  async setNikCiphertext(
+    applicationId: string,
+    ciphertext: Buffer,
+    keyId: string
+  ): Promise<void> {
+    await query(
+      `UPDATE vendor_applications
+          SET nik = NULL, nik_ciphertext = $2, nik_key_id = $3
+        WHERE id = $1`,
+      [applicationId, ciphertext, keyId]
+    );
   }
 
   async listForAdmin(input: {
