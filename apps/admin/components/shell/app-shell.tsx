@@ -5,6 +5,7 @@ import {
   Banknote,
   BookOpen,
   CalendarDays,
+  FileCheck2,
   Image as ImageIcon,
   LayoutDashboard,
   Menu,
@@ -53,6 +54,12 @@ const NAV_GROUPS: SidebarNavGroupModel[] = [
       { id: 'dashboard', label: 'Dashboard', href: '/', icon: <LayoutDashboard className="h-[18px] w-[18px]" /> },
       { id: 'bookings', label: 'Booking', href: '/bookings', icon: <CalendarDays className="h-[18px] w-[18px]" /> },
       { id: 'vendors', label: 'Vendor', href: '/vendors', icon: <Store className="h-[18px] w-[18px]" /> },
+      {
+        id: 'applications',
+        label: 'Pengajuan',
+        href: '/applications',
+        icon: <FileCheck2 className="h-[18px] w-[18px]" />
+      },
       { id: 'moderation', label: 'Moderasi', href: '/moderation', icon: <ImageIcon className="h-[18px] w-[18px]" /> },
       { id: 'release', label: 'Release', href: '/release', icon: <Wallet className="h-[18px] w-[18px]" /> },
       { id: 'payouts', label: 'Payout', href: '/payouts', icon: <Banknote className="h-[18px] w-[18px]" /> }
@@ -70,6 +77,7 @@ const NAV_GROUPS: SidebarNavGroupModel[] = [
         submenu: [
           { id: 'ledger', label: 'Ledger', href: '/ledger' },
           { id: 'payments', label: 'Pembayaran', href: '/payments' },
+          { id: 'refunds', label: 'Refund', href: '/refunds' },
           { id: 'disputes', label: 'Sengketa', href: '/disputes' }
         ]
       }
@@ -87,8 +95,10 @@ const NAV_GROUPS: SidebarNavGroupModel[] = [
 
 const SECTION_LABELS: Array<[string, string]> = [
   ['/moderation', 'Vendor'],
+  ['/applications', 'Vendor'],
   ['/ledger', 'Transaksi'],
   ['/payments', 'Transaksi'],
+  ['/refunds', 'Transaksi'],
   ['/disputes', 'Transaksi'],
   ['/payouts', 'Keuangan'],
   ['/settings', 'Pengaturan'],

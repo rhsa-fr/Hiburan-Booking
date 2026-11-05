@@ -24,7 +24,9 @@ import {
   type NewWebhookEvent,
   type PaymentRecord,
   type PaymentRepository,
+  type RefundQueueRow,
   type RefundRecord,
+  type RefundStatus,
   type RefundTransition,
   type WebhookEventRecord
 } from './payment.repository';
@@ -475,6 +477,17 @@ class FakeRepository implements PaymentRepository {
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
     if (!refund) return null;
     return { refund, customerId: CUSTOMER };
+  }
+
+  async listRefunds(
+    _tx: JournalQueryClient,
+    input: { status: RefundStatus | null; limit: number }
+  ): Promise<RefundQueueRow[]> {
+    return [...this.refunds.values()]
+      .filter((row) => input.status === null || row.status === input.status)
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+      .slice(0, input.limit)
+      .map((row) => ({ ...row, bookingCode: 'BK-TEST-0001', customerName: 'Pelanggan Uji' }));
   }
 
   async insertWebhookEvent(
@@ -1409,6 +1422,24 @@ describe('refund', () => {
     expect(escrow?.debitIdr).toBe(1_200_000n);
     expect(payable?.creditIdr).toBe(1_191_600n);
     expect(fee?.creditIdr).toBe(8_400n);
+  });
+
+  it('lists the admin queue with booking context and request timestamp', async () => {
+    const { service, charge } = await paidPayment();
+    await service.refund(charge.id, 1_200_000n, 'customer_cancel_gt_30d', {
+      actorId: 'admin-finance'
+    });
+
+    const { items } = await service.listRefunds({ status: 'requested', limit: 10 });
+
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      booking_code: 'BK-TEST-0001',
+      customer_name: 'Pelanggan Uji',
+      created_at: AT.toISOString(),
+      status: 'requested',
+      requires_approval: true
+    });
   });
 
   it('rejects a refund above the captured amount', async () => {

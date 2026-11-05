@@ -323,6 +323,36 @@ function mockRoute(path: string, init?: RequestInit): unknown {
     return { data: { media: mockRejectMedia(id, note) } };
   }
 
+  if (method === 'GET' && pathname === '/admin/vendor-applications') {
+    return { items: [], total: 0, page: 1, page_size: 20 };
+  }
+  if (
+    method === 'POST' &&
+    /^\/admin\/vendor-applications\/[^/]+\/(approve|reject)$/.test(pathname)
+  ) {
+    return {
+      data: {
+        id: 'mock-application',
+        status: pathname.endsWith('/approve') ? 'approved' : 'rejected',
+        display_name: 'Vendor Mock',
+        legal_name: 'Vendor Mock',
+        nik: '0000000000000000',
+        region_code: 'ID-JB',
+        base_address: '-',
+        review_note: null,
+        vendor_id: null,
+        created_at: new Date().toISOString(),
+        reviewed_at: new Date().toISOString()
+      }
+    };
+  }
+  if (method === 'GET' && pathname === '/payments/refunds') {
+    return { data: { items: [] } };
+  }
+  if (method === 'POST' && /^\/payments\/refunds\/[^/]+\/(approve|reject)$/.test(pathname)) {
+    return { data: {} };
+  }
+
   throw new ApiError(`Endpoint mock tidak dikenal: ${method} ${pathname}`, 404);
 }
 

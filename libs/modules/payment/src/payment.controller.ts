@@ -32,12 +32,20 @@ import { PAYMENT_METHODS, toBigInt } from './payment.repository';
 import {
   PaymentService,
   hashRequest,
+  type AdminRefundItem,
   type DpPaymentByBookingResult,
   type RefundByBookingResult,
   type RefundResult,
   type SettlementChargeResult,
   type SettlementPaymentByBookingResult
 } from './payment.service';
+
+const RefundListQuery = z.object({
+  status: z
+    .enum(['requested', 'approved', 'processing', 'succeeded', 'failed', 'rejected'])
+    .optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50)
+});
 
 const DpChargeBody = z.object({
   booking_id: z.string().uuid(),
@@ -193,6 +201,24 @@ export class PaymentController {
       }
     );
     return { data: result };
+  }
+
+  /** Queue for the admin refund screen: pending maker-checker requests first. */
+  @Get('payments/refunds')
+  @Roles('admin_finance', 'admin_super')
+  async listRefunds(
+    @Query() query: unknown
+  ): Promise<{ data: { items: AdminRefundItem[] } }> {
+    const parsed = RefundListQuery.safeParse(query);
+    if (!parsed.success) {
+      throw new AppError('VALIDATION_ERROR', 'Filter refund tidak valid', parsed.error.issues);
+    }
+    return {
+      data: await this.payments.listRefunds({
+        status: parsed.data.status ?? null,
+        limit: parsed.data.limit
+      })
+    };
   }
 
   /** Second-admin approval of a refund above the threshold (FR-128). */
