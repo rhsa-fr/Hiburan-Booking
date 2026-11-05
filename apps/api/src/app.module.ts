@@ -12,6 +12,7 @@ import { AdminModule } from '@tarlink/modules/admin';
 import { BookingModule } from '@tarlink/modules/booking';
 import { AuthModule } from '@tarlink/modules/auth';
 import { CatalogModule } from '@tarlink/modules/catalog';
+import { NotificationsModule } from '@tarlink/modules/notifications';
 import { PaymentModule } from '@tarlink/modules/payment';
 import { PayoutModule } from '@tarlink/modules/payout';
 import { VendorPortalModule } from '@tarlink/modules/vendor-portal';
@@ -85,6 +86,7 @@ class AllExceptionsFilter implements ExceptionFilter {
     AuthModule,
     AdminModule,
     CatalogModule,
+    NotificationsModule,
     BookingModule,
     PaymentModule,
     VendorPortalModule,
