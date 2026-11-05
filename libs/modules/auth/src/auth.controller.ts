@@ -17,6 +17,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Headers,
   HttpCode,
@@ -35,6 +36,7 @@ import {
 } from '@tarlink/platform/auth';
 import {
   AuthService,
+  type AccountDeletionResult,
   type CurrentUserResult,
   type LogoutResult,
   type PasswordLoginResult,
@@ -76,6 +78,12 @@ const GoogleBody = z.object({
 /** Refresh/logout accept the opaque token; the legacy access-token path still works. */
 const RefreshBody = z.object({
   refresh_token: z.string().min(1).max(256).optional()
+});
+
+/** Typed confirmation keeps an accidental `DELETE` from wiping an account. */
+const DeleteAccountBody = z.object({
+  confirm: z.literal('HAPUS AKUN'),
+  reason: z.string().max(300).optional()
 });
 
 function bearerClaims(authorization: string | undefined): { sub: string; jti?: string } | null {
@@ -204,6 +212,43 @@ export class AuthController {
     }
 
     return { data: await this.auth.getProfile(user.id) };
+  }
+
+  /**
+   * FR-101: self-service account deletion. The account is anonymised in place,
+   * so financial records keep their references.
+   */
+  @Delete('me')
+  @UseGuards(AuthGuard)
+  @HttpCode(200)
+  async deleteMe(
+    @Body() body: unknown,
+    @Req() req: AuthenticatedRequest
+  ): Promise<{ data: AccountDeletionResult }> {
+    const user = req.user;
+    if (!user) throw new AppError('UNAUTHENTICATED', 'Authentication is required');
+
+    const parsed = DeleteAccountBody.safeParse(body ?? {});
+    if (!parsed.success) {
+      throw new AppError(
+        'VALIDATION_ERROR',
+        'Kirim konfirmasi "HAPUS AKUN" untuk menghapus akun.',
+        parsed.error.issues
+      );
+    }
+
+    return { data: await this.auth.deleteAccount(user.id, parsed.data.reason ?? null) };
+  }
+
+  /** Status of the newest deletion request (visible in the app after deletion). */
+  @Get('account-deletion')
+  @UseGuards(AuthGuard)
+  async deletionStatus(
+    @Req() req: AuthenticatedRequest
+  ): Promise<{ data: AccountDeletionResult | null }> {
+    const user = req.user;
+    if (!user) throw new AppError('UNAUTHENTICATED', 'Authentication is required');
+    return { data: await this.auth.getDeletionStatus(user.id) };
   }
 
   /**

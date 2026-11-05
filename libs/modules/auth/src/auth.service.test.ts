@@ -13,6 +13,7 @@ import {
   type Role
 } from '@tarlink/platform/auth';
 import type {
+  AccountDeletionRecord,
   AuthRepository,
   AuthUserProfile,
   AuthUserRecord,
@@ -64,6 +65,8 @@ class FakeAuthRepository implements AuthRepository {
   readonly sessions: Array<NewSession & { revokedAt: Date | null }> = [];
   readonly loginAttempts: NewLoginAttempt[] = [];
   readonly passwordUpdatedAt = new Map<string, Date>();
+  readonly deletionRequests: AccountDeletionRecord[] = [];
+  privateKeys: string[] = [];
 
   async countRecentOtpRequests(phone: string, since: Date): Promise<number> {
     return this.otpRequests.filter((row) => row.phone === phone && row.createdAt >= since).length;
@@ -266,6 +269,50 @@ class FakeAuthRepository implements AuthRepository {
     if (!row) return 0;
     row.revokedAt = at;
     return 1;
+  }
+
+  async deleteAccount(
+    userId: string,
+    reason: string | null,
+    at: Date
+  ): Promise<{ record: AccountDeletionRecord; privateObjectKeys: string[] }> {
+    const user = this.users.find((candidate) => candidate.id === userId);
+    if (!user) throw new AppError('NOT_FOUND', 'User not found');
+
+    const existing = [...this.deletionRequests]
+      .reverse()
+      .find((row) => row.userId === userId && row.status === 'completed');
+    if (existing) return { record: existing, privateObjectKeys: this.privateKeys };
+
+    user.phone = null;
+    user.email = null;
+    user.name = 'Pengguna dihapus';
+    user.passwordHash = null;
+    user.googleSub = null;
+
+    for (const session of this.sessions) {
+      if (session.userId === userId && !session.revokedAt) session.revokedAt = at;
+    }
+    for (let index = this.roles.length - 1; index >= 0; index -= 1) {
+      if (this.roles[index]?.userId === userId) this.roles.splice(index, 1);
+    }
+
+    const record: AccountDeletionRecord = {
+      id: `deletion-${this.deletionRequests.length + 1}`,
+      userId,
+      status: 'completed',
+      reason,
+      requestedAt: at,
+      completedAt: at
+    };
+    this.deletionRequests.push(record);
+    return { record, privateObjectKeys: this.privateKeys };
+  }
+
+  async findDeletionRequest(userId: string): Promise<AccountDeletionRecord | null> {
+    return (
+      [...this.deletionRequests].reverse().find((row) => row.userId === userId) ?? null
+    );
   }
 }
 
@@ -939,6 +986,92 @@ describe('AuthService.getProfile', () => {
 
     await expect(service.getProfile(USER_ID)).rejects.toMatchObject({
       code: 'UNAUTHENTICATED'
+    });
+  });
+});
+
+describe('AuthService.deleteAccount (FR-101)', () => {
+  function seedSession(repository: FakeAuthRepository) {
+    repository.sessions.push({
+      jti: 'jti-delete-1',
+      userId: USER_ID,
+      issuedAt: new Date('2026-10-21T09:00:00.000Z'),
+      expiresAt: new Date('2026-10-21T09:15:00.000Z'),
+      userAgent: null,
+      ip: null,
+      refreshTokenHash: 'refresh-hash',
+      refreshExpiresAt: new Date('2026-11-20T09:00:00.000Z'),
+      familyId: 'family-1',
+      parentId: null,
+      revokedAt: null
+    });
+  }
+
+  it('anonymises personal data, revokes sessions and roles, and records the request', async () => {
+    const { repository, service } = makeHarness();
+    addUser(repository, ['customer', 'vendor_owner'], {
+      email: 'user@tarlink.id',
+      name: 'Budi Santoso',
+      passwordHash: 'scrypt$1$salt$hash',
+      googleSub: 'google-1'
+    });
+    seedSession(repository);
+
+    const result = await service.deleteAccount(USER_ID, 'tidak dipakai lagi');
+
+    expect(result.status).toBe('completed');
+    expect(result.reason).toBe('tidak dipakai lagi');
+    expect(result.completed_at).toBe('2026-10-21T09:00:00.000Z');
+
+    const user = repository.users.find((candidate) => candidate.id === USER_ID);
+    expect(user).toMatchObject({
+      phone: null,
+      email: null,
+      name: 'Pengguna dihapus',
+      passwordHash: null,
+      googleSub: null
+    });
+    expect(repository.sessions.every((session) => session.revokedAt !== null)).toBe(true);
+    expect(repository.roles.filter((row) => row.userId === USER_ID)).toHaveLength(0);
+    expect(repository.deletionRequests).toHaveLength(1);
+  });
+
+  it('is idempotent: a second request returns the same completed record', async () => {
+    const { repository, service } = makeHarness();
+    addUser(repository, ['customer']);
+
+    const first = await service.deleteAccount(USER_ID);
+    const second = await service.deleteAccount(USER_ID);
+
+    expect(second.id).toBe(first.id);
+    expect(repository.deletionRequests).toHaveLength(1);
+  });
+
+  it('removes private document files after anonymisation', async () => {
+    const removed: string[] = [];
+    const { repository, service } = makeHarness({
+      removePrivateFiles: async (keys) => {
+        removed.push(...keys);
+      }
+    });
+    addUser(repository, ['customer']);
+    repository.privateKeys = ['ktp/user/ktp.png'];
+
+    await service.deleteAccount(USER_ID);
+
+    expect(removed).toEqual(['ktp/user/ktp.png']);
+  });
+
+  it('exposes the deletion status and rejects an unknown account', async () => {
+    const { repository, service } = makeHarness();
+    addUser(repository, ['customer']);
+
+    expect(await service.getDeletionStatus(USER_ID)).toBeNull();
+    await service.deleteAccount(USER_ID);
+    expect((await service.getDeletionStatus(USER_ID))?.status).toBe('completed');
+
+    await expect(service.deleteAccount('missing-user')).rejects.toMatchObject({
+      code: 'NOT_FOUND'
     });
   });
 });
