@@ -2,9 +2,12 @@ import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { loadConfig } from './core/config';
+import { installSessionChecker } from './core/session-checker';
 
 async function bootstrap(): Promise<void> {
   const cfg = loadConfig();
+  // A valid signature is not enough: revoked sessions must fail immediately.
+  installSessionChecker();
   // rawBody is required so the PJP webhook HMAC can be verified over the exact
   // bytes received (see libs/modules/payment handleWebhook).
   const app = await NestFactory.create(AppModule, { bufferLogs: false, rawBody: true });

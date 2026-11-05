@@ -617,8 +617,9 @@ export class AuthService {
    * Rotates the session identified by `jti`: the old row is revoked and a new
    * session is issued, so one refresh chain has exactly one active row. A
    * missing, revoked or expired session is a 401 - an access token alone is not
-   * enough to keep a session alive. Normal authenticated requests never consult
-   * `sessions`; only refresh and logout do.
+   * enough to keep a session alive. Refresh and logout consult `sessions`
+   * directly; other authenticated requests do so through the `AuthGuard`
+   * session checker installed by the API bootstrap.
    */
   async refresh(userId: string, jti?: string | null): Promise<PasswordLoginResult> {
     if (!jti) {

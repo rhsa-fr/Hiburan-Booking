@@ -188,11 +188,27 @@ export interface AuthenticatedRequest {
  */
 export const JWT_SECRET = 'TARLINK_JWT_SECRET';
 
+/**
+ * Optional revocation check. A signed access token stays valid for its full
+ * 15-minute TTL unless the API can prove the session behind its `jti` was
+ * revoked (logout or account deletion).
+ */
+export interface SessionChecker {
+  isActive(userId: string, jti: string): Promise<boolean>;
+}
+
+let sessionChecker: SessionChecker | null = null;
+
+/** Wired once from the API bootstrap; tests leave it unset. */
+export function configureSessionChecker(checker: SessionChecker | null): void {
+  sessionChecker = checker;
+}
+
 @Injectable()
 export class AuthGuard implements CanActivate {
   constructor(@Inject(JWT_SECRET) private readonly secret: string) {}
 
-  canActivate(context: ExecutionContext): boolean {
+  canActivate(context: ExecutionContext): boolean | Promise<boolean> {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     const header = request.headers['authorization'];
     const value = Array.isArray(header) ? header[0] : header;
@@ -203,12 +219,20 @@ export class AuthGuard implements CanActivate {
     }
 
     const claims = verifyAccessToken(match[1], this.secret);
-    request.user = {
+    const user: AuthenticatedUser = {
       id: claims.sub,
       roles: claims.roles,
       ...(claims.jti ? { jti: claims.jti } : {})
     };
-    return true;
+    request.user = user;
+
+    const checker = sessionChecker;
+    if (!checker || !claims.jti) return true;
+
+    return checker.isActive(claims.sub, claims.jti).then((active) => {
+      if (!active) throw new AppError('UNAUTHENTICATED', 'Sesi sudah dicabut, silakan masuk lagi');
+      return true;
+    });
   }
 }
 
