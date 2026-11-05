@@ -222,6 +222,7 @@ Poller PostgreSQL, interval pendek, tanpa broker.
 |---|---|
 | `expire-holds` | melepas hold kalender yang kedaluwarsa |
 | `expire-unpaid` | menandai booking `unpaid` yang lewat batas sebagai `expired` |
+| `expire-unresponsive` | menandai booking `requested` yang tidak direspons vendor dalam batas waktu sebagai `expired` |
 | `auto-complete` | menutup acara yang sudah lewat |
 | `auto-release` | melepas dana ke vendor setelah jendela sengketa |
 | `payout-reconcile` | mengirim ulang payout `approved` dan menanyakan status `processing` ke provider |
@@ -330,7 +331,7 @@ panjang, pemangkasan sesi, dan penolakan e-wallet yang eksplisit.
 
 Yang masih terbuka (lihat [AGENTS.md § Batasan](../AGENTS.md#batasan-yang-diketahui)):
 provider WhatsApp/SMS, picker peta lokasi acara, UI check-in berbasis GPS,
-token admin HttpOnly, invoice/nota, hapus akun mandiri, dan 2FA admin. Integrasi
+token admin HttpOnly, dan 2FA admin. Integrasi
 charge + notifikasi + refund QRIS memakai Midtrans sandbox; endpoint check-in/no-show
 basic sudah ada. Payout vendor + rekening terenkripsi sudah ada; integrasi Iris
 tersedia di balik `PAYOUT_PROVIDER=iris`, tetapi pengujian live bergantung pada

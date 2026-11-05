@@ -17,8 +17,8 @@ import { PriceRulesService } from './price-rules.service';
 export type AuthUser = BookingAuthUser & { sub?: string };
 
 @UseGuards(AuthGuard, RolesGuard)
-@Roles('vendor_owner', 'vendor_member')
-@Controller('vendor-portal/packages/:packageId/price-rules')
+@Roles('vendor_owner')
+@Controller('vendor/packages/:packageId/price-rules')
 export class PriceRulesController {
   constructor(private readonly service: PriceRulesService) {}
 

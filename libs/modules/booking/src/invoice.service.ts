@@ -282,7 +282,7 @@ export class InvoiceService {
     }
 
     if (!isAdmin && !isCustomerOwner && !isVendorAuthorized) {
-      throw new AppError('FORBIDDEN', 'Tidak berwenang mengakses invoice ini');
+      throw new AppError('NOT_FOUND', `Booking ${bookingId} tidak ditemukan`);
     }
 
     // Query addons

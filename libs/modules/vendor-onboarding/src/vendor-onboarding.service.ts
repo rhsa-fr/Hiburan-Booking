@@ -95,6 +95,10 @@ export class VendorOnboardingService {
     const application = await this.repository.findById(applicationId);
     if (!application) throw new AppError('NOT_FOUND', 'Pengajuan vendor tidak ditemukan');
 
+    if (application.userId === actor.id) {
+      throw new AppError('CONFLICT', 'Admin tidak boleh menyetujui pengajuan vendor miliknya sendiri');
+    }
+
     if (input.decision === 'reject') {
       const rejected = await this.repository.transaction((client) =>
         this.repository.reject(client, {

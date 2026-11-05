@@ -205,6 +205,22 @@ describe('VendorOnboardingService.review', () => {
       service.review(APPLICATION_ID, { decision: 'approve' }, { id: 'admin-1', role: 'admin_super' })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
+
+  it('rejects self-approval when admin reviews own application', async () => {
+    const { repository, service } = setup();
+    repository.existing = record({ userId: 'admin-1' });
+
+    await expect(
+      service.review(
+        APPLICATION_ID,
+        { decision: 'approve' },
+        { id: 'admin-1', role: 'admin_super' }
+      )
+    ).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'Admin tidak boleh menyetujui pengajuan vendor miliknya sendiri'
+    });
+  });
 });
 
 describe('VendorOnboardingService.myApplication', () => {

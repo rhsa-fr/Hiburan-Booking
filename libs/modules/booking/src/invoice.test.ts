@@ -178,7 +178,7 @@ describe('InvoiceService', () => {
   });
 
   describe('getInvoiceData', () => {
-    it('throws FORBIDDEN when unauthorized user tries to access', async () => {
+    it('throws NOT_FOUND when unauthorized user tries to access', async () => {
       const mockDb = createMockDb({ bookingExists: true, isVendorMember: false });
       const service = new InvoiceService(mockDb);
 
@@ -188,7 +188,7 @@ describe('InvoiceService', () => {
       };
 
       await expect(service.getInvoiceData(BOOKING_ID, unauthorizedUser)).rejects.toThrow(
-        new AppError('FORBIDDEN', 'Tidak berwenang mengakses invoice ini')
+        new AppError('NOT_FOUND', `Booking ${BOOKING_ID} tidak ditemukan`)
       );
     });
 

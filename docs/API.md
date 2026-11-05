@@ -333,6 +333,13 @@ Status: `201 Created`.
 `rating` wajib integer `1` sampai `5`. `comment` opsional (maks 500 karakter).
 Hanya satu ulasan per booking (`409` bila booking sudah diulas).
 
+### `GET /bookings/:id/invoice`
+
+Mengambil faktur/nota resmi untuk booking. Wajib bearer token pemilik booking (`customer`), vendor terkait (`vendor_owner` / `vendor_member`), atau admin (`admin_support` / `admin_finance` / `admin_super`). Mengembalikan `404 Not Found` bila booking tidak ada atau pemanggil tidak berwenang (anti-enumerasi IDOR).
+
+Query:
+- `format` (opsional): bila bernilai `json`, mengembalikan representasi JSON `{ data: invoice }` berisi rincian booking, customer, vendor, event, pricing, addons, dan payments. Default / selain `json` mengembalikan dokumen HTML siap cetak (`text/html; charset=utf-8`).
+
 ---
 
 ## Pembayaran
@@ -537,6 +544,10 @@ dari klien, sehingga satu vendor tidak bisa mengubah vendor lain.
 | POST | `/vendor/packages` | Buat paket |
 | PATCH | `/vendor/packages/:id` | Ubah paket milik sendiri |
 | DELETE | `/vendor/packages/:id` | Nonaktifkan paket (soft delete) |
+| GET | `/vendor/packages/:packageId/price-rules` | Daftar aturan harga musiman paket |
+| POST | `/vendor/packages/:packageId/price-rules` | Tambah aturan harga musiman paket |
+| PUT | `/vendor/packages/:packageId/price-rules/:ruleId` | Ubah aturan harga musiman paket |
+| DELETE | `/vendor/packages/:packageId/price-rules/:ruleId` | Hapus aturan harga musiman paket |
 | PUT | `/vendor/calendar` | Set `available`/`blocked` untuk rentang tanggal |
 | POST | `/vendor/media` | Upload gambar (multipart: `file`, `kind`, `package_id?`, `license_statement`) → status `pending` |
 | POST | `/vendor/media/link` | Ajukan media berupa tautan (JSON: `url`, `kind`, `package_id?`, `license_statement`) → `pending` |
@@ -710,6 +721,24 @@ unggah foto setelah paket tersimpan (foto paket butuh `package_id`).
 
 `GET /media/:filename` publik, cache immutable, hanya nama file yang dibuat
 server (aman dari path traversal).
+
+### Aturan Harga Musiman (`/vendor/packages/:packageId/price-rules`)
+
+Pengaturan penyesuaian harga paket dinamis (FR-109) berbasis tanggal dan hari dalam seminggu (`dow_mask`). Wajib bearer token peran `vendor_owner` dan pemilik paket.
+
+- **`GET /vendor/packages/:packageId/price-rules`**: daftar seluruh aturan untuk paket (`{ data: PriceRuleRecord[] }`).
+- **`POST /vendor/packages/:packageId/price-rules`**: membuat aturan baru (status `201 Created`, respons `{ data: PriceRuleRecord }`). Body:
+  - `label`: string (1–80 karakter)
+  - `rule_type`: `"multiplier"` | `"fixed"`
+  - `date_from`: `YYYY-MM-DD` | null (opsional)
+  - `date_to`: `YYYY-MM-DD` | null (opsional)
+  - `dow_mask`: integer 1–127 (opsional, default 127 = setiap hari)
+  - `multiplier_bp`: integer 5000–30000 basis points (50%–300%, wajib jika `multiplier`, terlarang jika `fixed`)
+  - `fixed_price_idr`: integer rupiah (wajib jika `fixed`, terlarang jika `multiplier`)
+  - `priority`: integer (opsional, default 100; angka lebih kecil = prioritas lebih tinggi)
+  - `is_active`: boolean (opsional, default true)
+- **`PUT /vendor/packages/:packageId/price-rules/:ruleId`**: memperbarui aturan harga yang ada (field parsial sama seperti create, respons `{ data: PriceRuleRecord }`).
+- **`DELETE /vendor/packages/:packageId/price-rules/:ruleId`**: menghapus aturan harga (`{ data: { deleted: true } }`).
 
 ---
 
