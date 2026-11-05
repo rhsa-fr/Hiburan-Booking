@@ -425,6 +425,13 @@ Untuk Midtrans, refund QRIS dipanggil ke `POST /v2/{order_id}/refund` dengan
 jurnal `refund_disbursed` diposting. **Refund VA/Mandiri ditolak** karena Midtrans
 tidak mendukung refund bank transfer; catat transfer manual.
 
+### `GET /payments/refunds`
+
+Antrean admin (`admin_finance` / `admin_super`). Query: `status` opsional
+(`requested|approved|processing|succeeded|failed|rejected`), `limit` 1–100
+(default 50). Respons `{ data: { items } }`; setiap item berisi field refund plus
+`booking_code`, `customer_name`, dan `created_at` (waktu pengajuan).
+
 ### `POST /payments/refunds/:id/approve`
 
 Peran `admin_finance` / `admin_super`. Approver **wajib berbeda** dari pembuat
@@ -444,6 +451,34 @@ Pelanggan pemilik booking atau admin. Mengembalikan refund terbaru
 `404 NOT_FOUND` (FR-133: status refund terlihat pelanggan).
 
 ---
+
+## Notifikasi in-app
+
+Pengganti kanal WhatsApp/push sementara: worker `outbox` menulis satu baris
+`notifications` per penerima (unik per `outbox:<message_id>:<user_id>`), lalu
+mobile mem-poll endpoint ini dan menampilkan popup saat aplikasi terbuka.
+Tidak ada endpoint kirim manual — isi dibuat dari event `booking.*`.
+
+### `GET /notifications`
+
+Query: `unread_only=true|false` (default semua), `page` (mulai 1), `page_size`
+(maks 100, default 20). Selalu terbatas pada akun pemanggil.
+
+Respons: `{ data: { items, total, page, page_size } }`; item berisi
+`{ id, type, title, body, payload, read_at, created_at }`. Mobile memakai
+`payload.booking_id` untuk tombol "Lihat".
+
+### `GET /notifications/unread-count`
+
+Respons: `{ data: { unread } }`.
+
+### `POST /notifications/:id/read`
+
+Menandai satu notifikasi milik akun pemanggil. `404 NOT_FOUND` bila bukan miliknya.
+
+### `POST /notifications/read-all`
+
+Respons: `{ data: { updated } }` — jumlah baris yang baru ditandai.
 
 ## Webhook Midtrans
 

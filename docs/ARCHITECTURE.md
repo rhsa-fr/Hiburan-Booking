@@ -214,6 +214,10 @@ untuk nilai ≥ Rp10 juta, 48 jam.
    peran, lalu mencatat `account_deletion_requests`. Baris `users` dipertahankan agar
    foreign key booking/payment/payout tetap utuh. Idempoten.
 
+Setiap request yang membawa `jti` juga dicek ke `sessions` (`installSessionChecker`
+di `apps/api/src/core/session-checker.ts`): token yang tanda tangannya sah tetap
+ditolak bila sesinya sudah dicabut, sehingga logout/hapus akun berlaku seketika.
+
 ## 7. Worker
 
 Poller PostgreSQL, interval pendek, tanpa broker.
@@ -226,10 +230,23 @@ Poller PostgreSQL, interval pendek, tanpa broker.
 | `auto-complete` | menutup acara yang sudah lewat |
 | `auto-release` | melepas dana ke vendor setelah jendela sengketa |
 | `payout-reconcile` | mengirim ulang payout `approved` dan menanyakan status `processing` ke provider |
-| `outbox` | mengirim event `booking.*` keluar |
+| `outbox` | memetakan event `booking.*` menjadi baris `notifications` (in-app) |
 | `cleanup-auth` | memangkas `sessions`/`otp_requests`/`login_attempts` yang kedaluwarsa |
+| `cleanup-media` | menghapus unggahan yatim (>24 jam, tidak dirujuk `vendor_media`/vendor/paket) |
 
 Semua job idempoten dan mencatat `processed / skipped / failed` di log.
+
+### Notifikasi in-app
+
+- Tabel `notifications` (migrasi `018`): `user_id`, `type`, `title`, `body`,
+  `payload`, `dedupe_key` unik, `read_at`.
+- `runOutbox` memakai `NotificationSink`, bukan `LoggingMessageSink`. Penerima
+  ditentukan dari `bookings.customer_id` dan `vendors.owner_user_id`.
+- Idempoten: `dedupe_key = outbox:<message_id>:<user_id>`; sink yang di-retry
+  tidak membuat baris ganda.
+- Mobile `NotificationPoller` (`lib/core/notifications.dart`) mem-poll
+  `/v1/notifications` tiap 20 detik selama sesi aktif dan menampilkan popup.
+  Tidak ada provider WhatsApp/push pada rilis ini.
 
 ## 8. Panel admin
 
@@ -327,11 +344,14 @@ Midtrans tidak mendukung reverse bank transfer.
 
 Sudah diselesaikan: idempotensi `POST /bookings`, validasi `policy_version_id` +
 snapshot, rate limit per IP, index trigram pencarian, guard `dev_code`, refresh token
-panjang, pemangkasan sesi, dan penolakan e-wallet yang eksplisit.
+panjang, pemangkasan sesi, penolakan e-wallet yang eksplisit, notifikasi in-app
+(migrasi `018`), enkripsi NIK (migrasi `019`), pengecekan `sessions.jti` per request,
+antrean pengajuan vendor + antrean refund di panel admin, job `cleanup_media`, dan
+header CSP pada nota invoice.
 
 Yang masih terbuka (lihat [AGENTS.md § Batasan](../AGENTS.md#batasan-yang-diketahui)):
-provider WhatsApp/SMS, picker peta lokasi acara, UI check-in berbasis GPS,
-token admin HttpOnly, dan 2FA admin. Integrasi
+provider WhatsApp/SMS dan push notification, picker peta lokasi acara, UI check-in
+berbasis GPS, token admin HttpOnly, dan 2FA admin. Integrasi
 charge + notifikasi + refund QRIS memakai Midtrans sandbox; endpoint check-in/no-show
 basic sudah ada. Payout vendor + rekening terenkripsi sudah ada; integrasi Iris
 tersedia di balik `PAYOUT_PROVIDER=iris`, tetapi pengujian live bergantung pada

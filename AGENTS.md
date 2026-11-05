@@ -141,7 +141,7 @@ output. "Tidak dijalankan" adalah jawaban yang sah; klaim palsu tidak.
 4. `flutter analyze` + `flutter test`, lalu screenshot 390×844.
 
 **Migrasi DB**
-1. Nomor urut berikutnya di `db/migrations` (terakhir `017`, berikutnya `018`).
+1. Nomor urut berikutnya di `db/migrations` (terakhir `019`, berikutnya `020`).
 2. Idempoten bila memungkinkan; sediakan jalur koreksi ke depan, bukan `DROP` data.
 3. Jalankan `npm run migrate:dry` sebelum `npm run migrate`.
 
@@ -163,6 +163,14 @@ Sudah diperbaiki (jangan dikembalikan tanpa keputusan tertulis):
 - Pelunasan online sisa 70% (`POST /v1/payments/settlement`, `GET /v1/payments/settlement/by-booking/:id`)
   lewat Midtrans QRIS/VA, terintegrasi ke status booking dan ledger.
 - Ulasan & rating booking pelanggan (`POST /v1/bookings/:id/review`, `GET /v1/vendors/:id/reviews`, migrasi `014_reviews.sql`).
+- Notifikasi in-app (migrasi `018`): worker `outbox` menulis `notifications`, mobile mem-poll
+  `/v1/notifications` dan menampilkan popup. Menggantikan stub WA/push.
+- Panel admin punya antrean pengajuan vendor (`/applications`) dan antrean refund
+  (`/refunds`, `GET /v1/payments/refunds`); approve/reject tetap maker-checker.
+- NIK vendor disimpan terenkripsi AES-256-GCM (`nik_ciphertext`, migrasi `019`), baris lama
+  di-backfill saat dibaca. Access token kini dicek ke `sessions.jti` per request.
+- Job `cleanup_media` menghapus file upload yatim (>24 jam, tanpa referensi) dan nota
+  invoice mengirim header CSP `default-src 'none'`.
 - Moderasi media vendor (FR-107/FR-140): unggahan masuk `vendor_media` berstatus `pending`,
   kolom publik hanya berubah setelah admin menyetujui (`GET/POST /admin/media/*`, migrasi `016`).
   Migrasi `015` mengosongkan seed foto stok Unsplash dan video contoh dari migrasi `009`.
@@ -183,14 +191,11 @@ Masih terbuka:
 - Tidak ada emulator Android/HP fisik; bukti APK hanya build sukses.
 - Detail vendor sempat kosong pada screenshot E2E otomatis — assertion ukuran body
   sudah ditambahkan; cek manual screenshot sebelum menyatakan selesai.
-- Admin panel belum punya layar antrean pengajuan vendor; keputusan FR-004 saat ini
-  lewat API. Formulir mobile ada di Profil → "Daftar jadi vendor".
-- Kolom `vendor_applications.nik` masih plaintext di DB, 2FA admin belum ada, dan
-  access token tidak dicek terhadap `sessions` per request (jendela 15 menit setelah
-  logout/hapus akun). Ini risiko yang tersisa untuk data identitas.
-- Provider WhatsApp/SMS, picker peta, dan UI check-in berbasis GPS belum ada.
-  Charge/notifikasi/refund QRIS sudah memakai Midtrans sandbox; endpoint check-in/no-show
-  basic sudah ada.
+- 2FA admin belum ada.
+- Provider WhatsApp/SMS dan push notification belum ada: notifikasi saat ini in-app
+  (worker `outbox` → tabel `notifications`, popup di mobile). Picker peta dan UI
+  check-in berbasis GPS juga belum ada. Charge/refund QRIS memakai Midtrans sandbox;
+  endpoint check-in/no-show basic sudah ada.
 - Integrasi Iris (`PAYOUT_PROVIDER=iris`) belum diuji live: butuh `IRIS_API_KEY` dan saldo
   merchant Iris sandbox. Jalur `PAYOUT_PROVIDER=local` sudah dipakai test dan worker.
   Tanpa `BANK_ACCOUNT_ENCRYPTION_KEY`, vendor tidak bisa menyimpan rekening.
