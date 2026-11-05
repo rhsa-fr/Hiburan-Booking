@@ -1,12 +1,14 @@
 import { ApiError } from './errors';
 import { readToken } from './session';
 import {
+  mockApproveMedia,
   mockGetAuditLog,
   mockGetBooking,
   mockGetBookings,
   mockGetDashboard,
   mockGetDisputes,
   mockGetLedger,
+  mockGetMediaQueue,
   mockGetOperators,
   mockGetPayments,
   mockGetReleaseQueue,
@@ -14,12 +16,16 @@ import {
   mockGetVendor,
   mockGetVendors,
   mockPreviewRelease,
+  mockRejectMedia,
   mockRequestOtp,
   mockSaveSettings,
   mockSubmitRelease,
   mockVerifyOtp
 } from './mock';
 import type {
+  AdminMediaItem,
+  AdminMediaQueue,
+  AdminMediaStatus,
   AuditLog,
   BookingFilters,
   BookingDetail,
@@ -298,6 +304,23 @@ function mockRoute(path: string, init?: RequestInit): unknown {
   }
   if (method === 'POST' && pathname === '/auth/admin/otp/verify') {
     return mockVerifyOtp(readString(body, 'phone'), readString(body, 'code'));
+  }
+  if (method === 'GET' && (pathname === '/admin/media' || pathname === '/v1/admin/media')) {
+    const status = (url.searchParams.get('status') ?? undefined) as AdminMediaStatus | undefined;
+    const page = Number.parseInt(url.searchParams.get('page') ?? '1', 10) || 1;
+    const page_size = Number.parseInt(url.searchParams.get('page_size') ?? '20', 10) || 20;
+    return { data: mockGetMediaQueue({ status, page, page_size }) };
+  }
+  const approveMediaMatch = pathname.match(/^\/(?:v1\/)?admin\/media\/([^/]+)\/approve$/);
+  if (method === 'POST' && approveMediaMatch) {
+    const id = decodeURIComponent(approveMediaMatch[1]);
+    return { data: { media: mockApproveMedia(id) } };
+  }
+  const rejectMediaMatch = pathname.match(/^\/(?:v1\/)?admin\/media\/([^/]+)\/reject$/);
+  if (method === 'POST' && rejectMediaMatch) {
+    const id = decodeURIComponent(rejectMediaMatch[1]);
+    const note = readString(body, 'note');
+    return { data: { media: mockRejectMedia(id, note) } };
   }
 
   throw new ApiError(`Endpoint mock tidak dikenal: ${method} ${pathname}`, 404);
@@ -618,3 +641,41 @@ export function rejectVendorPayoutBankAccount(
     { method: 'POST', body: JSON.stringify({ reason }) }
   );
 }
+
+/* -------------------------------------------------------------------------- */
+/* Moderasi media vendor                                                      */
+/* -------------------------------------------------------------------------- */
+
+export async function getMediaQueue(params: {
+  status?: AdminMediaStatus;
+  page?: number;
+  page_size?: number;
+} = {}): Promise<AdminMediaQueue> {
+  const search = new URLSearchParams();
+  if (params.status) search.set('status', params.status);
+  if (params.page) search.set('page', String(params.page));
+  if (params.page_size) search.set('page_size', String(params.page_size));
+  const suffix = search.toString() ? `?${search.toString()}` : '';
+  const response = await apiFetch<{ data: AdminMediaQueue }>(`/v1/admin/media${suffix}`);
+  return response.data;
+}
+
+export async function approveMedia(id: string): Promise<AdminMediaItem> {
+  const response = await apiFetch<{ data: { media: AdminMediaItem } }>(
+    `/v1/admin/media/${encodeURIComponent(id)}/approve`,
+    { method: 'POST' }
+  );
+  return response.data.media;
+}
+
+export async function rejectMedia(id: string, note: string): Promise<AdminMediaItem> {
+  const response = await apiFetch<{ data: { media: AdminMediaItem } }>(
+    `/v1/admin/media/${encodeURIComponent(id)}/reject`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ note })
+    }
+  );
+  return response.data.media;
+}
+

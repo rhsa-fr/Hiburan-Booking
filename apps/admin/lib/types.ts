@@ -704,3 +704,37 @@ export interface PayoutBankAccount {
   is_primary: boolean;
   created_at: string;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Moderasi media vendor — kontrak /admin/media                               */
+/* -------------------------------------------------------------------------- */
+
+export type AdminMediaStatus = 'pending' | 'approved' | 'rejected';
+
+export type AdminMediaKind = 'avatar' | 'banner' | 'gallery' | 'package_photo' | 'video';
+
+export interface AdminMediaItem {
+  id: string;
+  vendor_id: string;
+  vendor_name: string;
+  vendor_region_code: string;
+  package_id: string | null;
+  package_name: string | null;
+  kind: AdminMediaKind;
+  url: string;
+  status: AdminMediaStatus;
+  license_statement: string | null;
+  review_note: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+}
+
+export type AdminMediaQueueItem = AdminMediaItem;
+
+export interface AdminMediaQueue {
+  items: AdminMediaItem[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+

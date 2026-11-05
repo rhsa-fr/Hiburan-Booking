@@ -161,7 +161,13 @@ class _VendorManageProfilePageState extends State<VendorManageProfilePage> {
       Navigator.pop(context, true);
     } on ApiException catch (error) {
       if (!mounted) return;
-      _notice(apiMessage(error));
+      final details = error.details;
+      if (error.code == 'MEDIA_NOT_APPROVED' ||
+          (details is Map && details['reason'] == 'MEDIA_NOT_APPROVED')) {
+        _notice('Media belum disetujui admin.');
+      } else {
+        _notice(apiMessage(error));
+      }
     } catch (error) {
       if (!mounted) return;
       _notice('Gagal menyimpan: $error');
@@ -172,22 +178,16 @@ class _VendorManageProfilePageState extends State<VendorManageProfilePage> {
 
   Future<void> _pickAvatar() async {
     setState(() => _uploadingAvatar = true);
-    final url = await pickAndUploadVendorImage(context);
+    await pickAndUploadVendorImage(context, kind: 'avatar');
     if (!mounted) return;
-    setState(() {
-      _uploadingAvatar = false;
-      if (url != null) _avatarUrl = url;
-    });
+    setState(() => _uploadingAvatar = false);
   }
 
   Future<void> _pickBanner() async {
     setState(() => _uploadingBanner = true);
-    final url = await pickAndUploadVendorImage(context);
+    await pickAndUploadVendorImage(context, kind: 'banner');
     if (!mounted) return;
-    setState(() {
-      _uploadingBanner = false;
-      if (url != null) _bannerUrl = url;
-    });
+    setState(() => _uploadingBanner = false);
   }
 
   Future<void> _addPhoto() async {
@@ -196,22 +196,16 @@ class _VendorManageProfilePageState extends State<VendorManageProfilePage> {
       return;
     }
     setState(() => _uploadingGallery = true);
-    final url = await pickAndUploadVendorImage(context);
+    await pickAndUploadVendorImage(context, kind: 'gallery');
     if (!mounted) return;
-    setState(() {
-      _uploadingGallery = false;
-      if (url != null) _photos.add(url);
-    });
+    setState(() => _uploadingGallery = false);
   }
 
   Future<void> _replacePhoto(int index) async {
     setState(() => _uploadingGallery = true);
-    final url = await pickAndUploadVendorImage(context);
+    await pickAndUploadVendorImage(context, kind: 'gallery');
     if (!mounted) return;
-    setState(() {
-      _uploadingGallery = false;
-      if (url != null) _photos[index] = url;
-    });
+    setState(() => _uploadingGallery = false);
   }
 
   void _notice(String message) {
@@ -371,6 +365,14 @@ class _VendorManageProfilePageState extends State<VendorManageProfilePage> {
                 onPick: _pickAvatar,
                 onClear: () => setState(() => _avatarUrl = null),
               ),
+              const SizedBox(height: 4),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Perubahan media tampil setelah disetujui admin.',
+                  style: vendorText(size: 10.5, color: VendorColors.muted),
+                ),
+              ),
               const SizedBox(height: 14),
               VendorMediaTile(
                 label: 'Banner halaman',
@@ -379,6 +381,14 @@ class _VendorManageProfilePageState extends State<VendorManageProfilePage> {
                 height: 132,
                 onPick: _pickBanner,
                 onClear: () => setState(() => _bannerUrl = null),
+              ),
+              const SizedBox(height: 4),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Perubahan media tampil setelah disetujui admin.',
+                  style: vendorText(size: 10.5, color: VendorColors.muted),
+                ),
               ),
               const SizedBox(height: 14),
               VendorTextField(
@@ -420,13 +430,21 @@ class _VendorManageProfilePageState extends State<VendorManageProfilePage> {
                   );
                 },
               ),
+              const SizedBox(height: 4),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Perubahan media tampil setelah disetujui admin.',
+                  style: vendorText(size: 10.5, color: VendorColors.muted),
+                ),
+              ),
             ],
           ),
         ),
         const SizedBox(height: VendorSp.md),
         Text(
           'Verifikasi, kategori, wilayah, dan status aktif diatur admin Tarlink. '
-          'Foto disimpan di server Tarlink dan langsung tampil di halaman pelanggan.',
+          'Perubahan media tampil setelah disetujui admin.',
           style: vendorText(size: 11, color: VendorColors.muted, height: 1.5),
         ),
       ],
