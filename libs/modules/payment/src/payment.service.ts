@@ -64,8 +64,16 @@ export const IDEMPOTENCY_SCOPE = {
   createDpCharge: 'POST /v1/payments/dp',
   createSettlementCharge: 'POST /v1/payments/settlement',
   refund: 'POST /v1/payments/:id/refund',
-  advanceRefund: 'payment.refund.advance'
+  advanceRefund: 'payment.refund.advance',
+  approveRefund: 'POST /v1/payments/refunds/:id/approve',
+  rejectRefund: 'POST /v1/payments/refunds/:id/reject'
 } as const;
+
+/**
+ * FR-128: a refund above this amount needs a second, different approver. The
+ * value is configurable through `REFUND_APPROVAL_THRESHOLD_IDR`.
+ */
+const DEFAULT_REFUND_APPROVAL_THRESHOLD_IDR = 1_000_000n;
 
 /** The only refund status each transition may start from. */
 const REFUND_TRANSITION_FROM: Record<'approved' | 'processing' | 'succeeded', RefundStatus> = {
@@ -90,13 +98,18 @@ export interface PaymentServiceDeps {
   readonly now?: () => Date;
   readonly newId?: () => string;
   readonly newProviderRef?: (paymentId: string, method: PaymentMethod) => string;
+  /** Defaults to Rp1.000.000 (FR-128). */
+  readonly refundApprovalThresholdIdr?: bigint;
 }
 
 export interface RequestOptions {
   readonly actorId?: string | null;
+  readonly actorRoles?: readonly string[];
   readonly idempotencyKey?: string;
   readonly requestHash?: string;
   readonly providerRefundId?: string | null;
+  /** Public URL of the proof attached by the admin requesting the refund. */
+  readonly evidenceUrl?: string | null;
 }
 
 export interface PaymentInstruction {
@@ -253,6 +266,14 @@ export interface RefundResult {
   readonly currency: 'IDR';
   readonly status: string;
   readonly reason_code: string;
+  readonly reason_note: string | null;
+  readonly evidence_url: string | null;
+  readonly review_note: string | null;
+  readonly requested_by: string | null;
+  readonly approved_by: string | null;
+  readonly approved_at: string | null;
+  /** True when the request is waiting for a second admin (FR-128). */
+  readonly requires_approval: boolean;
   readonly journal_entry_id: string;
 }
 
@@ -265,8 +286,19 @@ export interface RefundAdvanceResult {
   readonly currency: 'IDR';
   readonly status: string;
   readonly reason_code: string;
+  readonly reason_note: string | null;
+  readonly evidence_url: string | null;
+  readonly review_note: string | null;
+  readonly requested_by: string | null;
+  readonly approved_by: string | null;
+  readonly approved_at: string | null;
+  readonly requires_approval: boolean;
   /** Present once the refund is disbursed and the journal entry is posted. */
   readonly journal_entry_id?: string;
+}
+
+export interface RefundByBookingResult {
+  readonly refund: RefundResult;
 }
 
 /** Stable JSON for idempotency request hashing (§7.5 step 2). */
@@ -308,6 +340,7 @@ export class PaymentService {
   private readonly now: () => Date;
   private readonly newId: () => string;
   private readonly newProviderRef: (paymentId: string, method: PaymentMethod) => string;
+  private readonly refundApprovalThresholdIdr: bigint;
 
   constructor(deps: PaymentServiceDeps) {
     this.repository = deps.repository;
@@ -321,6 +354,8 @@ export class PaymentService {
     this.newProviderRef =
       deps.newProviderRef ??
       ((paymentId) => `PJP-${paymentId.replace(/-/g, '').slice(0, 16).toUpperCase()}`);
+    this.refundApprovalThresholdIdr =
+      deps.refundApprovalThresholdIdr ?? DEFAULT_REFUND_APPROVAL_THRESHOLD_IDR;
   }
 
   /* -------------------------------------------------------------- DP charge */
@@ -1194,13 +1229,16 @@ export class PaymentService {
     if (!actorId) {
       throw new AppError('UNAUTHENTICATED', 'an authenticated actor is required');
     }
+    const evidenceUrl = opts.evidenceUrl?.trim() || null;
+    const requiresApproval = amountIdr > this.refundApprovalThresholdIdr;
 
     const requestHash =
       opts.requestHash ??
       hashRequest({
         payment_id: paymentId,
         amount_idr: amountIdr.toString(),
-        reason
+        reason,
+        evidence_url: evidenceUrl
       });
     return this.runIdempotent(IDEMPOTENCY_SCOPE.refund, opts, requestHash, async () => {
       const outcome = await this.repository.transaction(async (tx) => {
@@ -1251,15 +1289,18 @@ export class PaymentService {
           amountIdr,
           feeIdr: feeRecoveredIdr,
           reasonCode: reason.trim().slice(0, 40),
+          reasonNote: reason.trim(),
+          evidenceUrl,
           requestedBy: actorId
         });
 
         // The local gateway keeps the historical request-only behaviour, so it
         // posts the recognition entry immediately. A real provider waits until
         // the money movement is confirmed; a rejected refund must not leave a
-        // recognition entry behind.
+        // recognition entry behind. A refund above the approval threshold never
+        // posts anything before the second admin signs off.
         let recognitionJournalId = '';
-        if (this.gateway.name === 'local') {
+        if (this.gateway.name === 'local' && !requiresApproval) {
           const entry = buildEntry(
             isFullRefund ? 'refund_full_recognized' : 'refund_partial_recognized',
             {
@@ -1278,17 +1319,7 @@ export class PaymentService {
           recognitionJournalId = posted.id;
         }
 
-        const result: RefundResult = {
-          id: refund.id,
-          payment_id: paymentId,
-          booking_id: payment.bookingId,
-          amount_idr: jsonRupiah(amountIdr),
-          fee_idr: jsonRupiah(feeRecoveredIdr),
-          currency: 'IDR' as const,
-          status: refund.status,
-          reason_code: refund.reasonCode,
-          journal_entry_id: recognitionJournalId
-        };
+        const result = this.toRefundResult(refund, recognitionJournalId, requiresApproval);
         return {
           result,
           providerRef: payment.providerRef,
@@ -1300,11 +1331,11 @@ export class PaymentService {
         };
       });
 
-      // The local gateway preserves the historical request-only behaviour used
-      // by unit tests. A real provider is asked to move the money; if it
-      // rejects, the refund becomes `failed` (retryable) and no journal is
-      // posted. On success the recognition + disbursement journals are posted.
-      if (this.gateway.name === 'local') return outcome.result;
+      // Above the threshold the request stops at `requested` until a second
+      // admin approves it. Below the threshold the local gateway keeps the
+      // historical request-only behaviour; a real provider is asked to move
+      // the money immediately.
+      if (requiresApproval || this.gateway.name === 'local') return outcome.result;
 
       let providerRefund;
       try {
@@ -1333,6 +1364,45 @@ export class PaymentService {
     });
   }
 
+  private toRefundResult(
+    refund: {
+      id: string;
+      paymentId: string;
+      bookingId: string;
+      amountIdr: bigint;
+      feeIdr: bigint;
+      status: string;
+      reasonCode: string;
+      reasonNote: string | null;
+      evidenceUrl: string | null;
+      reviewNote: string | null;
+      requestedBy: string | null;
+      approvedBy: string | null;
+      approvedAt: Date | null;
+    },
+    journalEntryId: string,
+    requiresApproval: boolean
+  ): RefundResult {
+    return {
+      id: refund.id,
+      payment_id: refund.paymentId,
+      booking_id: refund.bookingId,
+      amount_idr: jsonRupiah(refund.amountIdr),
+      fee_idr: jsonRupiah(refund.feeIdr),
+      currency: 'IDR' as const,
+      status: refund.status,
+      reason_code: refund.reasonCode,
+      reason_note: refund.reasonNote,
+      evidence_url: refund.evidenceUrl,
+      review_note: refund.reviewNote,
+      requested_by: refund.requestedBy,
+      approved_by: refund.approvedBy,
+      approved_at: refund.approvedAt ? refund.approvedAt.toISOString() : null,
+      requires_approval: requiresApproval,
+      journal_entry_id: journalEntryId
+    };
+  }
+
   private async finalizeRefund(
     outcome: {
       result: RefundResult;
@@ -1341,14 +1411,16 @@ export class PaymentService {
       refundNetIdr: bigint;
       reason: string;
     },
-    providerRefundId: string | null
+    providerRefundId: string | null,
+    from: RefundStatus = 'requested',
+    actorId: string | null = null
   ): Promise<RefundResult> {
     const { result } = outcome;
     return this.repository.transaction(async (tx) => {
       const refund = await this.repository.lockRefund(tx, result.id);
       if (!refund) throw new AppError('NOT_FOUND', `refund ${result.id} not found`);
       if (refund.status === 'succeeded') return result;
-      if (refund.status !== 'requested') {
+      if (refund.status !== from) {
         throw new AppError(
           'CONFLICT',
           `refund ${result.id} is ${refund.status}, cannot be finalized automatically`
@@ -1357,9 +1429,9 @@ export class PaymentService {
 
       const updated = await this.repository.advanceRefundStatus(tx, {
         refundId: result.id,
-        from: 'requested',
+        from,
         to: 'succeeded',
-        actorId: null,
+        actorId,
         providerRefundId
       });
       const refundNetIdr = updated.amountIdr - updated.feeIdr;
@@ -1392,17 +1464,7 @@ export class PaymentService {
         })
       );
 
-      return {
-        id: updated.id,
-        payment_id: updated.paymentId,
-        booking_id: updated.bookingId,
-        amount_idr: jsonRupiah(updated.amountIdr),
-        fee_idr: jsonRupiah(updated.feeIdr),
-        currency: 'IDR' as const,
-        status: updated.status,
-        reason_code: updated.reasonCode,
-        journal_entry_id: posted.id
-      };
+      return this.toRefundResult(updated, posted.id, false);
     });
   }
 
@@ -1468,19 +1530,177 @@ export class PaymentService {
           journalEntryId = posted.id;
         }
 
-        return {
-          id: updated.id,
-          payment_id: updated.paymentId,
-          booking_id: updated.bookingId,
-          amount_idr: jsonRupiah(updated.amountIdr),
-          fee_idr: jsonRupiah(updated.feeIdr),
-          currency: 'IDR' as const,
-          status: updated.status,
-          reason_code: updated.reasonCode,
-          journal_entry_id: journalEntryId
-        };
+        const result = this.toRefundResult(updated, journalEntryId ?? '', false);
+        return { ...result, journal_entry_id: journalEntryId } as RefundAdvanceResult;
       })
     );
+  }
+
+  /**
+   * Second-admin approval (FR-128). The approver must differ from the requester.
+   * Only after this call does the provider move money and the journals post.
+   */
+  async approveRefund(refundId: string, opts: RequestOptions = {}): Promise<RefundResult> {
+    if (!refundId) throw new AppError('VALIDATION_ERROR', 'refundId is required');
+    const actorId = opts.actorId ?? null;
+    if (!actorId) {
+      throw new AppError('UNAUTHENTICATED', 'an authenticated actor is required');
+    }
+
+    const requestHash = opts.requestHash ?? hashRequest({ refund_id: refundId, action: 'approve' });
+    return this.runIdempotent(
+      IDEMPOTENCY_SCOPE.approveRefund,
+      opts,
+      requestHash,
+      async () => {
+        const context = await this.repository.transaction(async (tx) => {
+          const refund = await this.repository.lockRefund(tx, refundId);
+          if (!refund) throw new AppError('NOT_FOUND', `refund ${refundId} not found`);
+          if (refund.status !== 'requested') {
+            throw new AppError(
+              'CONFLICT',
+              `refund ${refundId} must be requested to be approved (current: ${refund.status})`
+            );
+          }
+          if (refund.requestedBy === actorId) {
+            // Four-eyes rule, also enforced by the refunds table check.
+            throw new AppError('CONFLICT', 'the approver must differ from the requester');
+          }
+
+          const booking = await this.repository.lockBookingForPayment(tx, refund.paymentId);
+          const payment = await this.repository.lockPayment(tx, refund.paymentId);
+          if (!booking) throw new AppError('NOT_FOUND', `booking for refund ${refundId} not found`);
+          if (!payment) throw new AppError('NOT_FOUND', `payment for refund ${refundId} not found`);
+          if (payment.status !== 'paid') {
+            throw new AppError(
+              'CONFLICT',
+              `payment must be paid before approving a refund (current: ${payment.status})`
+            );
+          }
+          if (
+            this.gateway.name !== 'local' &&
+            (!payment.providerRef || payment.provider !== this.provider)
+          ) {
+            throw new AppError(
+              'CONFLICT',
+              'Pembayaran ini tidak berasal dari gateway; refund harus dicatat manual.'
+            );
+          }
+
+          const approved = await this.repository.advanceRefundStatus(tx, {
+            refundId,
+            from: 'requested',
+            to: 'approved',
+            actorId
+          });
+          return {
+            refund: approved,
+            vendorId: booking.vendorId,
+            providerRef: payment.providerRef,
+            method: payment.method,
+            capturedIdr: payment.amountIdr
+          };
+        });
+
+        const isFullRefund = context.refund.amountIdr === context.capturedIdr;
+        const outcome = {
+          result: this.toRefundResult(context.refund, '', false),
+          vendorId: context.vendorId,
+          isFullRefund,
+          refundNetIdr: context.refund.amountIdr - context.refund.feeIdr,
+          reason: context.refund.reasonNote ?? context.refund.reasonCode
+        };
+
+        if (this.gateway.name === 'local') {
+          return this.finalizeRefund(outcome, null, 'approved', actorId);
+        }
+
+        let providerRefund;
+        try {
+          providerRefund = await this.gateway.refund({
+            orderId: context.providerRef,
+            method: context.method,
+            amountIdr: context.refund.amountIdr,
+            reason: outcome.reason,
+            refundKey: context.refund.id
+          });
+        } catch (error) {
+          await this.repository
+            .transaction((tx) =>
+              this.repository.advanceRefundStatus(tx, {
+                refundId,
+                from: 'approved',
+                to: 'failed',
+                actorId: null,
+                providerRefundId: null
+              })
+            )
+            .catch(() => undefined);
+          throw error;
+        }
+
+        return this.finalizeRefund(outcome, providerRefund.providerRefundId, 'approved', actorId);
+      }
+    );
+  }
+
+  /** Rejects a refund that is still waiting for its second approver. */
+  async rejectRefund(
+    refundId: string,
+    note: string,
+    opts: RequestOptions = {}
+  ): Promise<RefundResult> {
+    if (!refundId) throw new AppError('VALIDATION_ERROR', 'refundId is required');
+    if (!note || note.trim().length < 5) {
+      throw new AppError('VALIDATION_ERROR', 'a rejection note of at least 5 characters is required');
+    }
+    const actorId = opts.actorId ?? null;
+    if (!actorId) {
+      throw new AppError('UNAUTHENTICATED', 'an authenticated actor is required');
+    }
+
+    const requestHash =
+      opts.requestHash ?? hashRequest({ refund_id: refundId, action: 'reject', note: note.trim() });
+    return this.runIdempotent(
+      IDEMPOTENCY_SCOPE.rejectRefund,
+      opts,
+      requestHash,
+      async () =>
+        this.repository.transaction(async (tx) => {
+          const rejected = await this.repository.rejectRefund(tx, {
+            refundId,
+            actorId,
+            note: note.trim()
+          });
+          return this.toRefundResult(rejected, '', false);
+        })
+    );
+  }
+
+  /**
+   * Refund status for the customer or an admin (FR-133: the customer must see
+   * the outcome). Another customer's booking resolves to NOT_FOUND.
+   */
+  async getRefundByBooking(
+    bookingId: string,
+    opts: RequestOptions = {}
+  ): Promise<RefundByBookingResult | null> {
+    if (!bookingId) throw new AppError('VALIDATION_ERROR', 'bookingId is required');
+    const actorId = opts.actorId ?? null;
+    if (!actorId) {
+      throw new AppError('UNAUTHENTICATED', 'an authenticated actor is required');
+    }
+    const isAdmin = (opts.actorRoles ?? []).some((role) => role.startsWith('admin_') || role === 'operator');
+
+    return this.repository.transaction(async (tx) => {
+      const found = await this.repository.findLatestRefundByBooking(tx, bookingId);
+      if (!found) return null;
+      if (!isAdmin && found.customerId !== actorId) {
+        throw new AppError('NOT_FOUND', `booking ${bookingId} not found`);
+      }
+      const pendingApproval = ['requested', 'approved'].includes(found.refund.status);
+      return { refund: this.toRefundResult(found.refund, '', pendingApproval) };
+    });
   }
 
   /* ---------------------------------------------------------------- helpers */

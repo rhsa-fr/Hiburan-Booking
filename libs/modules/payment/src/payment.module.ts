@@ -49,6 +49,7 @@ import { PaymentService } from './payment.service';
           webhookSecret: cfg.PJP_WEBHOOK_SECRET,
           gateway,
           provider: gateway.name,
+          refundApprovalThresholdIdr: BigInt(cfg.REFUND_APPROVAL_THRESHOLD_IDR),
           // Midtrans uses our payment id as the provider order_id so the
           // notification and refund routes can look the payment up directly.
           newProviderRef: useMidtrans ? (paymentId) => paymentId : undefined

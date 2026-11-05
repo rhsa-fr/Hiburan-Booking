@@ -33,6 +33,7 @@ import {
   PaymentService,
   hashRequest,
   type DpPaymentByBookingResult,
+  type RefundByBookingResult,
   type RefundResult,
   type SettlementChargeResult,
   type SettlementPaymentByBookingResult
@@ -50,7 +51,12 @@ const SettlementChargeBody = z.object({
 
 const RefundBody = z.object({
   amount_idr: z.union([z.string().regex(/^\d+$/), z.number().int().positive()]),
-  reason: z.string().min(1).max(500)
+  reason: z.string().min(1).max(500),
+  evidence_url: z.string().url().max(500).optional()
+});
+
+const RefundRejectBody = z.object({
+  note: z.string().min(5).max(500)
 });
 
 @Controller()
@@ -181,9 +187,69 @@ export class PaymentController {
       {
         idempotencyKey,
         actorId: req.user?.id ?? null,
+        actorRoles: req.user?.roles,
+        evidenceUrl: parsed.data.evidence_url ?? null,
         requestHash: hashRequest({ payment_id: paymentId, ...parsed.data })
       }
     );
     return { data: result };
+  }
+
+  /** Second-admin approval of a refund above the threshold (FR-128). */
+  @Post('payments/refunds/:id/approve')
+  @HttpCode(200)
+  @Roles('admin_finance', 'admin_super')
+  async approveRefund(
+    @Param('id') refundId: string,
+    @Req() req: AuthenticatedRequest
+  ): Promise<{ data: RefundResult }> {
+    if (!z.string().uuid().safeParse(refundId).success) {
+      throw new AppError('VALIDATION_ERROR', 'invalid refund id');
+    }
+    const result = await this.payments.approveRefund(refundId, {
+      actorId: req.user?.id ?? null,
+      actorRoles: req.user?.roles
+    });
+    return { data: result };
+  }
+
+  @Post('payments/refunds/:id/reject')
+  @HttpCode(200)
+  @Roles('admin_finance', 'admin_super')
+  async rejectRefund(
+    @Param('id') refundId: string,
+    @Body() body: unknown,
+    @Req() req: AuthenticatedRequest
+  ): Promise<{ data: RefundResult }> {
+    if (!z.string().uuid().safeParse(refundId).success) {
+      throw new AppError('VALIDATION_ERROR', 'invalid refund id');
+    }
+    const parsed = RefundRejectBody.safeParse(body);
+    if (!parsed.success) {
+      throw new AppError('VALIDATION_ERROR', 'invalid refund rejection', parsed.error.issues);
+    }
+    const result = await this.payments.rejectRefund(refundId, parsed.data.note, {
+      actorId: req.user?.id ?? null,
+      actorRoles: req.user?.roles
+    });
+    return { data: result };
+  }
+
+  /** Refund status for the booking owner or an admin (FR-133). */
+  @Get('payments/refunds/by-booking/:bookingId')
+  @Roles('customer', 'admin_support', 'admin_finance', 'admin_super')
+  async refundByBooking(
+    @Param('bookingId') bookingId: string,
+    @Req() req: AuthenticatedRequest
+  ): Promise<{ data: RefundByBookingResult | null }> {
+    if (!z.string().uuid().safeParse(bookingId).success) {
+      throw new AppError('VALIDATION_ERROR', 'invalid booking id');
+    }
+    return {
+      data: await this.payments.getRefundByBooking(bookingId, {
+        actorId: req.user?.id ?? null,
+        actorRoles: req.user?.roles
+      })
+    };
   }
 }

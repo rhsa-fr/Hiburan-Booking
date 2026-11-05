@@ -414,7 +414,12 @@ class FakeRepository implements PaymentRepository {
       feeIdr: input.feeIdr,
       status: 'requested',
       reasonCode: input.reasonCode,
+      reasonNote: input.reasonNote ?? null,
+      evidenceUrl: input.evidenceUrl ?? null,
+      reviewNote: null,
       requestedBy: input.requestedBy ?? null,
+      approvedBy: null,
+      approvedAt: null,
       createdAt: AT
     };
     this.refunds.set(refund.id, refund);
@@ -433,9 +438,43 @@ class FakeRepository implements PaymentRepository {
     if (!refund || refund.status !== input.from) {
       throw new AppError('CONFLICT', `refund ${input.refundId} is no longer in status ${input.from}`);
     }
-    const updated: RefundRecord = { ...refund, status: input.to };
+    const updated: RefundRecord = {
+      ...refund,
+      status: input.to,
+      approvedBy: input.to === 'approved' ? input.actorId ?? refund.approvedBy : refund.approvedBy,
+      approvedAt: input.to === 'approved' ? AT : refund.approvedAt
+    };
     this.refunds.set(updated.id, updated);
     return updated;
+  }
+
+  async rejectRefund(
+    _tx: JournalQueryClient,
+    input: { refundId: string; actorId: string; note: string }
+  ): Promise<RefundRecord> {
+    const refund = this.refunds.get(input.refundId);
+    if (!refund || refund.status !== 'requested') {
+      throw new AppError('CONFLICT', `refund ${input.refundId} is no longer awaiting approval`);
+    }
+    const updated: RefundRecord = {
+      ...refund,
+      status: 'rejected',
+      reviewNote: input.note,
+      approvedBy: input.actorId
+    };
+    this.refunds.set(updated.id, updated);
+    return updated;
+  }
+
+  async findLatestRefundByBooking(
+    _tx: JournalQueryClient,
+    bookingId: string
+  ): Promise<{ refund: RefundRecord; customerId: string } | null> {
+    const refund = [...this.refunds.values()]
+      .filter((row) => row.bookingId === bookingId)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
+    if (!refund) return null;
+    return { refund, customerId: CUSTOMER };
   }
 
   async insertWebhookEvent(
@@ -506,7 +545,7 @@ class FakeBookingPort implements BookingPaymentPort {
   }
 }
 
-function setup() {
+function setup(overrides: Partial<ConstructorParameters<typeof PaymentService>[0]> = {}) {
   const repository = new FakeRepository();
   repository.seedBooking();
   const bookingPort = new FakeBookingPort();
@@ -517,7 +556,8 @@ function setup() {
     idempotencyStore,
     webhookSecret: SECRET,
     provider: 'pjp',
-    now: () => AT
+    now: () => AT,
+    ...overrides
   });
   return { repository, bookingPort, idempotencyStore, service };
 }
@@ -1336,8 +1376,8 @@ describe('settleManual (manual settlement)', () => {
 });
 
 describe('refund', () => {
-  async function paidPayment() {
-    const context = setup();
+  async function paidPayment(overrides: Partial<ConstructorParameters<typeof PaymentService>[0]> = {}) {
+    const context = setup(overrides);
     const charge = await context.service.createDpCharge('booking-1', 'qris', {
       actorId: CUSTOMER
     });
@@ -1350,7 +1390,9 @@ describe('refund', () => {
   }
 
   it('posts a full refund journal (escrow debit, refund payable + fee recovery)', async () => {
-    const { service, repository, charge } = await paidPayment();
+    const { service, repository, charge } = await paidPayment({
+      refundApprovalThresholdIdr: 10_000_000n
+    });
 
     const result = await service.refund(charge.id, 1_200_000n, 'customer_cancel_gt_30d', {
       actorId: 'admin-finance'
@@ -1536,6 +1578,95 @@ describe('refund status advancement', () => {
     const second = await service.refund(charge.id, 100_000n, 'second', { actorId: 'admin-finance' });
     expect(second.status).toBe('requested');
     expect(repository.refunds.size).toBe(2);
+  });
+});
+
+describe('refund maker-checker (FR-128/FR-133)', () => {
+  async function requestedRefund() {
+    const context = setup();
+    const charge = await context.service.createDpCharge('booking-1', 'qris', {
+      actorId: CUSTOMER
+    });
+    await paidWebhook(context.service, context.repository, {
+      id: 'evt-maker-checker-setup',
+      type: 'payment.paid',
+      data: { provider_ref: charge.provider_ref, amount_idr: 1_200_000, paid_at: AT.toISOString() }
+    });
+    const refund = await context.service.refund(charge.id, 1_200_000n, 'customer_cancel', {
+      actorId: 'admin-finance',
+      evidenceUrl: 'https://bukti.example/refund-1.pdf'
+    });
+    return { ...context, charge, refund };
+  }
+
+  it('stops above the threshold and posts no journal before approval', async () => {
+    const { service, repository, refund } = await requestedRefund();
+
+    expect(refund.status).toBe('requested');
+    expect(refund.requires_approval).toBe(true);
+    expect(refund.journal_entry_id).toBe('');
+    expect(refund.evidence_url).toBe('https://bukti.example/refund-1.pdf');
+    // Only the DP journals exist; nothing moved for the refund yet.
+    expect(repository.lines).toHaveLength(4);
+  });
+
+  it('lets a different admin approve and then posts the journals', async () => {
+    const { service, repository, refund } = await requestedRefund();
+
+    const approved = await service.approveRefund(refund.id, { actorId: 'admin-super' });
+
+    expect(approved.status).toBe('succeeded');
+    expect(approved.approved_by).toBe('admin-super');
+    expect(approved.requires_approval).toBe(false);
+    expect(approved.journal_entry_id).toBeTruthy();
+    // Recognition (3 lines) + disbursement (2 lines) after the DP journals.
+    expect(repository.lines).toHaveLength(4 + 3 + 2);
+  });
+
+  it('rejects an approval by the requester', async () => {
+    const { service, refund } = await requestedRefund();
+
+    await expect(
+      service.approveRefund(refund.id, { actorId: 'admin-finance' })
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+  });
+
+  it('rejects a pending refund with an auditable note', async () => {
+    const { service, repository, refund } = await requestedRefund();
+
+    const rejected = await service.rejectRefund(refund.id, 'bukti tidak sesuai', {
+      actorId: 'admin-super'
+    });
+
+    expect(rejected.status).toBe('rejected');
+    expect(rejected.review_note).toBe('bukti tidak sesuai');
+    expect(repository.lines).toHaveLength(4);
+  });
+
+  it('requires a rejection note of at least five characters', async () => {
+    const { service, refund } = await requestedRefund();
+
+    await expect(
+      service.rejectRefund(refund.id, 'no', { actorId: 'admin-super' })
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+  });
+
+  it('shows the refund status to the owner and hides it from another customer', async () => {
+    const { service, refund } = await requestedRefund();
+
+    const own = await service.getRefundByBooking('booking-1', { actorId: CUSTOMER });
+    expect(own?.refund.id).toBe(refund.id);
+    expect(own?.refund.status).toBe('requested');
+
+    await expect(
+      service.getRefundByBooking('booking-1', { actorId: 'other-customer' })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+
+    const admin = await service.getRefundByBooking('booking-1', {
+      actorId: 'admin-support',
+      actorRoles: ['admin_support']
+    });
+    expect(admin?.refund.id).toBe(refund.id);
   });
 });
 
