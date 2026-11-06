@@ -14,11 +14,14 @@ Repositori ini berisi **API**, **panel admin**, **worker**, **library domain**, 
 | `apps/api` — NestJS `/v1` | Berjalan | `GET /v1/health` → 200 |
 | `apps/admin` — Next.js | Berjalan | `http://localhost:3002/login` |
 | `apps/worker` — poller PostgreSQL | Berjalan | log `tick=done` tiap interval |
-| `apps/mobile` — Flutter pelanggan | 27 widget test lulus, `flutter analyze` bersih | `cd apps/mobile && flutter test` |
-| `apps/mobile` — portal vendor | 6 layar, kelola profil/paket/kalender + upload media | login akun `vendor_owner` |
+| `apps/mobile` — Flutter pelanggan | 31 widget test lulus, `flutter analyze` bersih | `cd apps/mobile && flutter test` |
+| `apps/mobile` — portal vendor | dashboard, kalender, saldo, profil, pesanan, paket, media, rekening | login akun `vendor_owner` |
 | Payout vendor + rekening | `payouts`/`payout_items`, rekening terenkripsi, maker-checker, worker rekonsiliasi | `PAYOUT_PROVIDER=local` (default) |
-| Ledger double-entry | 788 test backend lulus (3 skip) | `npm test` |
-| Skema DB | migrasi `001`–`016` | `npm run migrate` |
+| Chat booking (FR-050) | REST riwayat/kirim + WebSocket per booking, izin per relasi booking | `GET/POST /v1/bookings/:id/chat/messages`, `WS /v1/chat/ws` |
+| Consent ToS + Privasi (FR-103) | `user_consents` append-only per versi; register wajib mengirim versi aktif | `POST /v1/auth/register`, `GET /v1/policies/:code` |
+| Toggle wilayah (FR-125) | Wilayah nonaktif hilang dari katalog & formulir vendor; panel `/regions` | `GET/PATCH /v1/admin/regions` |
+| Ledger double-entry | 1028 test backend lulus (3 skip) | `npm test` |
+| Skema DB | migrasi `001`-`023` | `npm run migrate` |
 
 ## Stack
 
@@ -35,10 +38,10 @@ Repositori ini berisi **API**, **panel admin**, **worker**, **library domain**, 
 | `apps/api` | Entrypoint HTTP NestJS, prefix `/v1` |
 | `apps/admin` | Panel admin Next.js App Router (`(auth)`, `(panel)`) |
 | `apps/mobile` | Aplikasi pelanggan Flutter + portal vendor (`lib/features/*`) |
-| `apps/worker` | Job: `expire-unpaid`, `expire-holds`, `auto-complete`, `auto-release`, `payout-reconcile`, `outbox`, `cleanup-auth` |
-| `libs/modules/*` | Domain: `auth`, `booking`, `payment`, `payout`, `ledger`, `catalog`, `calendar`, `admin`, `vendor-portal` |
+| `apps/worker` | Job: `expire-unpaid`, `expire-unresponsive`, `expire-holds`, `auto-complete`, `auto-release`, `payout-reconcile`, `outbox`, `cleanup-auth`, `cleanup-media` |
+| `libs/modules/*` | Domain: `auth`, `booking`, `chat`, `payment`, `payout`, `ledger`, `catalog`, `calendar`, `admin`, `notifications`, `vendor-onboarding`, `vendor-portal` |
 | `libs/platform/*` | Fondasi: db, config, auth (JWT + `jti`), error, uang, idempotensi |
-| `db/migrations` | Skema PostgreSQL `001`–`016` |
+| `db/migrations` | Skema PostgreSQL `001`-`023` |
 | `scripts/` | Migrasi, seed, smoke test, webhook PJP, probe browser |
 | `opendesain/` | Ekspor HTML acuan desain pelanggan & vendor (bukan aplikasi) — lihat [docs/DESIGN-REFERENCES.md](docs/DESIGN-REFERENCES.md) |
 | `docs/` | PRD, tech design, UX flow, brief legal, SOP, arsitektur, API |
@@ -67,6 +70,7 @@ cp .env.example .env        # sesuaikan bila perlu
 # 4. skema + seed
 npm run migrate
 node scripts/seed-admin.mjs
+node scripts/seed-demo.mjs   # opsional: data demo vendor/booking untuk E2E mobile
 
 # 5. layanan
 npm run build:api && npm run start:api     # :3001
@@ -108,7 +112,7 @@ curl http://localhost:3001/v1/health
 | `npm run dev:admin` | Panel dev (`:3002`) |
 | `npm run smoke:booking` / `smoke:admin` / `smoke:catalog` / `smoke:settle` | Smoke test alur nyata |
 | `cd apps/mobile && flutter analyze` | Analisis statis mobile |
-| `cd apps/mobile && flutter test` | 27 widget test mobile |
+| `cd apps/mobile && flutter test` | 31 widget test mobile |
 | `cd apps/mobile && flutter run -d web-server --web-port 8080 --dart-define=API_BASE_URL=http://localhost:3001` | Jalankan mobile web, buka `http://localhost:8080` di Chrome biasa |
 
 ## Pengujian mobile (E2E)
@@ -131,6 +135,33 @@ Screenshot 390×844 (DPR 2) tersimpan di `apps/mobile/e2e_shots/` dengan nama
 
 Viewport dipaksa 390×844 lewat CDP `Emulation.setDeviceMetricsOverride` di
 `test_driver/integration_test.dart` (Chrome desktop menolak lebar window < ~534 px).
+
+### Verifikasi chat
+
+Pass visual chat terpisah dan **read-only** (tidak mengirim pesan):
+
+```bash
+cd apps/mobile
+flutter drive --driver=test_driver/integration_test.dart \
+  --target=integration_test/chat_test.dart -d chrome --driver-port=4444 \
+  --web-port=8080 --dart-define=API_BASE_URL=http://localhost:3001
+# hasil: apps/mobile/e2e_shots/ui-05b-chat.png
+```
+
+Fan-out `LISTEN/NOTIFY` lintas instance diuji dengan dua API yang memakai
+`DATABASE_URL` sama:
+
+```bash
+# terminal 1
+PORT=3001 npm run start:api
+# terminal 2
+PORT=3003 CORS_ORIGINS=http://localhost:3002,http://localhost:8080 npm run start:api
+# terminal 3
+node scripts/probe-chat-fanout.mjs
+```
+
+Skrip memastikan pesan dari instance A diterima socket instance B dan sebaliknya,
+lalu membandingkan riwayat REST kedua instance.
 
 ## Troubleshooting
 
@@ -167,13 +198,22 @@ IP, index trigram pencarian, guard `OTP_DEV_MODE`, dan e-wallet ditolak eksplisi
 Yang masih terbuka:
 
 - Tidak ada emulator/HP fisik di lingkungan pengembangan ini.
-- Disbursement/payout ke rekening vendor sekarang tersedia (rekening terenkripsi +
-  maker-checker + adapter Iris di balik `PAYOUT_PROVIDER=iris`), tetapi pengujian live Iris
-  belum dilakukan karena butuh kredensial dan saldo merchant sandbox. Provider WhatsApp/SMS,
-  picker peta lokasi acara, UI check-in berbasis GPS, invoice/nota, hapus akun mandiri, dan
-  2FA admin belum ada. Review/rating, favorit, dan moderasi media sudah selesai.
-  Charge/notifikasi/refund QRIS sudah memakai Midtrans sandbox; endpoint check-in basic
-  sudah ada.
+- Payout vendor + rekening tersedia (terenkripsi, maker-checker, adapter Iris di balik
+  `PAYOUT_PROVIDER=iris`), tetapi pengujian live Iris belum dilakukan karena butuh
+  kredensial dan saldo merchant sandbox.
+- Provider WhatsApp/SMS tidak dipakai (diganti chat real-time in-app, ADR 0011);
+  push notification belum ada, notifikasi saat ini in-app (`/v1/notifications` +
+  popup di mobile). Chat teks in-app sudah ada (`/v1/bookings/:id/chat/messages` +
+  WebSocket `WS /v1/chat/ws`, fan-out lewat PostgreSQL `LISTEN/NOTIFY`); foto/lokasi
+  dan penyaringan kontak (FR-135) belum ada. Picker peta lokasi acara dan UI check-in
+  berbasis GPS belum ada; endpoint check-in/no-show basic sudah ada.
+- `policy_versions` untuk `tos` dan `privacy` masih **placeholder** bertanda
+  `"status":"draft"`; teks final harus diganti lewat migrasi baru. Consent hanya
+  direkam pada registrasi email+password; akun yang dibuat lewat Google belum
+  mencatat consent (jalur UI-nya juga tidak ditampilkan di mobile).
+- 2FA admin dan token admin HttpOnly belum ada.
+- Review/rating, favorit, moderasi media, invoice/nota, hapus akun mandiri, registrasi
+  vendor mandiri, serta pengajuan/refund maker-checker sudah selesai.
 
 ## Lisensi
 

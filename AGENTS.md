@@ -40,8 +40,8 @@ Sumber kebenaran adalah enum PostgreSQL di `db/migrations/001_core.sql`.
 - Logout mencabut sesi berdasarkan `jti`, bukan sekadar menghapus token di klien.
 - Jangan menambahkan login yang tidak didukung backend. Dua jalur yang **ada**:
   `POST /auth/login` (email + password) dan `POST /auth/otp/request` →
-  `POST /auth/otp/verify` (nomor WhatsApp). Nomor WhatsApp hanya dikumpulkan saat daftar.
-  Login Google **tidak** ditampilkan di mobile.
+  `POST /auth/otp/verify` (**kode dikirim ke email**, ADR 0011). Nomor WhatsApp hanya
+  data profil, bukan kanal OTP. Login Google **tidak** ditampilkan di mobile.
 
 ### Data pelanggan
 - Jangan merender data yang tidak ada di API (ulasan, jumlah respons fiktif,
@@ -52,10 +52,12 @@ Sumber kebenaran adalah enum PostgreSQL di `db/migrations/001_core.sql`.
 - Kalender vendor bisa `stale`; tampilkan peringatan, jangan sembunyikan.
 
 ### Kontrol mati
-Dilarang menambah tombol/tab yang tidak punya API: chat in-app, notifikasi in-app,
-favorit (baru skema, belum ada endpoint), peta interaktif, voucher.
+Dilarang menambah tombol/tab yang tidak punya API: peta interaktif, voucher.
+Favorit (`/v1/favorites`), notifikasi in-app (`/v1/notifications`), dan chat
+(`/v1/bookings/:id/chat/messages` + `WS /v1/chat/ws`) sudah punya endpoint, jadi
+boleh dipakai. Chat bersifat teks; foto/lokasi belum ada.
 Filter kategori **boleh** karena `GET /categories` + query `category` sudah ada.
-Komunikasi vendor = WhatsApp deep link.
+Komunikasi vendor = chat real-time in-app (ADR 0011); WhatsApp deep link hanya cadangan.
 
 ## 3. Batas kepemilikan file (penting untuk kerja paralel)
 
@@ -141,7 +143,7 @@ output. "Tidak dijalankan" adalah jawaban yang sah; klaim palsu tidak.
 4. `flutter analyze` + `flutter test`, lalu screenshot 390×844.
 
 **Migrasi DB**
-1. Nomor urut berikutnya di `db/migrations` (terakhir `019`, berikutnya `020`).
+1. Nomor urut berikutnya di `db/migrations` (terakhir `023`, berikutnya `024`).
 2. Idempoten bila memungkinkan; sediakan jalur koreksi ke depan, bukan `DROP` data.
 3. Jalankan `npm run migrate:dry` sebelum `npm run migrate`.
 
@@ -152,7 +154,7 @@ Sudah diperbaiki (jangan dikembalikan tanpa keputusan tertulis):
 - `POST /bookings` **idempoten** (`Idempotency-Key` + `client_generated_id`).
 - `policy_version_id` divalidasi dan dibekukan ke `booking_terms_snapshot`.
 - Lokasi acara tidak lagi memakai koordinat vendor; `venue_location` opsional.
-- Rate limit login/OTP per **IP** (selain per email/phone).
+- Rate limit login/OTP per **IP** (selain per email).
 - Pencarian vendor memakai index trigram (`pg_trgm`).
 - `dev_code` OTP butuh `OTP_DEV_MODE=true` dan `NODE_ENV != production`.
 - Refresh token panjang (30 hari) + rotasi + deteksi reuse; job `cleanup-auth`.
@@ -185,6 +187,11 @@ Sudah diperbaiki (jangan dikembalikan tanpa keputusan tertulis):
 - KTP dienkripsi AES-256-GCM sebelum ditulis (`KTP_ENCRYPTION_KEY`, wajib di
   production), permission 0600/0700, akses hanya `admin_super` dan dicatat di
   `audit_logs`; reject/hapus akun menghapus file dan referensinya.
+- Consent ToS/Privasi (FR-103, migrasi `022`): `user_consents` append-only per versi;
+  registrasi wajib mengirim versi aktif (`tos`/`privacy`) dan mobile menampilkan
+  versinya. Version basi ditolak, bukan disimpan diam-diam.
+- Toggle wilayah (FR-125): `GET/PATCH /admin/regions`, panel `/regions`; wilayah
+  nonaktif hilang dari `GET /regions`, katalog, favorit, dan formulir vendor baru.
 
 Masih terbuka:
 
@@ -192,10 +199,15 @@ Masih terbuka:
 - Detail vendor sempat kosong pada screenshot E2E otomatis — assertion ukuran body
   sudah ditambahkan; cek manual screenshot sebelum menyatakan selesai.
 - 2FA admin belum ada.
-- Provider WhatsApp/SMS dan push notification belum ada: notifikasi saat ini in-app
-  (worker `outbox` → tabel `notifications`, popup di mobile). Picker peta dan UI
-  check-in berbasis GPS juga belum ada. Charge/refund QRIS memakai Midtrans sandbox;
-  endpoint check-in/no-show basic sudah ada.
+- Teks `tos`/`privacy` di `policy_versions` masih placeholder `{"status":"draft"}`;
+  jangan mengarang pasal. Registrasi lewat Google belum mencatat consent.
+- Provider WhatsApp/SMS tidak dipakai (diganti chat real-time in-app, ADR 0011);
+  push notification belum ada: notifikasi saat ini in-app (worker `outbox` → tabel
+  `notifications`, popup di mobile). Chat teks in-app sudah ada (migrasi `021`,
+  `GET/POST /v1/bookings/:id/chat/messages`, `WS /v1/chat/ws`); foto/lokasi dan
+  penyaringan kontak FR-135 belum ada. Picker peta dan UI check-in berbasis GPS
+  belum ada. Charge/refund QRIS memakai Midtrans sandbox; endpoint check-in/no-show
+  basic sudah ada.
 - Integrasi Iris (`PAYOUT_PROVIDER=iris`) belum diuji live: butuh `IRIS_API_KEY` dan saldo
   merchant Iris sandbox. Jalur `PAYOUT_PROVIDER=local` sudah dipakai test dan worker.
   Tanpa `BANK_ACCOUNT_ENCRYPTION_KEY`, vendor tidak bisa menyimpan rekening.

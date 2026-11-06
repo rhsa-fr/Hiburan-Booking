@@ -68,10 +68,10 @@ sebagai guard unik per pelanggan.
 
 | Method | Path | Body | Keterangan |
 |---|---|---|---|
-| POST | `/auth/register` | `{ full_name, email, phone, password }` | Membuat akun pelanggan |
+| POST | `/auth/register` | `{ full_name, email, phone, password, consent: { tos_version_id, privacy_version_id } }` | Membuat akun pelanggan + mencatat consent |
 | POST | `/auth/login` | `{ email, password }` | **Email**, bukan nomor WA |
-| POST | `/auth/otp/request` | `{ phone }` | Kirim OTP (dev mengembalikan `dev_code` hanya bila `NODE_ENV !== production` **dan** `OTP_DEV_MODE=true`) |
-| POST | `/auth/otp/verify` | `{ phone, code }` | Verifikasi OTP |
+| POST | `/auth/otp/request` | `{ email }` | Kirim OTP ke email (dev mengembalikan `dev_code` hanya bila `NODE_ENV !== production` **dan** `OTP_DEV_MODE=true`) |
+| POST | `/auth/otp/verify` | `{ email, code }` | Verifikasi OTP |
 | POST | `/auth/google` | `{ id_token }` | Login Google (opsional, tidak dipakai mobile) |
 | POST | `/auth/refresh` | `{ refresh_token }` | Rotasi sesi; tanpa body memakai Bearer lama (legacy) |
 | POST | `/auth/logout` | `{ refresh_token? }` | Mencabut sesi; tanpa body memakai Bearer |
@@ -94,6 +94,12 @@ Respons login (dibungkus `data`):
 
 `GET /auth/me` mengembalikan `{ "data": { "user": { id, phone, email, full_name,
 roles, created_at } } }`. Peran diambil dari database, bukan dari isi token.
+
+Registrasi wajib menyertakan `consent` (FR-103) berisi `id` versi kebijakan yang
+sedang aktif dari `GET /policies/tos` dan `GET /policies/privacy`. API menolak
+`400 VALIDATION_ERROR` bila salah satu versi bukan versi aktif (mis. tab lama),
+lalu menulis dua baris `user_consents` dalam transaksi yang sama dengan pembuatan
+user. Consent tidak diminta ulang saat login.
 
 `DELETE /auth/me` adalah hapus akun mandiri (FR-101). Body wajib berisi
 `confirm: "HAPUS AKUN"`; tanpa itu `400 VALIDATION_ERROR`. Data pribadi dianonimkan
@@ -206,7 +212,9 @@ Sesi: `day`, `night`, `full`. Bila `stale` benar, UI **wajib** menampilkan perin
   "effective_from": "2026-01-01", "body": { "…": "…" } }
 ```
 
-Seed hanya berisi `cancellation`; kode lain bisa 404 — jangan mengarang teks hukum.
+Seed berisi `cancellation`, `tos`, dan `privacy` (versi 1). Body `tos`/`privacy`
+saat ini masih **placeholder** `{"status":"draft",...}` sampai teks hukum final
+disetujui; jangan mengarang pasal. Kode lain bisa 404.
 
 ### `GET /favorites`
 
@@ -479,6 +487,50 @@ Menandai satu notifikasi milik akun pemanggil. `404 NOT_FOUND` bila bukan milikn
 ### `POST /notifications/read-all`
 
 Respons: `{ data: { updated } }` — jumlah baris yang baru ditandai.
+
+## Chat booking (FR-050)
+
+Satu percakapan per booking. Peserta ditentukan dari **relasi booking**, bukan dari
+peran di token: pelanggan pemilik booking → `customer`; pemilik atau anggota aktif
+vendor → `vendor`; admin (`admin_support`, `admin_finance`, `admin_super`) → `admin`.
+Akun lain mendapat `403 FORBIDDEN`. Pesan append-only, 1–2000 karakter setelah trim.
+
+### `GET /bookings/:bookingId/chat/messages`
+
+Query: `limit` (1–100, default 50), `before` (cursor `next_before` halaman sebelumnya).
+Respons: `{ data: { items, next_before } }`, `items` urut lama → baru. Cursor hanya
+berlaku untuk thread booking yang sama.
+
+### `POST /bookings/:bookingId/chat/messages`
+
+Body: `{ "body": "…" }`. Respons `201`:
+
+```json
+{ "data": { "id": "…", "booking_id": "…", "sender_id": "…", "sender_role": "customer", "body": "…", "created_at": "…" } }
+```
+
+Setiap insert memicu `NOTIFY tarlink_chat`; API yang sedang `LISTEN` meneruskannya ke
+socket pelanggan thread tersebut.
+
+### `WS /v1/chat/ws?token=<access_token>`
+
+WebSocket memakai query `token` karena browser tidak bisa mengirim header
+`Authorization` saat handshake. Origin dicek terhadap `CORS_ORIGINS`.
+
+Frame klien:
+
+```json
+{ "type": "subscribe", "booking_id": "…" }
+{ "type": "unsubscribe", "booking_id": "…" }
+{ "type": "message", "booking_id": "…", "body": "…" }
+{ "type": "ping" }
+```
+
+Frame server: `ready`, `subscribed` (berisi `role`), `unsubscribed`, `sent`
+(berisi `message`), `message` (siaran ke semua socket thread), `pong`, dan
+`error { code, message }`. Pengiriman lewat REST juga tersiar ke socket. Setelah
+reconnect, klien memuat ulang riwayat lewat REST. Chat hanya teks; foto/lokasi dan
+penyaringan kontak (FR-135) belum ada.
 
 ## Webhook Midtrans
 
@@ -801,11 +853,15 @@ Semua butuh peran `admin`/`operator`.
 | POST | `/admin/disputes/:id/resolve` | Putusan sengketa (lihat di bawah) |
 | GET | `/admin/audit` | Audit log |
 | GET | `/admin/operators` | Akun operator |
+| GET | `/admin/regions` | Daftar wilayah + jumlah vendor aktif (FR-125) |
+| PATCH | `/admin/regions/:code` | Aktif/nonaktif wilayah (`admin_super`, body `{ is_active }`) |
 | GET/PUT | `/admin/settings` | Pengaturan platform |
 | POST | `/admin/vendors` | Buat vendor |
 | PATCH | `/admin/vendors/:id` | Ubah vendor |
 | GET/PUT | `/admin/vendors/:id/categories` | Baca/ganti kategori vendor |
 | POST | `/admin/vendors/:id/verify` | Verifikasi vendor |
+| POST | `/admin/vendors/:id/suspend` | Tangguhkan vendor (`admin_super`, FR-132) |
+| POST | `/admin/vendors/:id/unsuspend` | Cabut penangguhan vendor (`admin_super`, FR-132) |
 | GET/POST | `/admin/vendors/:id/packages` | Daftar/buat paket |
 | PATCH/DELETE | `/admin/vendors/:id/packages/:packageId` | Ubah/hapus paket |
 | GET/PUT | `/admin/vendors/:id/calendar` | Baca/tulis kalender |
@@ -823,6 +879,18 @@ Semua butuh peran `admin`/`operator`.
 `PATCH /admin/vendors/:id` juga menerima `avatar_url`, `banner_url`,
 `photo_urls`, `video_url`. `POST/PATCH .../packages` menerima
 `personnel_count`, `inclusions[]`, dan `photo_url` (sama seperti portal vendor).
+
+### Wilayah (FR-125)
+
+`GET /admin/regions` mengembalikan array
+`{ code, name, level, parent_code, is_active, vendor_count }`; `vendor_count`
+hanya menghitung vendor aktif. `PATCH /admin/regions/:code` menerima
+`{ "is_active": false }` (peran `admin_super`) dan menulis `audit_logs`
+(`region.deactivate` / `region.activate`).
+
+Wilayah nonaktif hilang dari `GET /regions`, vendor di wilayah itu hilang dari
+katalog publik dan favorit, dan wilayahnya tidak bisa dipilih pada pendaftaran
+vendor baru. Booking lama dan vendor yang sudah ada tidak diubah.
 
 ### Moderasi media
 
@@ -969,6 +1037,58 @@ Respons (urutan: primer lebih dulu, lalu `sort_order`):
 Slug tidak dikenal atau kategori nonaktif → `400 VALIDATION_ERROR`; tidak ada
 baris yang diubah. Hanya kategori primer yang aktif yang tampil di
 `GET /vendors`, jadi tanpa assignment ini chip kategori di aplikasi kosong.
+
+### Vendor: filter, detail, dan penangguhan (FR-132)
+
+`GET /admin/vendors` mendukung query param `verification`:
+- `verified` — vendor dengan `verification_status = 'approved'`
+- `pending` — vendor dengan `verification_status = 'pending'`
+- `rejected` — vendor dengan `verification_status = 'rejected'`
+- `suspended` — vendor dengan `verification_status = 'suspended'`
+
+Daftar vendor (`GET /admin/vendors`) dan detail vendor (`GET /admin/vendors/:id`) memuat status verifikasi dan field penangguhan:
+- `verification_status`: `'verified' | 'pending' | 'rejected' | 'suspended'`
+- `suspended_at`: ISO timestamp string saat penangguhan, atau `null` jika tidak ditangguhkan
+- `suspended_by`: UUID pengguna admin penangguh, atau `null`
+- `suspension_reason`: teks alasan penangguhan, atau `null`
+
+#### `POST /v1/admin/vendors/:id/suspend`
+Peran: `admin_super`. Menangguhkan vendor bermasalah (FR-132), menyembunyikan vendor dari katalog publik, dan membekukan pencairan baru. Vendor tetap aktif (`is_active = true`) agar pesanan berjalan dapat diselesaikan.
+
+Body:
+```json
+{
+  "reason": "Alasan penangguhan 10-500 karakter",
+  "note": "Catatan internal opsional"
+}
+```
+
+Respons (`200 OK`):
+```json
+{
+  "id": "uuid",
+  "verification_status": "suspended",
+  "suspended_at": "2026-11-06T07:00:00.000Z",
+  "suspension_reason": "Alasan penangguhan 10-500 karakter",
+  "suspended_by": "uuid"
+}
+```
+
+#### `POST /v1/admin/vendors/:id/unsuspend`
+Peran: `admin_super`. Mencabut penangguhan dan memulihkan status verifikasi sebelumnya (`suspension_previous_status`).
+
+Body: `{}`
+
+Respons (`200 OK`):
+```json
+{
+  "id": "uuid",
+  "verification_status": "approved",
+  "suspended_at": null,
+  "suspension_reason": null,
+  "suspended_by": null
+}
+```
 
 ---
 

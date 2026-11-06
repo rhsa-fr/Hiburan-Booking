@@ -147,7 +147,9 @@ Grid vertikal mengikuti kelipatan 4; hindari "kartu di dalam kartu".
 ## 5. Arsitektur informasi (4 tab)
 
 Bottom navigation **4 item**, semuanya punya fungsi nyata di backend. Tidak ada tab
-"Chat" atau "Notifikasi" karena tidak ada API-nya — komunikasi lewat WhatsApp.
+"Chat": percakapan dibuka dari detail booking (pelanggan) atau detail pesanan (vendor)
+lewat tombol "Chat dengan vendor" / "Chat pelanggan" — API dan WebSocket-nya sudah ada. Notifikasi in-app tidak punya tab;
+API `/v1/notifications` ditampilkan sebagai popup, bukan halaman.
 
 | Tab | Isi | Data nyata |
 |---|---|---|
@@ -157,12 +159,13 @@ Bottom navigation **4 item**, semuanya punya fungsi nyata di backend. Tidak ada 
 | **Profil** | Nama + nomor WA, keamanan sesi, kebijakan, bantuan WhatsApp, keluar | `GET /auth/me`, `GET /policies/:code` |
 
 **Yang sengaja TIDAK ada** (karena backend belum mendukung, dan kontrol mati dilarang):
-favorit/hati, chat in-app, notifikasi in-app, form ulasan baru, peta interaktif,
-promo/voucher. Rating yang sudah ada di API boleh ditampilkan; jangan mengarang
-ulasan atau angka saat `rating` null.
+peta interaktif, promo/voucher, chat foto/lokasi. Chat teks, favorit, form ulasan, dan
+notifikasi in-app sudah punya API dan boleh dipakai. Rating yang sudah ada di API boleh
+ditampilkan; jangan mengarang ulasan atau angka saat `rating` null.
 
 Navigasi pendalaman (bukan tab): Detail vendor → Jadwal → Buat booking → Status booking
-→ Pembayaran. Alur ini linear, satu tombol "Lanjut" per langkah.
+→ Pembayaran → Chat. Alur ini linear, satu tombol "Lanjut" per langkah. Chat juga bisa
+dibuka kapan saja dari Status booking (pelanggan) dan Detail pesanan (vendor).
 
 ---
 
@@ -257,11 +260,12 @@ Sisa yang harus dibayar Rp3.550.000    (Display / ink) ← satu-satunya angka be
    tint lembut. Ubin membuka Jelajah dengan filter kategori, bukan filter palsu.
 4. Seksi "Vendor Siap Tanggap" + tautan "Semua", lalu kartu vendor.
 5. Kartu jaminan PJP (`InfoStrip` bernada `primary`) di area daftar.
-6. Tanpa banner promo, tanpa carousel auto-play, tanpa notifikasi in-app.
+6. Tanpa banner promo, tanpa carousel auto-play, tanpa pusat notifikasi in-app.
 
 ### 7.2 Jelajah
 - Header gelap: emblem, "Jelajah Vendor", subjudul jumlah vendor, lalu field
-  pencarian 52 px. Tanpa ikon notifikasi/favorit (tidak ada API-nya).
+  pencarian 52 px. Favorit dikelola dari detail vendor dan Profil; header tanpa ikon
+  notifikasi (notifikasi tampil sebagai popup).
 - Kartu jaminan `InfoStrip` di atas filter: DP ditahan PJP sampai acara selesai.
 - Baris chip kategori dari `GET /categories` (chip pertama "Semua kategori").
 - Tombol outline pemilih tanggal acara; bila aktif menampilkan tanggal dan tombol
@@ -337,9 +341,9 @@ field, bukan dialog.
   `assets/images/logo_mark.png` + wordmark **"Tarlink"** + caption "TANGGAP HIBURAN")
   dan pil `secondarySoft` "Gerbang Hiburan Pantura". Wordmark aplikasi tetap **Tarlink**.
 - Judul "Masuk atau Daftar" (Headline 26/700) + satu kalimat penjelas.
-- Dua tab: **Akun Email** (email + kata sandi, `POST /auth/login`) dan
-  **WhatsApp / SMS** (`POST /auth/otp/request` → `POST /auth/otp/verify`). Tab aktif
-  `card` di atas wadah `surfaceTint` radius 6.
+- Jalur masuk: **Akun Email** (email + kata sandi, `POST /auth/login`). OTP **email**
+  (`POST /auth/otp/request` → `POST /auth/otp/verify`, ADR 0011) tersedia di API;
+  tab UI-nya belum diimplementasikan, jadi app saat ini hanya menampilkan form email.
 - Field 52 px `card` radius 6, label 12/600 + "Wajib diisi" 11/400 `inkMuted`.
 - Kotak consent `surfaceTint`: checkbox lime **tidak tercentang** secara default
   (opt-in, bukan opt-out); tautan Syarat & Ketentuan dan Kebijakan Privasi diberi
@@ -400,11 +404,20 @@ field, bukan dialog.
 - Media vendor berasal dari kolom API (`avatar_url`, `banner_url`, `photo_urls`,
   `video_url`). Bila kosong, `PosterTile` memakai blok inisial + gradien; jangan pakai
   gambar stok baru di UI.
-- Tidak ada API chat/notifikasi → WhatsApp deep link, bukan tab.
+- Chat memakai `GET/POST /v1/bookings/:id/chat/messages` + `WS /v1/chat/ws`; teks saja,
+  tanpa foto/lokasi. WhatsApp deep link hanya cadangan. Notifikasi in-app memakai popup,
+  bukan tab.
+- WebSocket di web memakai `dart:html`, di mobile/desktop memakai `dart:io`; tidak ada
+  dependency baru. Bila koneksi putus, layar menampilkan "Menyambung ulang…" dan
+  pengiriman tetap lewat REST.
 - Kategori **ada** (`GET /categories`, query `category`); filter wilayah masih di klien
   karena API memfilter dengan kode, bukan nama.
 - E-wallet belum berfungsi → UI hanya menawarkan QRIS dan VA.
 - Sesi bisa habis saat cold start → layar login harus terasa wajar, bukan error.
+- Consent (FR-103) hanya di layar **Daftar akun**: checkbox menampilkan versi
+  `tos`/`privacy` dari `GET /policies/:code`, dan versi itu dikirim saat submit.
+  Login tidak meminta consent lagi. Bila kebijakan gagal dimuat, tombol daftar
+  dinonaktifkan dan sediakan "Muat ulang".
 - APK target ≥ Android 8, RAM 2 GB, sinyal 3G: hindari blur, parallax, gambar besar.
 - Portal vendor memakai theme lokal `features/vendor/vendor_theme.dart`, bukan
   `app/theme.dart`; jangan mencampur token pelanggan dan vendor dalam satu layar.
