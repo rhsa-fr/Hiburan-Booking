@@ -1,5 +1,8 @@
 import 'reflect-metadata';
+import type { Server } from 'node:http';
 import { NestFactory } from '@nestjs/core';
+import { attachChatGateway, ChatService } from '@tarlink/modules/chat';
+import { getPool } from '@tarlink/core/db';
 import { AppModule } from './app.module';
 import { loadConfig } from './core/config';
 import { installSessionChecker } from './core/session-checker';
@@ -29,6 +32,14 @@ async function bootstrap(): Promise<void> {
   app.getHttpAdapter().getInstance().set('trust proxy', cfg.TRUST_PROXY);
   app.setGlobalPrefix('v1');
   await app.listen(cfg.PORT);
+  // Chat is a WebSocket upgrade on the same HTTP server (ADR 0011). It is
+  // attached after listen because the underlying server only exists then.
+  attachChatGateway(app.getHttpServer() as Server, {
+    service: app.get(ChatService),
+    pool: getPool(),
+    jwtSecret: cfg.JWT_SECRET,
+    allowedOrigins
+  });
   // eslint-disable-next-line no-console
   console.log(`tarlink api listening on :${cfg.PORT}`);
 }

@@ -6,6 +6,7 @@ import '../features/auth/welcome_page.dart';
 import '../features/booking/create_page.dart';
 import '../features/booking/list_page.dart';
 import '../features/booking/status_page.dart';
+import '../features/chat/chat_page.dart';
 import '../features/discovery/favorites_page.dart';
 import '../features/discovery/home_page.dart';
 import '../features/discovery/vendor_page.dart';
@@ -24,6 +25,15 @@ class BookCreateArgs {
   final String packageId;
 }
 
+/// Arguments for `bookingChat`: one thread per booking, with a display title.
+class ChatArgs {
+  const ChatArgs({required this.bookingId, required this.title, this.subtitle});
+
+  final String bookingId;
+  final String title;
+  final String? subtitle;
+}
+
 abstract final class Routes {
   static const welcome = 'welcome';
   static const login = 'login';
@@ -33,6 +43,7 @@ abstract final class Routes {
   static const bookCreate = 'bookCreate';
   static const bookings = 'bookings';
   static const bookingStatus = 'bookingStatus';
+  static const bookingChat = 'bookingChat';
   static const vendorHome = 'vendorHome';
   static const vendorBookingDetail = 'vendorBookingDetail';
   static const vendorBookings = 'vendorBookings';
@@ -69,6 +80,19 @@ abstract final class Routes {
         final arg = settings.arguments;
         if (arg is String && arg.isNotEmpty) {
           return _page(BookingStatusPage(bookingId: arg), settings);
+        }
+        return _page(const LoginPage(), settings);
+      case Routes.bookingChat:
+        final arg = settings.arguments;
+        if (arg is ChatArgs) {
+          return _page(
+            ChatPage(
+              bookingId: arg.bookingId,
+              title: arg.title,
+              subtitle: arg.subtitle,
+            ),
+            settings,
+          );
         }
         return _page(const LoginPage(), settings);
       case Routes.vendorHome:
