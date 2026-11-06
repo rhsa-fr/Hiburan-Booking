@@ -10,9 +10,10 @@ import 'vendor_ui.dart';
 
 /// Create/edit one package. `initial == null` means "new package".
 class VendorPackageEditPage extends StatefulWidget {
-  const VendorPackageEditPage({super.key, this.initial});
+  const VendorPackageEditPage({super.key, this.initial, this.picker});
 
   final Map<String, dynamic>? initial;
+  final VendorMediaPickerFn? picker;
 
   @override
   State<VendorPackageEditPage> createState() => _VendorPackageEditPageState();
@@ -27,6 +28,7 @@ class _VendorPackageEditPageState extends State<VendorPackageEditPage> {
   final _inclusions = TextEditingController();
 
   String? _photoUrl;
+  VendorMediaUpload? _pendingPhoto;
   bool _active = true;
   bool _saving = false;
   bool _uploadingPhoto = false;
@@ -75,13 +77,33 @@ class _VendorPackageEditPageState extends State<VendorPackageEditPage> {
   Future<void> _pickPhoto() async {
     if (_id == null) return;
     setState(() => _uploadingPhoto = true);
-    await pickAndUploadVendorImage(
+    final picker = widget.picker ?? pickAndUploadVendorImage;
+    final result = await picker(
       context,
       kind: 'package_photo',
       packageId: _id,
     );
     if (!mounted) return;
     setState(() => _uploadingPhoto = false);
+
+    switch (result) {
+      case VendorMediaCancelled():
+        break;
+      case VendorMediaFailed(:final message):
+        _notice(message);
+      case VendorMediaUploaded(:final media):
+        setState(() {
+          if (media.isPending) {
+            _pendingPhoto = media;
+          } else {
+            _photoUrl = media.url;
+            _pendingPhoto = null;
+          }
+        });
+        _notice(
+          'Media terkirim. Menunggu tinjauan admin sebelum tampil di profil.',
+        );
+    }
   }
 
   Future<void> _save() async {
@@ -254,20 +276,44 @@ class _VendorPackageEditPageState extends State<VendorPackageEditPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  IgnorePointer(
-                    ignoring: isNew,
-                    child: Opacity(
-                      opacity: isNew ? 0.6 : 1.0,
-                      child: VendorMediaTile(
-                        label: 'Foto utama paket',
-                        url: _photoUrl,
-                        busy: _uploadingPhoto,
-                        height: 150,
-                        onPick: isNew ? null : _pickPhoto,
-                        onClear: isNew ? null : () => setState(() => _photoUrl = null),
+                  () {
+                    final isPending = _pendingPhoto != null;
+                    final displayUrl = isPending ? _pendingPhoto!.url : _photoUrl;
+                    return IgnorePointer(
+                      ignoring: isNew,
+                      child: Opacity(
+                        opacity: isNew ? 0.6 : 1.0,
+                        child: Stack(
+                          children: [
+                            VendorMediaTile(
+                              label: 'Foto utama paket',
+                              url: displayUrl,
+                              busy: _uploadingPhoto,
+                              height: 150,
+                              onPick: isNew ? null : _pickPhoto,
+                              onClear: isNew
+                                  ? null
+                                  : (_photoUrl != null || _pendingPhoto != null)
+                                      ? () => setState(() {
+                                            _photoUrl = null;
+                                            _pendingPhoto = null;
+                                          })
+                                      : null,
+                            ),
+                            if (isPending)
+                              const Positioned(
+                                top: 24,
+                                right: 8,
+                                child: VendorPill(
+                                  label: 'Menunggu tinjauan',
+                                  tone: VendorPillTone.wait,
+                                ),
+                              ),
+                          ],
+                        ),
                       ),
-                    ),
-                  ),
+                    );
+                  }(),
                   const SizedBox(height: 4),
                   Text(
                     isNew

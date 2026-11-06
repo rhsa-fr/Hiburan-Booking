@@ -11,7 +11,9 @@ import 'vendor_ui.dart';
 /// Lets a vendor owner change exactly what customers see on the public page:
 /// identity, service terms, media and gallery. Admin-only fields are read-only.
 class VendorManageProfilePage extends StatefulWidget {
-  const VendorManageProfilePage({super.key});
+  const VendorManageProfilePage({super.key, this.picker});
+
+  final VendorMediaPickerFn? picker;
 
   @override
   State<VendorManageProfilePage> createState() =>
@@ -35,6 +37,10 @@ class _VendorManageProfilePageState extends State<VendorManageProfilePage> {
   String? _avatarUrl;
   String? _bannerUrl;
   final List<String> _photos = [];
+  VendorMediaUpload? _pendingAvatar;
+  VendorMediaUpload? _pendingBanner;
+  final List<VendorMediaUpload> _pendingPhotos = [];
+  final Map<int, VendorMediaUpload> _pendingPhotoReplacements = {};
   bool _uploadingAvatar = false;
   bool _uploadingBanner = false;
   bool _uploadingGallery = false;
@@ -98,6 +104,10 @@ class _VendorManageProfilePageState extends State<VendorManageProfilePage> {
                       .where((value) => value.trim().isNotEmpty)
                 : const <String>[],
           );
+        _pendingAvatar = null;
+        _pendingBanner = null;
+        _pendingPhotos.clear();
+        _pendingPhotoReplacements.clear();
         _loading = false;
       });
     } on ApiException catch (error) {
@@ -178,34 +188,148 @@ class _VendorManageProfilePageState extends State<VendorManageProfilePage> {
 
   Future<void> _pickAvatar() async {
     setState(() => _uploadingAvatar = true);
-    await pickAndUploadVendorImage(context, kind: 'avatar');
+    final picker = widget.picker ?? pickAndUploadVendorImage;
+    final result = await picker(context, kind: 'avatar');
     if (!mounted) return;
     setState(() => _uploadingAvatar = false);
+
+    switch (result) {
+      case VendorMediaCancelled():
+        break;
+      case VendorMediaFailed(:final message):
+        _notice(message);
+      case VendorMediaUploaded(:final media):
+        setState(() {
+          if (media.isPending) {
+            _pendingAvatar = media;
+          } else {
+            _avatarUrl = media.url;
+            _pendingAvatar = null;
+          }
+        });
+        _notice(
+          'Media terkirim. Menunggu tinjauan admin sebelum tampil di profil.',
+        );
+    }
   }
 
   Future<void> _pickBanner() async {
     setState(() => _uploadingBanner = true);
-    await pickAndUploadVendorImage(context, kind: 'banner');
+    final picker = widget.picker ?? pickAndUploadVendorImage;
+    final result = await picker(context, kind: 'banner');
     if (!mounted) return;
     setState(() => _uploadingBanner = false);
+
+    switch (result) {
+      case VendorMediaCancelled():
+        break;
+      case VendorMediaFailed(:final message):
+        _notice(message);
+      case VendorMediaUploaded(:final media):
+        setState(() {
+          if (media.isPending) {
+            _pendingBanner = media;
+          } else {
+            _bannerUrl = media.url;
+            _pendingBanner = null;
+          }
+        });
+        _notice(
+          'Media terkirim. Menunggu tinjauan admin sebelum tampil di profil.',
+        );
+    }
   }
 
   Future<void> _addPhoto() async {
-    if (_photos.length >= 8) {
+    if (_photos.length + _pendingPhotos.length >= 8) {
       _notice('Maksimal 8 foto galeri.');
       return;
     }
     setState(() => _uploadingGallery = true);
-    await pickAndUploadVendorImage(context, kind: 'gallery');
+    final picker = widget.picker ?? pickAndUploadVendorImage;
+    final result = await picker(context, kind: 'gallery');
     if (!mounted) return;
     setState(() => _uploadingGallery = false);
+
+    switch (result) {
+      case VendorMediaCancelled():
+        break;
+      case VendorMediaFailed(:final message):
+        _notice(message);
+      case VendorMediaUploaded(:final media):
+        setState(() {
+          if (media.isPending) {
+            _pendingPhotos.add(media);
+          } else {
+            _photos.add(media.url);
+          }
+        });
+        _notice(
+          'Media terkirim. Menunggu tinjauan admin sebelum tampil di profil.',
+        );
+    }
   }
 
   Future<void> _replacePhoto(int index) async {
+    if (index < 0 || index >= _photos.length) return;
     setState(() => _uploadingGallery = true);
-    await pickAndUploadVendorImage(context, kind: 'gallery');
+    final picker = widget.picker ?? pickAndUploadVendorImage;
+    final result = await picker(context, kind: 'gallery');
     if (!mounted) return;
     setState(() => _uploadingGallery = false);
+
+    switch (result) {
+      case VendorMediaCancelled():
+        break;
+      case VendorMediaFailed(:final message):
+        _notice(message);
+      case VendorMediaUploaded(:final media):
+        setState(() {
+          if (media.isPending) {
+            _pendingPhotoReplacements[index] = media;
+          } else {
+            _photos[index] = media.url;
+            _pendingPhotoReplacements.remove(index);
+          }
+        });
+        _notice(
+          'Media terkirim. Menunggu tinjauan admin sebelum tampil di profil.',
+        );
+    }
+  }
+
+  Widget _buildMediaSlot({
+    required String label,
+    required String? approvedUrl,
+    required VendorMediaUpload? pendingMedia,
+    required bool busy,
+    required double height,
+    required VoidCallback onPick,
+    required VoidCallback? onClear,
+  }) {
+    final isPending = pendingMedia != null;
+    final displayUrl = isPending ? pendingMedia.url : approvedUrl;
+    return Stack(
+      children: [
+        VendorMediaTile(
+          label: label,
+          url: displayUrl,
+          busy: busy,
+          height: height,
+          onPick: onPick,
+          onClear: onClear,
+        ),
+        if (isPending)
+          const Positioned(
+            top: 24,
+            right: 8,
+            child: VendorPill(
+              label: 'Menunggu tinjauan',
+              tone: VendorPillTone.wait,
+            ),
+          ),
+      ],
+    );
   }
 
   void _notice(String message) {
@@ -357,13 +481,19 @@ class _VendorManageProfilePageState extends State<VendorManageProfilePage> {
         VendorCard(
           child: Column(
             children: [
-              VendorMediaTile(
+              _buildMediaSlot(
                 label: 'Avatar vendor',
-                url: _avatarUrl,
+                approvedUrl: _avatarUrl,
+                pendingMedia: _pendingAvatar,
                 busy: _uploadingAvatar,
                 height: 112,
                 onPick: _pickAvatar,
-                onClear: () => setState(() => _avatarUrl = null),
+                onClear: (_avatarUrl != null || _pendingAvatar != null)
+                    ? () => setState(() {
+                          _avatarUrl = null;
+                          _pendingAvatar = null;
+                        })
+                    : null,
               ),
               const SizedBox(height: 4),
               Align(
@@ -374,13 +504,19 @@ class _VendorManageProfilePageState extends State<VendorManageProfilePage> {
                 ),
               ),
               const SizedBox(height: 14),
-              VendorMediaTile(
+              _buildMediaSlot(
                 label: 'Banner halaman',
-                url: _bannerUrl,
+                approvedUrl: _bannerUrl,
+                pendingMedia: _pendingBanner,
                 busy: _uploadingBanner,
                 height: 132,
                 onPick: _pickBanner,
-                onClear: () => setState(() => _bannerUrl = null),
+                onClear: (_bannerUrl != null || _pendingBanner != null)
+                    ? () => setState(() {
+                          _bannerUrl = null;
+                          _pendingBanner = null;
+                        })
+                    : null,
               ),
               const SizedBox(height: 4),
               Align(
@@ -405,27 +541,86 @@ class _VendorManageProfilePageState extends State<VendorManageProfilePage> {
                     spacing: 8,
                     runSpacing: 8,
                     children: [
-                      for (var i = 0; i < _photos.length; i++)
+                      for (var i = 0; i < _photos.length; i++) ...[
+                        () {
+                          final pending = _pendingPhotoReplacements[i];
+                          final isPending = pending != null;
+                          final displayUrl = isPending ? pending.url : _photos[i];
+                          return SizedBox(
+                            width: width,
+                            child: Stack(
+                              children: [
+                                VendorMediaTile(
+                                  label: 'Galeri ${i + 1}',
+                                  url: displayUrl,
+                                  height: 92,
+                                  onPick: () => _replacePhoto(i),
+                                  onClear: () => setState(() {
+                                    if (_pendingPhotoReplacements.containsKey(i)) {
+                                      _pendingPhotoReplacements.remove(i);
+                                    } else {
+                                      _photos.removeAt(i);
+                                      final updated = <int, VendorMediaUpload>{};
+                                      _pendingPhotoReplacements.forEach((key, val) {
+                                        if (key > i) {
+                                          updated[key - 1] = val;
+                                        } else if (key < i) {
+                                          updated[key] = val;
+                                        }
+                                      });
+                                      _pendingPhotoReplacements
+                                        ..clear()
+                                        ..addAll(updated);
+                                    }
+                                  }),
+                                ),
+                                if (isPending)
+                                  const Positioned(
+                                    top: 24,
+                                    right: 8,
+                                    child: VendorPill(
+                                      label: 'Menunggu tinjauan',
+                                      tone: VendorPillTone.wait,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          );
+                        }(),
+                      ],
+                      for (var j = 0; j < _pendingPhotos.length; j++)
+                        SizedBox(
+                          width: width,
+                          child: Stack(
+                            children: [
+                              VendorMediaTile(
+                                label: 'Galeri ${_photos.length + j + 1}',
+                                url: _pendingPhotos[j].url,
+                                height: 92,
+                                onClear: () => setState(() => _pendingPhotos.removeAt(j)),
+                              ),
+                              const Positioned(
+                                top: 24,
+                                right: 8,
+                                child: VendorPill(
+                                  label: 'Menunggu tinjauan',
+                                  tone: VendorPillTone.wait,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      if (_photos.length + _pendingPhotos.length < 8)
                         SizedBox(
                           width: width,
                           child: VendorMediaTile(
-                            label: 'Galeri ${i + 1}',
-                            url: _photos[i],
+                            label: 'Tambah foto',
+                            url: null,
                             height: 92,
-                            onPick: () => _replacePhoto(i),
-                            onClear: () => setState(() => _photos.removeAt(i)),
+                            busy: _uploadingGallery,
+                            onPick: _addPhoto,
                           ),
                         ),
-                      SizedBox(
-                        width: width,
-                        child: VendorMediaTile(
-                          label: 'Tambah foto',
-                          url: null,
-                          height: 92,
-                          busy: _uploadingGallery,
-                          onPick: _addPhoto,
-                        ),
-                      ),
                     ],
                   );
                 },
