@@ -153,11 +153,126 @@ export interface AuthUser {
   roles: string[];
 }
 
-export interface AuthResult {
+/** Full session: satu-satunya bentuk yang boleh disimpan sebagai sesi operator. */
+export interface SessionResult {
   access_token: string;
   token_type: string;
   expires_in: number;
   user: AuthUser;
+}
+
+/** FR-128: kata sandi benar, kode TOTP masih diminta. Belum ada sesi. */
+export interface MfaRequiredResult {
+  mfa_required: true;
+  challenge_token: string;
+  expires_in: number;
+}
+
+/** FR-128: akun admin ini belum punya TOTP; enrollment harus selesai dulu. */
+export interface MfaSetupRequiredResult {
+  mfa_setup_required: true;
+  enroll_token: string;
+  expires_in: number;
+}
+
+/** Semua jawaban `POST /auth/login` dan `POST /auth/google`. */
+export type LoginResult = SessionResult | MfaRequiredResult | MfaSetupRequiredResult;
+
+/** @deprecated Alias lama; login sekarang menjawab `LoginResult`. */
+export type AuthResult = SessionResult;
+
+/** `POST /auth/2fa/enroll`: rahasia hanya ditampilkan sekali. */
+export interface TwoFactorEnrollment {
+  secret: string;
+  otpauth_uri: string;
+  expires_in: number;
+}
+
+/** `POST /auth/2fa/enroll/verify`: sesi penuh plus salinan kode cadangan. */
+export interface TwoFactorEnrolledSession extends SessionResult {
+  backup_codes: string[];
+}
+
+function invalidAuthPayload(): ApiError {
+  return new ApiError('Respons autentikasi tidak dikenali.', 502);
+}
+
+function readAuthUser(value: unknown): AuthUser | null {
+  if (!isRecord(value)) return null;
+  if (typeof value.id !== 'string' || !Array.isArray(value.roles)) return null;
+  const roles = value.roles.filter((role): role is string => typeof role === 'string');
+  if (roles.length !== value.roles.length) return null;
+  if (value.phone !== null && typeof value.phone !== 'string') return null;
+  if (value.email !== undefined && typeof value.email !== 'string') return null;
+  return {
+    id: value.id,
+    phone: value.phone,
+    roles,
+    ...(value.email !== undefined ? { email: value.email } : {})
+  };
+}
+
+function readSessionResult(value: unknown): SessionResult | null {
+  if (!isRecord(value)) return null;
+  if (typeof value.access_token !== 'string' || typeof value.token_type !== 'string') return null;
+  if (typeof value.expires_in !== 'number') return null;
+  const user = readAuthUser(value.user);
+  if (!user) return null;
+  return {
+    access_token: value.access_token,
+    token_type: value.token_type,
+    expires_in: value.expires_in,
+    user
+  };
+}
+
+function requireSessionResult(value: unknown): SessionResult {
+  const session = readSessionResult(value);
+  if (!session) throw invalidAuthPayload();
+  return session;
+}
+
+/** Boundary validation: a 200 with an unknown shape must not become a session. */
+function readLoginResult(value: unknown): LoginResult {
+  if (isRecord(value)) {
+    if (value.mfa_required === true) {
+      if (typeof value.challenge_token !== 'string' || typeof value.expires_in !== 'number') {
+        throw invalidAuthPayload();
+      }
+      return {
+        mfa_required: true,
+        challenge_token: value.challenge_token,
+        expires_in: value.expires_in
+      };
+    }
+    if (value.mfa_setup_required === true) {
+      if (typeof value.enroll_token !== 'string' || typeof value.expires_in !== 'number') {
+        throw invalidAuthPayload();
+      }
+      return {
+        mfa_setup_required: true,
+        enroll_token: value.enroll_token,
+        expires_in: value.expires_in
+      };
+    }
+  }
+  return requireSessionResult(value);
+}
+
+function readEnrollmentResult(value: unknown): TwoFactorEnrollment {
+  if (
+    !isRecord(value) ||
+    typeof value.secret !== 'string' ||
+    typeof value.otpauth_uri !== 'string' ||
+    typeof value.expires_in !== 'number'
+  ) {
+    throw new ApiError('Respons pendaftaran 2FA tidak dikenali.', 502);
+  }
+  return {
+    secret: value.secret,
+    otpauth_uri: value.otpauth_uri,
+    expires_in: value.expires_in
+  };
 }
 
 /** True when a Google OAuth client id is configured for the browser. */
@@ -170,21 +285,74 @@ export function googleClientId(): string {
 }
 
 /** Email + password. Dipakai panel admin; API memakai prefix `/v1`. */
-export async function loginWithPassword(email: string, password: string): Promise<AuthResult> {
-  const response = await apiFetch<{ data: AuthResult }>('/v1/auth/login', {
+export async function loginWithPassword(email: string, password: string): Promise<LoginResult> {
+  const response = await apiFetch<{ data: unknown }>('/v1/auth/login', {
     method: 'POST',
     body: JSON.stringify({ email, password })
   });
-  return response.data;
+  return readLoginResult(response.data);
 }
 
 /** Google Sign-In: kirim ID token dari Google Identity Services. */
-export async function loginWithGoogle(idToken: string): Promise<AuthResult> {
-  const response = await apiFetch<{ data: AuthResult }>('/v1/auth/google', {
+export async function loginWithGoogle(idToken: string): Promise<LoginResult> {
+  const response = await apiFetch<{ data: unknown }>('/v1/auth/google', {
     method: 'POST',
     body: JSON.stringify({ id_token: idToken })
   });
-  return response.data;
+  return readLoginResult(response.data);
+}
+
+/** FR-128 langkah 2: tukar challenge + kode TOTP menjadi sesi penuh. */
+export async function verifyTwoFactor(
+  challengeToken: string,
+  code: string
+): Promise<SessionResult> {
+  const response = await apiFetch<{ data: unknown }>('/v1/auth/2fa/verify', {
+    method: 'POST',
+    body: JSON.stringify({ challenge_token: challengeToken, code })
+  });
+  return requireSessionResult(response.data);
+}
+
+/** Jalur cadangan saat aplikasi autentikator tidak bisa diakses. */
+export async function verifyBackupCode(
+  challengeToken: string,
+  code: string
+): Promise<SessionResult> {
+  const response = await apiFetch<{ data: unknown }>('/v1/auth/2fa/backup-code', {
+    method: 'POST',
+    body: JSON.stringify({ challenge_token: challengeToken, code })
+  });
+  return requireSessionResult(response.data);
+}
+
+/** FR-128 langkah 1 enrollment: rahasia base32 + URI `otpauth://`. */
+export async function startTwoFactorEnrollment(
+  enrollToken: string
+): Promise<TwoFactorEnrollment> {
+  const response = await apiFetch<{ data: unknown }>('/v1/auth/2fa/enroll', {
+    method: 'POST',
+    body: JSON.stringify({ enroll_token: enrollToken })
+  });
+  return readEnrollmentResult(response.data);
+}
+
+/** Langkah 2: aktifkan TOTP, terbitkan sesi, dan tampilkan kode cadangan sekali. */
+export async function completeTwoFactorEnrollment(
+  enrollToken: string,
+  code: string
+): Promise<TwoFactorEnrolledSession> {
+  const response = await apiFetch<{ data: unknown }>('/v1/auth/2fa/enroll/verify', {
+    method: 'POST',
+    body: JSON.stringify({ enroll_token: enrollToken, code })
+  });
+  const session = requireSessionResult(response.data);
+  if (!isRecord(response.data)) throw invalidAuthPayload();
+  const rawCodes = response.data.backup_codes;
+  if (!Array.isArray(rawCodes)) throw invalidAuthPayload();
+  const backupCodes = rawCodes.filter((item): item is string => typeof item === 'string');
+  if (backupCodes.length !== rawCodes.length) throw invalidAuthPayload();
+  return { ...session, backup_codes: backupCodes };
 }
 
 /** Peran yang boleh membuka panel operasi. */

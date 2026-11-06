@@ -86,6 +86,100 @@ export function clearSession(): void {
   }
 }
 
+/* -------------------------------------------------------------------------- */
+/* Tiket handoff 2FA (FR-128)                                                 */
+/* -------------------------------------------------------------------------- */
+
+const MFA_KEY = 'tarlink.admin.mfa';
+
+export type MfaTicketKind = 'verify' | 'enroll';
+
+/** Tiket diterima dari `POST /auth/login` lalu dipakai halaman 2FA. */
+export interface MfaTicketInput {
+  kind: MfaTicketKind;
+  token: string;
+  /** `expires_in` dari API, dalam detik. */
+  expiresIn: number;
+}
+
+export interface MfaTicket {
+  kind: MfaTicketKind;
+  token: string;
+  /** Epoch ms. Tiket yang sudah lewat dianggap tidak ada. */
+  expires_at: number;
+}
+
+/**
+ * Tiket hanya hidup di tab ini dan hanya sampai API menyatakan kedaluwarsa.
+ * Access token tidak pernah disimpan di sini: sesi baru dibuat setelah kode sah.
+ */
+export function saveMfaTicket(input: MfaTicketInput): void {
+  if (!isBrowser()) return;
+  const ticket: MfaTicket = {
+    kind: input.kind,
+    token: input.token,
+    expires_at: Date.now() + input.expiresIn * 1000
+  };
+  try {
+    window.sessionStorage.setItem(MFA_KEY, JSON.stringify(ticket));
+  } catch {
+    // Penyimpanan diblokir: halaman 2FA akan mengalihkan kembali ke /login.
+  }
+}
+
+export function readMfaTicket(): MfaTicket | null {
+  if (!isBrowser()) return null;
+  let raw: string | null;
+  try {
+    raw = window.sessionStorage.getItem(MFA_KEY);
+  } catch {
+    return null;
+  }
+  if (!raw) return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    clearMfaTicket();
+    return null;
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    clearMfaTicket();
+    return null;
+  }
+
+  const record = parsed as Record<string, unknown>;
+  const kind = record.kind;
+  if (kind !== 'verify' && kind !== 'enroll') {
+    clearMfaTicket();
+    return null;
+  }
+  if (typeof record.token !== 'string' || record.token.length === 0) {
+    clearMfaTicket();
+    return null;
+  }
+  if (typeof record.expires_at !== 'number' || !Number.isFinite(record.expires_at)) {
+    clearMfaTicket();
+    return null;
+  }
+  if (record.expires_at <= Date.now()) {
+    clearMfaTicket();
+    return null;
+  }
+
+  return { kind, token: record.token, expires_at: record.expires_at };
+}
+
+export function clearMfaTicket(): void {
+  if (!isBrowser()) return;
+  try {
+    window.sessionStorage.removeItem(MFA_KEY);
+  } catch {
+    // Tidak ada yang bisa dibersihkan.
+  }
+}
+
 /** Peran internal dibaca sebagai bahasa sehari-hari, bukan kode basis data. */
 export function roleLabel(role: string): string {
   switch (role) {
