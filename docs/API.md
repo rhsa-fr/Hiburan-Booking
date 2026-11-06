@@ -35,7 +35,8 @@ otomatis bila ada.
 ```
 
 Kode status yang dipakai: `400` validasi, `401` sesi tidak sah, `403` peran kurang,
-`404` tidak ada, `409` konflik status/jadwal, `422` aturan bisnis, `500` server.
+`404` tidak ada, `409` konflik status/jadwal, `422` aturan bisnis, `429` percobaan
+berlebih, `500` server.
 
 **Pagination**
 
@@ -73,28 +74,89 @@ dan sebagai guard unik per pelanggan.
 | Method | Path | Body | Keterangan |
 |---|---|---|---|
 | POST | `/auth/register` | `{ full_name, email, phone, password, consent: { tos_version_id, privacy_version_id } }` | Membuat akun pelanggan + mencatat consent |
-| POST | `/auth/login` | `{ email, password }` | **Email**, bukan nomor WA |
+| POST | `/auth/login` | `{ email, password }` | **Email**, bukan nomor WA; akun `admin_*` menerima challenge 2FA, bukan sesi |
 | POST | `/auth/otp/request` | `{ email }` | Kirim OTP ke email (dev mengembalikan `dev_code` hanya bila `NODE_ENV !== production` **dan** `OTP_DEV_MODE=true`) |
-| POST | `/auth/otp/verify` | `{ email, code }` | Verifikasi OTP |
-| POST | `/auth/google` | `{ id_token }` | Login Google (opsional, tidak dipakai mobile) |
+| POST | `/auth/otp/verify` | `{ email, code }` | Verifikasi OTP; akun `admin_*` juga melewati gerbang 2FA |
+| POST | `/auth/google` | `{ id_token }` | Login Google (opsional, tidak dipakai mobile); akun `admin_*` juga melewati gerbang 2FA |
+| POST | `/auth/2fa/verify` | `{ challenge_token, code }` | Langkah 2 login admin: tukar ticket + TOTP 6 digit jadi sesi |
+| POST | `/auth/2fa/backup-code` | `{ challenge_token, code }` | Sama, memakai satu backup code (`XXXX-XXXX`, sekali pakai) |
+| POST | `/auth/2fa/enroll` | `{ enroll_token }` | Langkah 1 enrollment: `secret` + `otpauth_uri` (entri manual, tanpa QR) |
+| POST | `/auth/2fa/enroll/verify` | `{ enroll_token, code }` | Langkah 2 enrollment: aktifkan TOTP, sesi + `backup_codes` (tampil sekali) |
+| POST | `/auth/2fa/reset` | `{ user_id }` | `admin_super` menghapus 2FA admin lain dan mencabut semua sesinya |
 | POST | `/auth/refresh` | `{ refresh_token }` | Rotasi sesi; tanpa body memakai Bearer lama (legacy) |
 | POST | `/auth/logout` | `{ refresh_token? }` | Mencabut sesi; tanpa body memakai Bearer |
 | GET | `/auth/me` | — | Profil + peran pengguna |
 | DELETE | `/auth/me` | `{ confirm: "HAPUS AKUN", reason? }` | Hapus akun mandiri (anonimisasi, FR-101) |
 | GET | `/auth/account-deletion` | — | Status permintaan hapus akun terbaru |
 
-Respons login (dibungkus `data`):
+Respons login (dibungkus `data`) bisa berbentuk **sesi** atau **challenge 2FA**.
+Pelanggan dan vendor menerima sesi seperti sebelumnya:
 
 ```json
 {
   "data": {
     "access_token": "…",
     "refresh_token": "…",
+    "token_type": "Bearer",
     "expires_in": 900,
-    "user": { "id": "uuid", "email": "…", "phone": "+62…", "full_name": "…", "roles": ["customer"] }
+    "user": { "id": "uuid", "phone": "+62…", "roles": ["customer"], "email": "…" }
   }
 }
 ```
+
+`user.email` hanya ada pada login password/Google dan penyelesaian 2FA. `user` tidak
+memuat `full_name`; profil lengkap ada di `GET /auth/me`.
+
+Akun dengan peran `admin_*` **tidak pernah** menerima sesi langsung dari login. Gerbang
+2FA berlaku untuk semua jalur login (password, OTP, Google), sehingga `admin_*` menerima
+salah satu dari dua bentuk berikut:
+
+```json
+{ "data": { "mfa_required": true, "challenge_token": "…", "expires_in": 600 } }
+```
+
+```json
+{ "data": { "mfa_setup_required": true, "enroll_token": "…", "expires_in": 600 } }
+```
+
+`mfa_required` berarti TOTP sudah aktif dan login menunggu kode; `mfa_setup_required`
+berarti admin belum enrollment dan harus menyelesaikannya lebih dulu. Ticket `verify`
+dan `enroll` sama-sama berlaku 10 menit dan hanya sekali pakai; token yang salah jenis
+(mis. `enroll_token` dikirim ke `/auth/2fa/verify`) dijawab `401` seperti token tidak
+dikenal.
+
+**Alur 2FA admin (FR-128).** `POST /auth/2fa/verify` menukar `challenge_token` + kode
+TOTP 6 digit menjadi sesi dengan bentuk yang sama seperti login biasa (termasuk
+`refresh_token`). `401 UNAUTHENTICATED` untuk ticket tidak sah/kedaluwarsa/sudah dipakai
+atau kode salah; `429 RATE_LIMITED` setelah 6 tebakan salah pada satu ticket, atau bila
+budget 10 kegagalan dalam 15 menit untuk email/IP yang sama sudah habis.
+`POST /auth/2fa/backup-code` memakai kode cadangan `XXXX-XXXX` (dash dan huruf
+besar/kecil dinormalisasi server); setiap kode hanya berlaku sekali.
+
+`POST /auth/2fa/enroll` adalah langkah 1 dan hanya butuh `enroll_token` — tanpa bearer,
+karena ticket itu sendiri kredensialnya. Respons:
+
+```json
+{ "data": { "secret": "…", "otpauth_uri": "otpauth://totp/…", "expires_in": 600 } }
+```
+
+Server tidak mengirim QR: klien menampilkan `secret` untuk entri manual atau merender
+`otpauth_uri` sendiri. `expires_in` adalah sisa umur ticket, bukan TTL baru. Bila 2FA
+sudah aktif, endpoint ini menjawab `409 CONFLICT`.
+
+`POST /auth/2fa/enroll/verify` adalah langkah 2: mengaktifkan TOTP, menerbitkan sesi, dan
+mengembalikan `backup_codes` (10 kode sekali pakai) **hanya pada respons ini**. Kode
+salah → `401`, batas tebakan habis → `429`, 2FA sudah aktif → `409`.
+
+`POST /auth/2fa/reset` hanya untuk `admin_super`; peran admin lain `403 FORBIDDEN`.
+Body `{ user_id }`, respons `{ "user_id": "uuid", "revoked_sessions": 2 }`. TOTP, backup
+code, dan ticket target dihapus, semua sesi target dicabut, dan tindakan dicatat di
+`audit_logs` dengan aksi `auth.2fa.reset` (header `x-request-id` ikut disimpan bila
+dikirim). Target yang bukan admin aktif dijawab `404 NOT_FOUND`.
+
+Enrollment dan verifikasi TOTP membutuhkan `TOTP_ENCRYPTION_KEY` (base64 dari 32 byte;
+`TOTP_ENCRYPTION_KEY_PREVIOUS` untuk rotasi). Tanpa kunci itu server gagal tertutup:
+`500 INTERNAL_ERROR` dan tidak ada secret yang tersimpan.
 
 `GET /auth/me` mengembalikan `{ "data": { "user": { id, phone, email, full_name,
 roles, created_at } } }`. Peran diambil dari database, bukan dari isi token.
@@ -332,10 +394,23 @@ Konflik status → `409`.
 
 ### `POST /bookings/:id/disputes`
 
-FR-056: pelanggan atau vendor membuka sengketa sendiri di dalam **7 hari setelah
-acara** (`dispute_window_ends_at` = `scheduled_end_at` + 7 hari). Wajib bearer token
-pemilik booking (`customer`) atau vendor yang berwenang (`vendor_owner`). Admin
-**tidak** memakai endpoint ini; admin menangani antrean `/admin/disputes`.
+FR-056: pelanggan atau vendor membuka sengketa sendiri. Ada dua jendela, ditentukan
+oleh status settlement booking:
+
+| Kondisi | Jendela | Aktor (state machine) |
+|---|---|---|
+| settlement `held` (sebelum rilis) | `dispute_window_ends_at` = `scheduled_end_at` + **7 hari** | `customer`, `vendor_owner`, `admin_support` (S-04) |
+| settlement `released` (setelah rilis) | `released_at` + **30 hari** (klaim clawback) | `customer`, `admin_support` (S-08) |
+
+Jendela pra-rilis dihitung dari **akhir acara**, bukan dari `completed_at`. Jendela
+pasca-rilis dihitung dari waktu dana dirilis (`released_at`), bukan dari tanggal acara;
+setelah 30 hari lewat, klaim ditolak `409 CONFLICT`.
+
+Endpoint ini menerima peran `customer` dan `vendor_owner`. Pada booking yang sudah
+`released` hanya `customer` yang bisa membuka sengketa, karena S-08 tidak memuat
+`vendor_owner` sehingga vendor dijawab `409`. `admin_support` adalah aktor sah pada S-04
+dan S-08 di state machine, tetapi belum ada endpoint HTTP untuknya — admin menangani
+sengketa yang sudah ada lewat antrean `/admin/disputes`.
 
 ```json
 {
@@ -371,9 +446,9 @@ Efeknya, dalam satu transaksi: settlement `held` → `disputed`
 satu baris riwayat, dan outbox `booking.dispute_opened`. Baris sengketa memakai
 SLA admin **72 jam** (`sla_due_at = opened_at + 72 jam`).
 
-`409 CONFLICT` bila: jendela 7 hari sudah lewat, settlement bukan `held`/`released`,
-atau sudah ada sengketa aktif untuk booking tersebut. `403 FORBIDDEN` bila pemanggil
-bukan peserta booking.
+`409 CONFLICT` bila: jendela yang berlaku sudah lewat (7 hari pra-rilis atau 30 hari
+pasca-rilis), settlement bukan `held`/`released`, atau sudah ada sengketa aktif untuk
+booking tersebut. `403 FORBIDDEN` bila pemanggil bukan peserta booking.
 
 ### `GET /bookings/:id/disputes`
 
