@@ -43,7 +43,12 @@ function row(overrides: Partial<BankAccountRow> = {}): BankAccountRow {
 }
 
 class FakeRepo {
-  readonly vendor: VendorRef = { id: 'vendor-1', display_name: 'Vendor Satu', is_active: true };
+  readonly vendor: VendorRef = {
+    id: 'vendor-1',
+    display_name: 'Vendor Satu',
+    is_active: true,
+    verification_status: 'approved'
+  };
   readonly settings: Record<string, number> = { bank_cooling_hours: 24 };
   inserted: NewBankAccount | null = null;
   revivedWith: NewBankAccount | null = null;

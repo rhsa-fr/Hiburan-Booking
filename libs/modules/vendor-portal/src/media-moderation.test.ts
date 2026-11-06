@@ -54,8 +54,10 @@ describe('Media Moderation', () => {
     mockVendorPortalService = {
       requireVendor: vi.fn().mockResolvedValue({
         id: VENDOR_ID,
-        owner_user_id: USER_ID
-      })
+        owner_user_id: USER_ID,
+        verification_status: 'approved'
+      }),
+      assertVendorCanEditCatalogue: vi.fn()
     };
 
     mockMediaService = {
@@ -657,7 +659,11 @@ describe('Media Moderation', () => {
         findApprovedUrls: vi.fn().mockResolvedValue(new Set(approvedUrls))
       };
       const repoStub = {
-        findVendorByOwner: vi.fn().mockResolvedValue({ id: VENDOR_ID, owner_user_id: USER_ID })
+        findVendorByOwner: vi.fn().mockResolvedValue({
+          id: VENDOR_ID,
+          owner_user_id: USER_ID,
+          verification_status: 'approved'
+        })
       };
       const service = new VendorPortalService(
         repoStub as any,

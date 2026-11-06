@@ -3,19 +3,24 @@ import { AppError } from '@tarlink/core/errors';
 import type { CatalogService } from '@tarlink/modules/catalog';
 import { MEDIA_NOT_APPROVED_CODE } from './media.contracts';
 import { MediaRepository } from './media.repository';
-import { VendorPortalRepository } from './vendor-portal.repository';
+import type { MediaService } from './media.service';
+import { VendorPortalController } from './vendor-portal.controller';
+import { VendorPortalRepository, type VendorPortalVendorRow } from './vendor-portal.repository';
 import { VendorPortalService } from './vendor-portal.service';
 
 const USER_ID = '11111111-1111-4111-8111-111111111111';
 const VENDOR_ID = '22222222-2222-4222-8222-222222222222';
 const BOOKING_ID = '33333333-3333-4333-8333-333333333333';
+const MEDIA_ID = '44444444-4444-4444-8444-444444444444';
 
-const MOCK_VENDOR = {
+const MOCK_VENDOR: VendorPortalVendorRow = {
   id: VENDOR_ID,
   display_name: 'Tarling Dangdut Pantura',
   slug: 'tarling-dangdut-pantura',
   region_code: '32.09',
   verification_status: 'approved',
+  suspension_reason: null,
+  suspended_at: null,
   is_active: true,
   calendar_updated_at: new Date('2026-05-01T00:00:00Z'),
   legal_name: null,
@@ -32,6 +37,13 @@ const MOCK_VENDOR = {
   whatsapp: null
 };
 
+const MOCK_SUSPENDED_VENDOR: VendorPortalVendorRow = {
+  ...MOCK_VENDOR,
+  verification_status: 'suspended',
+  suspension_reason: 'Melanggar ketentuan katalog vendor',
+  suspended_at: new Date('2026-05-10T10:00:00Z')
+};
+
 function createService(
   repoOverrides: Partial<VendorPortalRepository> = {},
   mediaRepoOverrides: Partial<MediaRepository> = {}
@@ -41,6 +53,9 @@ function createService(
   const mediaRepo = new MediaRepository();
   Object.assign(mediaRepo, {
     findApprovedUrls: vi.fn().mockResolvedValue(new Set()),
+    insertSubmission: vi.fn().mockResolvedValue({ id: MEDIA_ID, status: 'pending' }),
+    findById: vi.fn().mockResolvedValue(null),
+    deleteById: vi.fn().mockResolvedValue(undefined),
     ...mediaRepoOverrides
   });
   const catalog = {
@@ -60,6 +75,27 @@ function createService(
     catalog,
     mediaRepo
   };
+}
+
+function createController(
+  repoOverrides: Partial<VendorPortalRepository> = {},
+  mediaRepoOverrides: Partial<MediaRepository> = {},
+  mediaServiceOverrides: Partial<MediaService> = {}
+) {
+  const { service, repo, catalog, mediaRepo } = createService(repoOverrides, mediaRepoOverrides);
+  const mediaService = {
+    save: vi.fn().mockResolvedValue({
+      url: 'http://localhost:3001/v1/media/test-file.jpg',
+      filename: 'test-file.jpg'
+    }),
+    ...mediaServiceOverrides
+  };
+  const controller = new VendorPortalController(
+    service,
+    mediaService as unknown as MediaService,
+    mediaRepo
+  );
+  return { controller, service, repo, catalog, mediaRepo, mediaService };
 }
 
 describe('VendorPortalService', () => {
@@ -413,6 +449,232 @@ describe('VendorPortalService', () => {
       await service.updateMe(USER_ID, { avatar_url: null, photo_urls: [] });
       expect(mediaRepo.findApprovedUrls).not.toHaveBeenCalled();
       expect(update).toHaveBeenCalled();
+    });
+  });
+
+  describe('FR-132: Vendor suspension', () => {
+    const mockUser = { id: USER_ID, roles: ['vendor_owner'] as any };
+    const mockReq = { protocol: 'http', get: () => 'localhost' } as any;
+    const mockFile = {
+      fieldname: 'file',
+      originalname: 'photo.jpg',
+      encoding: '7bit',
+      mimetype: 'image/jpeg',
+      buffer: Buffer.from('test-image'),
+      size: 100
+    } as any;
+    const mockUploadBody = {
+      kind: 'gallery',
+      license_statement: 'Saya pemilik hak cipta foto ini'
+    };
+    const mockLinkBody = {
+      kind: 'video',
+      url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+      license_statement: 'Saya pemilik hak cipta video ini'
+    };
+
+    describe('blocked writes for suspended vendor', () => {
+      it('blocks createPackage with CONFLICT error', async () => {
+        const { service, catalog } = createService({
+          findVendorByOwner: vi.fn().mockResolvedValue(MOCK_SUSPENDED_VENDOR)
+        });
+
+        await expect(
+          service.createPackage(USER_ID, {
+            name: 'Paket Dangdut',
+            duration_minutes: 180,
+            base_price_idr: 4000000
+          })
+        ).rejects.toMatchObject({
+          code: 'CONFLICT',
+          message: 'Vendor sedang ditangguhkan; perubahan katalog dibekukan.'
+        });
+        expect(catalog.createPackage).not.toHaveBeenCalled();
+      });
+
+      it('blocks updatePackage with CONFLICT error', async () => {
+        const { service, catalog } = createService({
+          findVendorByOwner: vi.fn().mockResolvedValue(MOCK_SUSPENDED_VENDOR)
+        });
+
+        await expect(
+          service.updatePackage(USER_ID, 'pkg-uuid-1', {
+            name: 'Paket Dangdut Baru'
+          })
+        ).rejects.toMatchObject({
+          code: 'CONFLICT',
+          message: 'Vendor sedang ditangguhkan; perubahan katalog dibekukan.'
+        });
+        expect(catalog.updatePackage).not.toHaveBeenCalled();
+      });
+
+      it('blocks deletePackage with CONFLICT error', async () => {
+        const { service, catalog } = createService({
+          findVendorByOwner: vi.fn().mockResolvedValue(MOCK_SUSPENDED_VENDOR)
+        });
+
+        await expect(
+          service.deletePackage(USER_ID, 'pkg-uuid-1')
+        ).rejects.toMatchObject({
+          code: 'CONFLICT',
+          message: 'Vendor sedang ditangguhkan; perubahan katalog dibekukan.'
+        });
+        expect(catalog.deletePackage).not.toHaveBeenCalled();
+      });
+
+      it('blocks media upload (POST /vendor/media) with CONFLICT error', async () => {
+        const { controller, mediaService, mediaRepo } = createController({
+          findVendorByOwner: vi.fn().mockResolvedValue(MOCK_SUSPENDED_VENDOR)
+        });
+
+        await expect(
+          controller.upload(mockFile, mockUploadBody, mockReq, mockUser)
+        ).rejects.toMatchObject({
+          code: 'CONFLICT',
+          message: 'Vendor sedang ditangguhkan; perubahan katalog dibekukan.'
+        });
+        expect(mediaService.save).not.toHaveBeenCalled();
+        expect(mediaRepo.insertSubmission).not.toHaveBeenCalled();
+      });
+
+      it('blocks media link (POST /vendor/media/link) with CONFLICT error', async () => {
+        const { controller, mediaRepo } = createController({
+          findVendorByOwner: vi.fn().mockResolvedValue(MOCK_SUSPENDED_VENDOR)
+        });
+
+        await expect(
+          controller.createMediaLink(mockLinkBody, mockUser)
+        ).rejects.toMatchObject({
+          code: 'CONFLICT',
+          message: 'Vendor sedang ditangguhkan; perubahan katalog dibekukan.'
+        });
+        expect(mediaRepo.insertSubmission).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('allowed portal access for suspended vendor', () => {
+      it('succeeds on getMe and returns suspension_reason and suspended_at', async () => {
+        const { service } = createService({
+          findVendorByOwner: vi.fn().mockResolvedValue(MOCK_SUSPENDED_VENDOR)
+        });
+
+        const me = await service.getMe(USER_ID);
+        expect(me.verification_status).toBe('suspended');
+        expect(me.suspension_reason).toBe('Melanggar ketentuan katalog vendor');
+        expect(me.suspended_at).toEqual(MOCK_SUSPENDED_VENDOR.suspended_at);
+      });
+
+      it('succeeds on listPackages', async () => {
+        const mockPackages = { items: [{ id: 'pkg-1', name: 'Paket Lama' }] };
+        const { service, catalog } = createService({
+          findVendorByOwner: vi.fn().mockResolvedValue(MOCK_SUSPENDED_VENDOR)
+        });
+        catalog.listPackages.mockResolvedValue(mockPackages as any);
+
+        const res = await service.listPackages(USER_ID);
+        expect(res).toEqual(mockPackages);
+        expect(catalog.listPackages).toHaveBeenCalledWith(VENDOR_ID);
+      });
+
+      it('succeeds on listBookings so in-flight bookings can finish', async () => {
+        const { service, repo } = createService({
+          findVendorByOwner: vi.fn().mockResolvedValue(MOCK_SUSPENDED_VENDOR),
+          listBookings: vi.fn().mockResolvedValue([])
+        });
+
+        const res = await service.listBookings(USER_ID, 1, 20);
+        expect(res.items).toEqual([]);
+        expect(repo.listBookings).toHaveBeenCalledWith(VENDOR_ID, null, 20, 0);
+      });
+
+      it('succeeds on updateCalendar (writeCalendar)', async () => {
+        const { service, catalog } = createService({
+          findVendorByOwner: vi.fn().mockResolvedValue(MOCK_SUSPENDED_VENDOR)
+        });
+        catalog.writeCalendar.mockResolvedValue({ updated: 2 } as any);
+
+        const res = await service.writeCalendar(USER_ID, {
+          from: '2026-11-01',
+          to: '2026-11-02',
+          status: 'available',
+          sessions: ['day', 'night']
+        });
+        expect(res).toEqual({ updated: 2 });
+        expect(catalog.writeCalendar).toHaveBeenCalledWith(
+          VENDOR_ID,
+          expect.objectContaining({ status: 'available' }),
+          USER_ID,
+          'vendor'
+        );
+      });
+
+      it('succeeds on deleteMedia so vendor can remove problematic media', async () => {
+        const { controller, mediaRepo } = createController(
+          {
+            findVendorByOwner: vi.fn().mockResolvedValue(MOCK_SUSPENDED_VENDOR)
+          },
+          {
+            findById: vi.fn().mockResolvedValue({
+              id: MEDIA_ID,
+              vendor_id: VENDOR_ID,
+              status: 'pending'
+            }),
+            deleteById: vi.fn().mockResolvedValue(undefined)
+          }
+        );
+
+        await expect(controller.deleteMedia(MEDIA_ID, mockUser)).resolves.toBeUndefined();
+        expect(mediaRepo.deleteById).toHaveBeenCalledWith(MEDIA_ID);
+      });
+    });
+
+    describe('non-suspended vendor unaffected', () => {
+      it('allows createPackage, updatePackage, and deletePackage', async () => {
+        const { service, catalog } = createService({
+          findVendorByOwner: vi.fn().mockResolvedValue(MOCK_VENDOR)
+        });
+        catalog.createPackage.mockResolvedValue({ id: 'pkg-1' } as any);
+        catalog.updatePackage.mockResolvedValue({ id: 'pkg-1' } as any);
+        catalog.deletePackage.mockResolvedValue(undefined);
+
+        await expect(
+          service.createPackage(USER_ID, {
+            name: 'Paket Asli',
+            duration_minutes: 120,
+            base_price_idr: 3000000
+          })
+        ).resolves.toEqual({ id: 'pkg-1' });
+
+        await expect(
+          service.updatePackage(USER_ID, 'pkg-1', {
+            name: 'Paket Asli Revisi'
+          })
+        ).resolves.toEqual({ id: 'pkg-1' });
+
+        await expect(
+          service.deletePackage(USER_ID, 'pkg-1')
+        ).resolves.toBeUndefined();
+      });
+
+      it('allows upload and createMediaLink', async () => {
+        const mockSubmission = { id: MEDIA_ID, status: 'pending' };
+        const { controller, mediaService, mediaRepo } = createController(
+          {
+            findVendorByOwner: vi.fn().mockResolvedValue(MOCK_VENDOR)
+          },
+          {
+            insertSubmission: vi.fn().mockResolvedValue(mockSubmission as any)
+          }
+        );
+
+        const uploadRes = await controller.upload(mockFile, mockUploadBody, mockReq, mockUser);
+        expect(uploadRes).toEqual({ data: { media: mockSubmission } });
+        expect(mediaService.save).toHaveBeenCalled();
+
+        const linkRes = await controller.createMediaLink(mockLinkBody, mockUser);
+        expect(linkRes).toEqual({ data: { media: mockSubmission } });
+        expect(mediaRepo.insertSubmission).toHaveBeenCalled();
+      });
     });
   });
 });

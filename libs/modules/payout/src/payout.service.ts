@@ -294,13 +294,16 @@ export class PayoutService {
     ]);
 
     const amount = sumIdr(bookings);
-    const reason = this.eligibilityReason({
-      hasBookings: bookings.length > 0,
-      account,
-      amount,
-      ledger,
-      minimum
-    });
+    const reason =
+      vendor.verification_status === 'suspended'
+        ? 'Vendor sedang ditangguhkan; pencairan dibekukan.'
+        : this.eligibilityReason({
+            hasBookings: bookings.length > 0,
+            account,
+            amount,
+            ledger,
+            minimum
+          });
 
     return {
       vendor_id: vendor.id,
@@ -350,6 +353,9 @@ export class PayoutService {
           if (!vendor) throw new AppError('NOT_FOUND', 'Vendor tidak ditemukan.');
           if (!vendor.is_active) {
             throw new AppError('CONFLICT', 'Vendor sedang tidak aktif.');
+          }
+          if (vendor.verification_status === 'suspended') {
+            throw new AppError('CONFLICT', 'Vendor sedang ditangguhkan; pencairan dibekukan.');
           }
 
           const now = this.clock.now();
@@ -483,6 +489,11 @@ export class PayoutService {
               'CONFLICT',
               'Saldo vendor_payable tidak mencukupi saat persetujuan. Muat ulang lalu buat payout baru.'
             );
+          }
+
+          const vendor = await this.deps.repository.lockVendor(client, row.vendor_id);
+          if (vendor?.verification_status === 'suspended') {
+            throw new AppError('CONFLICT', 'Vendor sedang ditangguhkan; pencairan dibekukan.');
           }
 
           const now = this.clock.now();
@@ -642,6 +653,7 @@ export class PayoutService {
   /* ---------------------------------------------------------------- worker */
 
   async reconcile(batch: number): Promise<ReconcileStats> {
+    // Obligations already approved must settle even if vendor is suspended (FR-132).
     const rows = await this.deps.repository.reconcileCandidates(this.deps.gateway.name, batch);
     let processed = 0;
     let skipped = 0;
@@ -703,6 +715,7 @@ export class PayoutService {
   /* --------------------------------------------------------------- private */
 
   private async retryCreate(row: PayoutRow): Promise<boolean> {
+    // Obligations already approved must settle even if vendor is suspended (FR-132).
     const account = await this.deps.bankAccounts.findSecretByIdAnyVendor(row.bank_account_id);
     if (!account) {
       this.log(`payout_reconcile skipped=1 payout=${row.id} reason=bank_account_missing`);

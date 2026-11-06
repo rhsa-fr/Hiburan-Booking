@@ -105,7 +105,12 @@ class FakePayoutRepository {
     approval_threshold_idr: 1_000_000,
     bank_cooling_hours: 24
   };
-  readonly vendor = { id: 'vendor-1', display_name: 'Vendor Satu', is_active: true };
+  readonly vendor = {
+    id: 'vendor-1',
+    display_name: 'Vendor Satu',
+    is_active: true,
+    verification_status: 'approved'
+  };
   bookings: EligibleBookingRow[] = [];
   initialPayable = 0n;
   readonly payouts = new Map<string, PayoutRow>();

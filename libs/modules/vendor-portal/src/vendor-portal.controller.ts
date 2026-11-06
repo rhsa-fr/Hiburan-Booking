@@ -80,6 +80,7 @@ export class VendorPortalController {
       throw new AppError('VALIDATION_ERROR', 'package_id hanya boleh diisi untuk jenis package_photo');
     }
     const vendor = await this.svc.requireVendor(user.sub ?? user.id);
+    this.svc.assertVendorCanEditCatalogue(vendor);
     if (fields.kind === 'package_photo' && fields.package_id) {
       const owns = await this.mediaRepo.packageBelongsToVendor(fields.package_id, vendor.id);
       if (!owns) {
@@ -130,6 +131,7 @@ export class VendorPortalController {
       throw new AppError('VALIDATION_ERROR', 'package_id hanya boleh diisi untuk jenis package_photo');
     }
     const vendor = await this.svc.requireVendor(user.sub ?? user.id);
+    this.svc.assertVendorCanEditCatalogue(vendor);
     if (input.kind === 'package_photo' && input.package_id) {
       const owns = await this.mediaRepo.packageBelongsToVendor(input.package_id, vendor.id);
       if (!owns) {

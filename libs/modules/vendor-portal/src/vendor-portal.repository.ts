@@ -23,6 +23,8 @@ export interface VendorPortalVendorRow {
   slug: string;
   region_code: string;
   verification_status: string;
+  suspension_reason: string | null;
+  suspended_at: Date | string | null;
   is_active: boolean;
   calendar_updated_at: Date | string | null;
   legal_name: string | null;
@@ -150,6 +152,8 @@ const VENDOR_PROFILE_COLUMNS = `
   v.slug,
   v.region_code,
   v.verification_status::text AS verification_status,
+  v.suspension_reason,
+  v.suspended_at,
   v.is_active,
   v.calendar_updated_at,
   v.legal_name,
@@ -166,6 +170,32 @@ const VENDOR_PROFILE_COLUMNS = `
   u.phone AS whatsapp
 `;
 
+export function mapVendorPortalRow(row: any): VendorPortalVendorRow {
+  return {
+    id: row.id,
+    display_name: row.display_name,
+    slug: row.slug,
+    region_code: row.region_code,
+    verification_status: row.verification_status,
+    suspension_reason: row.suspension_reason ?? null,
+    suspended_at: row.suspended_at ?? null,
+    is_active: Boolean(row.is_active),
+    calendar_updated_at: row.calendar_updated_at ?? null,
+    legal_name: row.legal_name ?? null,
+    description: row.description ?? null,
+    base_address: row.base_address ?? null,
+    service_radius_km: row.service_radius_km ?? null,
+    free_radius_km: row.free_radius_km,
+    transport_fee_per_km_idr: row.transport_fee_per_km_idr,
+    min_dp_bp: row.min_dp_bp,
+    avatar_url: row.avatar_url ?? null,
+    banner_url: row.banner_url ?? null,
+    photo_urls: row.photo_urls ?? null,
+    video_url: row.video_url ?? null,
+    whatsapp: row.whatsapp ?? null
+  };
+}
+
 @Injectable()
 export class VendorPortalRepository {
   async findVendorByOwner(userId: string): Promise<VendorPortalVendorRow | null> {
@@ -179,7 +209,7 @@ export class VendorPortalRepository {
         LIMIT 1`,
       [userId]
     );
-    return rows[0] ?? null;
+    return rows[0] ? mapVendorPortalRow(rows[0]) : null;
   }
 
   async findVendorById(vendorId: string): Promise<VendorPortalVendorRow | null> {
@@ -192,7 +222,7 @@ export class VendorPortalRepository {
         LIMIT 1`,
       [vendorId]
     );
-    return rows[0] ?? null;
+    return rows[0] ? mapVendorPortalRow(rows[0]) : null;
   }
 
   async updateOwnProfile(
@@ -238,7 +268,7 @@ export class VendorPortalRepository {
          LEFT JOIN users u ON u.id = v.owner_user_id`,
       params
     );
-    return rows[0] ?? null;
+    return rows[0] ? mapVendorPortalRow(rows[0]) : null;
   }
 
   async listBookings(
