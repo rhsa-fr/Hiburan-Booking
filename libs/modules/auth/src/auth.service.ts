@@ -70,9 +70,17 @@ export const REFRESH_TOKEN_BYTES = 32;
 /** FR-128: the 2FA ticket lives ten minutes and tolerates six code guesses. */
 export const TOTP_CHALLENGE_TTL_SECONDS = 10 * 60;
 export const TOTP_CHALLENGE_MAX_ATTEMPTS = 6;
+/**
+ * Cross-challenge budget. The per-challenge cap alone lets an attacker with a
+ * valid password mint a fresh ticket after every six guesses, so failures are
+ * also counted per email and per IP over this window (`login_attempts.stage`).
+ */
+export const TOTP_FAILURE_WINDOW_SECONDS = 15 * 60;
+export const TOTP_FAILURE_MAX = 10;
 const TOTP_ISSUER = 'Tarlink';
 const INVALID_CHALLENGE_MESSAGE = 'Token 2FA tidak valid atau sudah kedaluwarsa';
 const TOTP_LOCKED_MESSAGE = 'Terlalu banyak percobaan kode 2FA. Mulai ulang proses login.';
+const TOTP_RATE_LIMITED_MESSAGE = 'Terlalu banyak percobaan kode 2FA. Coba lagi nanti.';
 
 /** One message for every password-login rejection, so nothing is enumerated. */
 export const INVALID_CREDENTIALS_MESSAGE = 'Email atau kata sandi salah';
@@ -716,7 +724,13 @@ export class AuthService {
     const secret = this.requireCipher().decrypt(state.totpSecretEncrypted, state.totpKeyId);
     if (!verifyTotpCode(secret, input.code, now)) {
       await this.recordTotpAttempt(state.email, input.ip ?? null, false, now);
-      throw this.invalidCodeError(attempts, challenge.maxAttempts);
+      throw await this.totpFailureError(
+        state.email,
+        input.ip ?? null,
+        attempts,
+        challenge.maxAttempts,
+        now
+      );
     }
 
     return this.finishChallenge(challenge, state, input.ip ?? null, input.userAgent ?? null, now);
@@ -736,7 +750,13 @@ export class AuthService {
     );
     if (!claimed) {
       await this.recordTotpAttempt(state.email, input.ip ?? null, false, now);
-      throw this.invalidCodeError(attempts, challenge.maxAttempts);
+      throw await this.totpFailureError(
+        state.email,
+        input.ip ?? null,
+        attempts,
+        challenge.maxAttempts,
+        now
+      );
     }
 
     return this.finishChallenge(challenge, state, input.ip ?? null, input.userAgent ?? null, now);
@@ -1050,8 +1070,18 @@ export class AuthService {
       throw new AppError('UNAUTHENTICATED', 'Sesi tidak valid');
     }
     const kind: AdminChallengeKind = state.twoFactorEnabled ? 'verify' : 'enroll';
+
+    // Cross-challenge budget: a new ticket must not reset the guess counter,
+    // otherwise password login becomes an unlimited oracle for the TOTP code.
+    if (await this.totpFailureCapReached(user.email, options.ip ?? null, now)) {
+      throw new AppError('RATE_LIMITED', TOTP_RATE_LIMITED_MESSAGE);
+    }
+
     const token = generateChallengeToken();
 
+    // One live ticket per user: an earlier unconsumed challenge must not stay
+    // usable side by side with the one just issued.
+    await this.repository.deleteOpenChallenges(user.id);
     await this.repository.insertAdminChallenge({
       id: this.newId(),
       userId: user.id,
@@ -1121,6 +1151,43 @@ export class AuthService {
     return attempts >= maxAttempts
       ? new AppError('RATE_LIMITED', TOTP_LOCKED_MESSAGE)
       : new AppError('UNAUTHENTICATED', 'Kode 2FA salah');
+  }
+
+  /**
+   * True when the window-wide TOTP failure budget is spent for the email or the
+   * IP. Both counters are checked so one host cannot spread guesses over many
+   * accounts and one account cannot be guessed from many hosts.
+   */
+  private async totpFailureCapReached(
+    email: string | null,
+    ip: string | null,
+    now: Date
+  ): Promise<boolean> {
+    const windowStart = new Date(now.getTime() - TOTP_FAILURE_WINDOW_SECONDS * 1000);
+    const [byEmail, byIp] = await Promise.all([
+      // An unknown email falls back to the whole window: over-counting only
+      // tightens the lockout, it never lets a guess through.
+      this.repository.countFailedTotpAttempts(email ?? '', windowStart),
+      ip ? this.repository.countFailedTotpAttemptsByIp(ip, windowStart) : Promise.resolve(0)
+    ]);
+    return byEmail >= TOTP_FAILURE_MAX || byIp >= TOTP_FAILURE_MAX;
+  }
+
+  /**
+   * A wrong code is a 401 until the cross-challenge budget is spent; from then
+   * on it is a 429 so the client stops asking for another ticket.
+   */
+  private async totpFailureError(
+    email: string | null,
+    ip: string | null,
+    attempts: number,
+    maxAttempts: number,
+    at: Date
+  ): Promise<AppError> {
+    if (await this.totpFailureCapReached(email, ip, at)) {
+      return new AppError('RATE_LIMITED', TOTP_RATE_LIMITED_MESSAGE);
+    }
+    return this.invalidCodeError(attempts, maxAttempts);
   }
 
   private async requireTwoFactorState(userId: string): Promise<TwoFactorState> {

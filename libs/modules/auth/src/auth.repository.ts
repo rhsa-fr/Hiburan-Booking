@@ -219,6 +219,14 @@ export interface AuthRepository {
   countFailedLoginAttempts(email: string, since: Date): Promise<number>;
   /** Number of failed password logins from `ip` created at/after `since`. */
   countFailedLoginAttemptsByIp(ip: string, since: Date): Promise<number>;
+  /**
+   * Number of failed TOTP logins for `email` created at/after `since`, counted
+   * across every challenge. An empty email means "unknown", so the email
+   * predicate is dropped and the whole window is counted.
+   */
+  countFailedTotpAttempts(email: string, since: Date): Promise<number>;
+  /** Number of failed TOTP logins from `ip` created at/after `since`. */
+  countFailedTotpAttemptsByIp(ip: string, since: Date): Promise<number>;
   /** Audit row for one password login attempt (success or failure). */
   recordLoginAttempt(input: NewLoginAttempt): Promise<void>;
   /** Writes a new password hash; false when the user does not exist. */
@@ -245,6 +253,8 @@ export interface AuthRepository {
   /** 2FA state of an active user; null when the account does not exist. */
   findTwoFactorState(userId: string): Promise<TwoFactorState | null>;
   insertAdminChallenge(input: NewAdminChallenge): Promise<void>;
+  /** Drops the user's previous unconsumed challenges; returns the row count. */
+  deleteOpenChallenges(userId: string): Promise<number>;
   /** Challenge lookup by sha256(token); the plaintext token is never stored. */
   findChallengeByTokenHash(tokenHash: string): Promise<AdminChallengeRecord | null>;
   /**
@@ -635,6 +645,32 @@ export class PgAuthRepository implements AuthRepository {
     return rows[0]?.count ?? 0;
   }
 
+  async countFailedTotpAttempts(email: string, since: Date): Promise<number> {
+    const rows = await query<{ count: number }>(
+      `SELECT COUNT(*)::int AS count
+         FROM login_attempts
+        WHERE succeeded = false
+          AND stage = 'totp'
+          AND created_at >= $2
+          AND ($1 = '' OR lower(email) = lower($1))`,
+      [email, since]
+    );
+    return rows[0]?.count ?? 0;
+  }
+
+  async countFailedTotpAttemptsByIp(ip: string, since: Date): Promise<number> {
+    const rows = await query<{ count: number }>(
+      `SELECT COUNT(*)::int AS count
+         FROM login_attempts
+        WHERE ip = $1::inet
+          AND succeeded = false
+          AND stage = 'totp'
+          AND created_at >= $2`,
+      [ip, since]
+    );
+    return rows[0]?.count ?? 0;
+  }
+
   async recordLoginAttempt(input: NewLoginAttempt): Promise<void> {
     await query(
       `INSERT INTO login_attempts (email, ip, succeeded, created_at, stage)
@@ -934,6 +970,16 @@ export class PgAuthRepository implements AuthRepository {
         input.createdAt
       ]
     );
+  }
+
+  async deleteOpenChallenges(userId: string): Promise<number> {
+    const rows = await query<{ id: string }>(
+      `DELETE FROM admin_2fa_challenges
+        WHERE user_id = $1 AND consumed_at IS NULL
+        RETURNING id`,
+      [userId]
+    );
+    return rows.length;
   }
 
   async findChallengeByTokenHash(tokenHash: string): Promise<AdminChallengeRecord | null> {

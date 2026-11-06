@@ -41,7 +41,9 @@ import {
   hashOtpCode,
   hashPassword,
   OTP_RATE_LIMIT_WINDOW_SECONDS,
+  TOTP_CHALLENGE_MAX_ATTEMPTS,
   TOTP_CHALLENGE_TTL_SECONDS,
+  TOTP_FAILURE_MAX,
   type AuthServiceDeps,
   type PasswordLoginResult,
   type VerifyOtpResult
@@ -266,6 +268,27 @@ class FakeAuthRepository implements AuthRepository {
     this.loginAttempts.push({ ...input, stage: input.stage ?? 'password' });
   }
 
+  async countFailedTotpAttempts(email: string, since: Date): Promise<number> {
+    const needle = email.trim().toLowerCase();
+    return this.loginAttempts.filter(
+      (row) =>
+        !row.succeeded &&
+        (row.stage ?? 'password') === 'totp' &&
+        row.createdAt >= since &&
+        (needle.length === 0 || row.email.toLowerCase() === needle)
+    ).length;
+  }
+
+  async countFailedTotpAttemptsByIp(ip: string, since: Date): Promise<number> {
+    return this.loginAttempts.filter(
+      (row) =>
+        row.ip === ip &&
+        !row.succeeded &&
+        (row.stage ?? 'password') === 'totp' &&
+        row.createdAt >= since
+    ).length;
+  }
+
   async updatePassword(userId: string, passwordHash: string, updatedAt: Date): Promise<boolean> {
     const index = this.users.findIndex((user) => user.id === userId);
     const current = this.users[index];
@@ -411,6 +434,18 @@ class FakeAuthRepository implements AuthRepository {
       userAgent: input.userAgent,
       createdAt: input.createdAt
     });
+  }
+
+  async deleteOpenChallenges(userId: string): Promise<number> {
+    let removed = 0;
+    for (let index = this.challenges.length - 1; index >= 0; index -= 1) {
+      const row = this.challenges[index];
+      if (row && row.userId === userId && row.consumedAt === null) {
+        this.challenges.splice(index, 1);
+        removed += 1;
+      }
+    }
+    return removed;
   }
 
   async findChallengeByTokenHash(tokenHash: string): Promise<AdminChallengeRecord | null> {
@@ -994,6 +1029,67 @@ describe('AuthService admin 2FA (FR-128)', () => {
     };
   }
 
+  /** Password login that stops at the TOTP step; returns the opaque ticket. */
+  async function openChallenge(
+    harness: Harness,
+    options: { email?: string; password?: string; ip?: string } = {}
+  ): Promise<string> {
+    const challenge = await harness.service.loginWithPassword({
+      email: options.email ?? ADMIN_EMAIL,
+      password: options.password ?? ADMIN_PASSWORD,
+      ip: options.ip
+    });
+    if (!('mfa_required' in challenge)) {
+      throw new Error(`expected mfa_required, got ${JSON.stringify(challenge)}`);
+    }
+    return challenge.challenge_token;
+  }
+
+  /** Sends one wrong code and returns the error code the service answered with. */
+  async function wrongCodeResult(
+    service: AuthService,
+    token: string,
+    code: string,
+    ip?: string
+  ): Promise<string> {
+    try {
+      await service.verifyTwoFactorCode({ challenge_token: token, code, ip });
+    } catch (error) {
+      if (error instanceof AppError) return error.code;
+      throw error;
+    }
+    throw new Error('expected the wrong code to be rejected');
+  }
+
+  /**
+   * Spends the whole cross-challenge budget with wrong codes: one ticket locked
+   * by its own cap, then the remaining guesses on a fresh ticket.
+   */
+  async function spendTotpBudget(
+    harness: Harness,
+    options: { email?: string; password?: string; ip?: string } = {}
+  ): Promise<void> {
+    const valid = generateTotpCode(TEST_TOTP_SECRET, harness.now());
+    const wrong = valid === '000000' ? '000001' : '000000';
+
+    // Six guesses: 401 until the per-challenge cap answers 429.
+    const first = await openChallenge(harness, options);
+    for (let attempt = 1; attempt <= TOTP_CHALLENGE_MAX_ATTEMPTS; attempt += 1) {
+      const code = await wrongCodeResult(harness.service, first, wrong, options.ip);
+      expect(code).toBe(
+        attempt === TOTP_CHALLENGE_MAX_ATTEMPTS ? 'RATE_LIMITED' : 'UNAUTHENTICATED'
+      );
+    }
+
+    // Four more guesses on a fresh ticket: the last one spends the window budget.
+    const second = await openChallenge(harness, options);
+    const remaining = TOTP_FAILURE_MAX - TOTP_CHALLENGE_MAX_ATTEMPTS;
+    for (let attempt = 1; attempt <= remaining; attempt += 1) {
+      const code = await wrongCodeResult(harness.service, second, wrong, options.ip);
+      expect(code).toBe(attempt === remaining ? 'RATE_LIMITED' : 'UNAUTHENTICATED');
+    }
+  }
+
   it('AC5.1 answers mfa_setup_required and issues no session for an unenrolled admin', async () => {
     const { repository, service } = makeHarness();
     await addAdminUser(repository);
@@ -1082,6 +1178,108 @@ describe('AuthService admin 2FA (FR-128)', () => {
       })
     ).rejects.toMatchObject({ code: 'UNAUTHENTICATED' });
     expect(repository.sessions).toHaveLength(1);
+  });
+
+  it('locks the account across challenges after ten wrong codes', async () => {
+    const harness = makeHarness();
+    const { repository, service } = harness;
+    await addAdminUser(repository);
+    enableTwoFactor(repository, ADMIN_ID);
+
+    await spendTotpBudget(harness);
+    expect(
+      repository.loginAttempts.filter((row) => row.stage === 'totp' && !row.succeeded)
+    ).toHaveLength(TOTP_FAILURE_MAX);
+    // One live ticket per user: the second login replaced the locked one.
+    expect(repository.challenges).toHaveLength(1);
+
+    // A fresh password login cannot buy another set of guesses.
+    await expect(
+      service.loginWithPassword({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD })
+    ).rejects.toMatchObject({ code: 'RATE_LIMITED' });
+
+    expect(repository.challenges).toHaveLength(1);
+    expect(repository.sessions).toHaveLength(0);
+  });
+
+  it('locks the IP across challenges even when the email differs', async () => {
+    const harness = makeHarness();
+    const { repository, service } = harness;
+    const secondAdminId = '55555555-5555-4555-8555-555555555555';
+    const secondAdminEmail = 'admin.dua@tarlink.id';
+    const secondAdminPassword = 'rahasia-admin-kedua';
+    const ip = '203.0.113.44';
+
+    await addAdminUser(repository);
+    enableTwoFactor(repository, ADMIN_ID);
+    addUser(repository, ['admin_super'], {
+      id: secondAdminId,
+      phone: '629111222444',
+      email: secondAdminEmail,
+      passwordHash: await hashPassword(secondAdminPassword)
+    });
+    enableTwoFactor(repository, secondAdminId);
+
+    await spendTotpBudget(harness, { ip });
+
+    // Same host, another admin: the per-email counter is zero, the IP one is not.
+    await expect(
+      service.loginWithPassword({ email: secondAdminEmail, password: secondAdminPassword, ip })
+    ).rejects.toMatchObject({ code: 'RATE_LIMITED' });
+    expect(repository.challenges.filter((row) => row.userId === secondAdminId)).toHaveLength(0);
+
+    // The same admin from another network is not blocked by that IP counter.
+    const elsewhere = await service.loginWithPassword({
+      email: secondAdminEmail,
+      password: secondAdminPassword,
+      ip: '198.51.100.9'
+    });
+    expect(elsewhere).toMatchObject({ mfa_required: true });
+  });
+
+  it('does not count successful verifications as TOTP failures', async () => {
+    const harness = makeHarness();
+    const { repository, service } = harness;
+    await addAdminUser(repository);
+    enableTwoFactor(repository, ADMIN_ID);
+
+    // More successes than the failure cap must not spend the budget.
+    for (let round = 0; round < TOTP_FAILURE_MAX; round += 1) {
+      await adminSession(harness);
+    }
+    expect(repository.sessions).toHaveLength(TOTP_FAILURE_MAX);
+    expect(
+      repository.loginAttempts.filter((row) => row.stage === 'totp' && !row.succeeded)
+    ).toHaveLength(0);
+
+    const token = await openChallenge(harness);
+    const valid = generateTotpCode(TEST_TOTP_SECRET, harness.now());
+    const wrong = valid === '000000' ? '000001' : '000000';
+    // Still an ordinary wrong answer, not a lockout.
+    expect(await wrongCodeResult(service, token, wrong)).toBe('UNAUTHENTICATED');
+  });
+
+  it('keeps the six-guesses-per-challenge cap when the window is not spent', async () => {
+    const harness = makeHarness();
+    const { repository, service } = harness;
+    await addAdminUser(repository);
+    enableTwoFactor(repository, ADMIN_ID);
+
+    const token = await openChallenge(harness);
+    const valid = generateTotpCode(TEST_TOTP_SECRET, harness.now());
+    const wrong = valid === '000000' ? '000001' : '000000';
+
+    for (let attempt = 1; attempt < TOTP_CHALLENGE_MAX_ATTEMPTS; attempt += 1) {
+      expect(await wrongCodeResult(service, token, wrong)).toBe('UNAUTHENTICATED');
+    }
+    // The sixth guess is still the per-challenge lock, with its own message.
+    await expect(
+      service.verifyTwoFactorCode({ challenge_token: token, code: wrong })
+    ).rejects.toMatchObject({
+      code: 'RATE_LIMITED',
+      message: expect.stringContaining('Mulai ulang proses login')
+    });
+    expect(repository.challenges[0]?.attempts).toBe(TOTP_CHALLENGE_MAX_ATTEMPTS);
   });
 
   it('AC5.3 accepts a backup code once and rejects the second use', async () => {
