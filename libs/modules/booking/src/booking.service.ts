@@ -885,17 +885,11 @@ export class BookingService {
     user: AuthUser,
     now: Date = new Date()
   ): Promise<DisputeOpenView> {
-    const role = requireRole(user, ['customer', 'vendor_owner']);
-
     return withTransaction(async (client) => {
       const row = await this.repo.findByIdForUpdate(client, id);
       if (!row) throw new AppError('NOT_FOUND', `Booking ${id} tidak ditemukan`);
 
-      if (role === 'customer') {
-        this.assertCustomer(row, user);
-      } else {
-        await this.assertResponder(row.vendor_id, user);
-      }
+      const role = await this.resolveDisputeActor(row, user);
 
       const settlement = row.settlement_status;
       if (settlement !== 'held' && settlement !== 'released') {
@@ -964,12 +958,7 @@ export class BookingService {
     if (!row) throw new AppError('NOT_FOUND', `Booking ${id} tidak ditemukan`);
 
     if (!isAdmin(user)) {
-      if (user.roles.includes('customer')) {
-        this.assertCustomer(row, user);
-      } else {
-        requireRole(user, ['vendor_owner', 'vendor_member']);
-        await this.assertResponder(row.vendor_id, user);
-      }
+      await this.resolveDisputeActor(row, user);
     }
 
     const disputes = await this.repo.listDisputes(id);
@@ -1313,6 +1302,30 @@ export class BookingService {
     if (row.customer_id !== user.id) {
       throw new AppError('FORBIDDEN', 'Booking ini bukan milik Anda');
     }
+  }
+
+  /**
+   * FR-056 / S-04 / S-08: the acting dispute role comes from row ownership, not
+   * from the order of the user's roles. Real vendor accounts also carry the
+   * `customer` role, so a role-priority lookup always answers `'customer'` and
+   * then fails the ownership check. `vendor_member` is deliberately excluded:
+   * S-04/S-08 only admit the vendor owner (or the customer).
+   */
+  private async resolveDisputeActor(
+    row: BookingRow,
+    user: AuthUser
+  ): Promise<'customer' | 'vendor_owner'> {
+    if (row.customer_id === user.id) return 'customer';
+    if (
+      user.roles.includes('vendor_owner') &&
+      (await this.repo.isVendorResponder(row.vendor_id, user.id))
+    ) {
+      return 'vendor_owner';
+    }
+    throw new AppError(
+      'FORBIDDEN',
+      `Peran [${user.roles.join(', ')}] tidak berwenang atas sengketa booking ini`
+    );
   }
 
   private async assertResponder(vendorId: string, user: AuthUser): Promise<void> {

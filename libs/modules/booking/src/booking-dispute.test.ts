@@ -21,6 +21,8 @@ import type { AuthUser } from './current-user.decorator';
 const BOOKING_ID = '11111111-1111-4111-8111-111111111111';
 const VENDOR_ID = '22222222-2222-4222-8222-222222222222';
 const VENDOR_USER_ID = '55555555-5555-4555-8555-555555555555';
+const OTHER_VENDOR_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+const MEMBER_USER_ID = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
 const CUSTOMER_ID = '77777777-7777-4777-8777-777777777777';
 const STRANGER_ID = '88888888-8888-4888-8888-888888888888';
 const DISPUTE_ID = '99999999-9999-4999-8999-999999999999';
@@ -29,6 +31,10 @@ const HOUR_MS = 60 * 60 * 1000;
 const DESCRIPTION = 'Fotografer tidak datang sesuai paket yang disepakati';
 
 const VENDOR: AuthUser = { id: VENDOR_USER_ID, roles: ['vendor_owner'] };
+/** Real vendor accounts always keep the `customer` role from registration. */
+const DUAL_ROLE_VENDOR: AuthUser = { id: VENDOR_USER_ID, roles: ['customer', 'vendor_owner'] };
+const VENDOR_MEMBER: AuthUser = { id: MEMBER_USER_ID, roles: ['vendor_member'] };
+const DUAL_ROLE_VENDOR_MEMBER: AuthUser = { id: MEMBER_USER_ID, roles: ['customer', 'vendor_member'] };
 const CUSTOMER: AuthUser = { id: CUSTOMER_ID, roles: ['customer'] };
 const STRANGER: AuthUser = { id: STRANGER_ID, roles: ['customer'] };
 const ADMIN: AuthUser = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', roles: ['admin_support'] };
@@ -105,7 +111,10 @@ function harness(initial: BookingRow, disputes: DisputeRow[] = [disputeRow()]) {
   const repo = {
     findByIdForUpdate: vi.fn(async () => row),
     findById: vi.fn(async () => row),
-    isVendorResponder: vi.fn(async () => true),
+    isVendorResponder: vi.fn(
+      async (vendorId: string, userId: string) =>
+        vendorId === VENDOR_ID && userId === VENDOR_USER_ID
+    ),
     countOpenDisputes: vi.fn(async () => 0),
     updateStatus: vi.fn(
       async (_client: unknown, _id: string, patch: Record<string, unknown>) => {
@@ -233,6 +242,59 @@ describe('BookingService.openDispute', () => {
       raisedBy: VENDOR_USER_ID,
       reasonCode: 'cancellation_abuse'
     });
+  });
+
+  it('dual-role vendor (customer + vendor_owner) opens on their own vendor booking', async () => {
+    const { repo, service } = harness(confirmedRow());
+
+    await service.openDispute(
+      BOOKING_ID,
+      { reason_code: 'cancellation_abuse', description: 'Pelanggan membatalkan mendadak' },
+      DUAL_ROLE_VENDOR,
+      NOW
+    );
+
+    expect(repo.isVendorResponder).toHaveBeenCalledWith(VENDOR_ID, VENDOR_USER_ID);
+    expect(repo.insertDispute.mock.calls[0][1]).toMatchObject({ raisedBy: VENDOR_USER_ID });
+    // Ownership decides the actor: the customer role must not win by being first.
+    expect(repo.insertHistory.mock.calls[0][1][0]).toMatchObject({
+      actorId: VENDOR_USER_ID,
+      actorRole: 'vendor_owner'
+    });
+  });
+
+  it('rejects a vendor opening a dispute on another vendor booking', async () => {
+    const { repo, service } = harness(confirmedRow({ vendor_id: OTHER_VENDOR_ID }));
+
+    await expect(
+      service.openDispute(
+        BOOKING_ID,
+        { reason_code: 'cancellation_abuse', description: 'Bukan booking vendor saya' },
+        DUAL_ROLE_VENDOR,
+        NOW
+      )
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+    expect(repo.insertDispute).not.toHaveBeenCalled();
+  });
+
+  it('rejects vendor_member even when they can respond for the vendor', async () => {
+    for (const user of [VENDOR_MEMBER, DUAL_ROLE_VENDOR_MEMBER]) {
+      const { repo, service } = harness(confirmedRow());
+      // Sole owner is the only allowed vendor actor, so being a responder is not enough.
+      repo.isVendorResponder.mockResolvedValue(true);
+
+      await expect(
+        service.openDispute(
+          BOOKING_ID,
+          { reason_code: 'cancellation_abuse', description: 'Anggota vendor mencoba membuka sengketa' },
+          user,
+          NOW
+        )
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+      expect(repo.insertDispute).not.toHaveBeenCalled();
+    }
   });
 
   it('rejects a dispute opened after the 7-day window', async () => {
@@ -388,6 +450,33 @@ describe('BookingService.listBookingDisputes', () => {
     await expect(service.listBookingDisputes(BOOKING_ID, VENDOR)).rejects.toMatchObject({
       code: 'FORBIDDEN'
     });
+    expect(repo.listDisputes).not.toHaveBeenCalled();
+  });
+
+  it('lets a dual-role vendor read the disputes of their own vendor booking', async () => {
+    const { service } = harness(confirmedRow());
+
+    const list = await service.listBookingDisputes(BOOKING_ID, DUAL_ROLE_VENDOR);
+
+    expect(list).toHaveLength(1);
+  });
+
+  it('rejects a vendor reading another vendor booking', async () => {
+    const { repo, service } = harness(confirmedRow({ vendor_id: OTHER_VENDOR_ID }));
+
+    await expect(
+      service.listBookingDisputes(BOOKING_ID, DUAL_ROLE_VENDOR)
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(repo.listDisputes).not.toHaveBeenCalled();
+  });
+
+  it('rejects vendor_member even when they can respond for the vendor', async () => {
+    const { repo, service } = harness(confirmedRow());
+    repo.isVendorResponder.mockResolvedValue(true);
+
+    await expect(
+      service.listBookingDisputes(BOOKING_ID, DUAL_ROLE_VENDOR_MEMBER)
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(repo.listDisputes).not.toHaveBeenCalled();
   });
 });
