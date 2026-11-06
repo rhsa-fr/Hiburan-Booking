@@ -45,11 +45,11 @@ import {
 } from './auth.service';
 
 const RequestOtpBody = z.object({
-  phone: z.string().min(1).max(20)
+  email: z.string().trim().max(150).email('email is not valid')
 });
 
 const VerifyOtpBody = z.object({
-  phone: z.string().min(1).max(20),
+  email: z.string().trim().max(150).email('email is not valid'),
   code: z.string().regex(/^\d{6}$/, 'code must be 6 digits')
 });
 
@@ -62,12 +62,21 @@ const LoginBody = z.object({
  * `.strict()` is deliberate: a `role` (or any other unknown key) is rejected
  * instead of being silently ignored. Public registration is customer-only.
  */
+/** FR-103: both policy versions are required and must be the active ones. */
+const ConsentBody = z
+  .object({
+    tos_version_id: z.string().uuid(),
+    privacy_version_id: z.string().uuid()
+  })
+  .strict();
+
 const RegisterBody = z
   .object({
     email: z.string().trim().max(150).email('email is not valid'),
     password: z.string().min(8).max(200),
     phone: z.string().min(1).max(20).optional(),
-    full_name: z.string().trim().min(1).max(100).optional()
+    full_name: z.string().trim().min(1).max(100).optional(),
+    consent: ConsentBody
   })
   .strict();
 
@@ -107,7 +116,7 @@ export class AuthController {
       throw new AppError('VALIDATION_ERROR', 'invalid OTP request', parsed.error.issues);
     }
 
-    return { data: await this.auth.requestOtp({ phone: parsed.data.phone, ip }) };
+    return { data: await this.auth.requestOtp({ email: parsed.data.email, ip }) };
   }
 
   @Post('otp/verify')

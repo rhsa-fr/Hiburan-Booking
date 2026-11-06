@@ -3,9 +3,9 @@
  * session revocation (TECH-DESIGN-v1.0 §7.2, §9.1).
  *
  * Rules enforced here:
- *   - the phone number is normalised before it is hashed or rate-limited, so
- *     `0812…`, `+62 812…` and `62812…` share one quota bucket;
- *   - the OTP is stored only as `sha256(code + ':' + phone)`; the plaintext is
+ *   - the email is normalised before it is hashed or rate-limited, so case and
+ *     surrounding spaces share one quota bucket (ADR 0011: OTP goes to email);
+ *   - the OTP is stored only as `sha256(code + ':' + email)`; the plaintext is
  *     returned to the caller only outside production (`dev_code`);
  *   - a request is single-use (`consumed_at` set atomically) and expires after
  *     five minutes; after `max_attempts` wrong guesses the request is locked;
@@ -29,11 +29,13 @@ import { Injectable } from '@nestjs/common';
 import { AppError } from '@tarlink/core/errors';
 import { signAccessToken, type Role } from '@tarlink/platform/auth';
 import type { GoogleTokenVerifier } from './google-verifier';
+import { LoggingMailer, type Mailer } from './mailer';
 import type {
   AccountDeletionRecord,
   AuthRepository,
   AuthUserRecord,
   NewUser,
+  NewUserConsent,
   OtpChannel
 } from './auth.repository';
 
@@ -41,7 +43,7 @@ export const OTP_TTL_SECONDS = 5 * 60;
 export const OTP_MAX_ATTEMPTS = 5;
 export const OTP_RATE_LIMIT_MAX = 3;
 export const OTP_RATE_LIMIT_WINDOW_SECONDS = 10 * 60;
-export const OTP_CHANNEL: OtpChannel = 'whatsapp';
+export const OTP_CHANNEL: OtpChannel = 'email';
 
 export const LOGIN_RATE_LIMIT_MAX = 5;
 export const LOGIN_RATE_LIMIT_WINDOW_SECONDS = 10 * 60;
@@ -87,6 +89,8 @@ export interface AuthServiceDeps {
   readonly otpIpRateLimitMax?: number;
   /** Null/undefined means `GOOGLE_CLIENT_ID` is not configured. */
   readonly googleVerifier?: GoogleTokenVerifier | null;
+  /** Delivery port; defaults to a log-only mailer outside production. */
+  readonly mailer?: Mailer;
   readonly now?: () => Date;
   readonly newId?: () => string;
   /** Removes encrypted private documents (KTP) after account deletion. */
@@ -94,7 +98,7 @@ export interface AuthServiceDeps {
 }
 
 export interface RequestOtpInput {
-  readonly phone: string;
+  readonly email: string;
   readonly ip?: string | null;
 }
 
@@ -106,7 +110,7 @@ export interface RequestOtpResult {
 }
 
 export interface VerifyOtpInput {
-  readonly phone: string;
+  readonly email: string;
   readonly code: string;
   readonly ip?: string | null;
   readonly userAgent?: string | null;
@@ -119,11 +123,18 @@ export interface LoginWithPasswordInput {
   readonly userAgent?: string | null;
 }
 
+/** FR-103: the client sends the policy versions it displayed and accepted. */
+export interface PolicyConsentInput {
+  readonly tos_version_id: string;
+  readonly privacy_version_id: string;
+}
+
 export interface RegisterInput {
   readonly email: string;
   readonly password: string;
   readonly phone?: string;
   readonly full_name?: string;
+  readonly consent: PolicyConsentInput;
   readonly ip?: string | null;
   readonly userAgent?: string | null;
 }
@@ -204,8 +215,8 @@ export function normalizeEmail(email: string): string {
 }
 
 /** `code_hash` format shared by the writer and the reader. */
-export function hashOtpCode(code: string, phone: string): string {
-  return createHash('sha256').update(`${code}:${phone}`, 'utf8').digest('hex');
+export function hashOtpCode(code: string, email: string): string {
+  return createHash('sha256').update(`${code}:${email}`, 'utf8').digest('hex');
 }
 
 /** Opaque refresh token: 256 bits, returned once and stored only as a hash. */
@@ -284,6 +295,7 @@ export class AuthService {
   private readonly loginIpRateLimitMax: number;
   private readonly otpIpRateLimitMax: number;
   private readonly googleVerifier: GoogleTokenVerifier | null;
+  private readonly mailer: Mailer;
   private readonly now: () => Date;
   private readonly newId: () => string;
   private readonly removePrivateFiles?: (keys: readonly string[]) => Promise<void>;
@@ -298,17 +310,18 @@ export class AuthService {
     this.loginIpRateLimitMax = deps.loginIpRateLimitMax ?? LOGIN_IP_RATE_LIMIT_MAX;
     this.otpIpRateLimitMax = deps.otpIpRateLimitMax ?? OTP_IP_RATE_LIMIT_MAX;
     this.googleVerifier = deps.googleVerifier ?? null;
+    this.mailer = deps.mailer ?? new LoggingMailer();
     this.now = deps.now ?? (() => new Date());
     this.newId = deps.newId ?? (() => randomUUID());
     this.removePrivateFiles = deps.removePrivateFiles;
   }
 
   async requestOtp(input: RequestOtpInput): Promise<RequestOtpResult> {
-    const phone = normalizePhone(input.phone);
+    const email = normalizeEmail(input.email);
     const now = this.now();
     const windowStart = new Date(now.getTime() - OTP_RATE_LIMIT_WINDOW_SECONDS * 1000);
 
-    const recent = await this.repository.countRecentOtpRequests(phone, windowStart);
+    const recent = await this.repository.countRecentOtpRequests(email, windowStart);
     if (recent >= OTP_RATE_LIMIT_MAX) {
       throw new AppError(
         'RATE_LIMITED',
@@ -337,14 +350,16 @@ export class AuthService {
 
     await this.repository.insertOtpRequest({
       id: requestId,
-      phone,
-      codeHash: hashOtpCode(code, phone),
+      email,
+      codeHash: hashOtpCode(code, email),
       channel: OTP_CHANNEL,
       maxAttempts: OTP_MAX_ATTEMPTS,
       expiresAt: new Date(now.getTime() + OTP_TTL_SECONDS * 1000),
       requesterIp: input.ip ?? null,
       createdAt: now
     });
+
+    await this.mailer.sendOtp({ to: email, code, ttlSeconds: OTP_TTL_SECONDS });
 
     return {
       request_id: requestId,
@@ -357,10 +372,10 @@ export class AuthService {
   }
 
   async verifyOtp(input: VerifyOtpInput): Promise<VerifyOtpResult> {
-    const phone = normalizePhone(input.phone);
+    const email = normalizeEmail(input.email);
     const now = this.now();
 
-    const request = await this.repository.findActiveOtpRequest(phone, now);
+    const request = await this.repository.findActiveOtpRequest(email, now);
     if (!request) {
       throw new AppError('VALIDATION_ERROR', 'OTP is invalid or expired');
     }
@@ -370,7 +385,7 @@ export class AuthService {
       throw new AppError('RATE_LIMITED', 'OTP attempt limit reached, request a new code');
     }
 
-    if (!constantTimeEquals(hashOtpCode(input.code, phone), request.codeHash)) {
+    if (!constantTimeEquals(hashOtpCode(input.code, email), request.codeHash)) {
       throw new AppError('VALIDATION_ERROR', 'OTP is invalid or expired');
     }
 
@@ -381,7 +396,7 @@ export class AuthService {
       throw new AppError('VALIDATION_ERROR', 'OTP is invalid or expired');
     }
 
-    const user = await this.repository.findUserByPhone(phone);
+    const user = await this.repository.findUserByEmail(email);
     if (!user) {
       throw new AppError('NOT_FOUND', 'User not found');
     }
@@ -473,8 +488,50 @@ export class AuthService {
       throw new AppError('CONFLICT', 'Email atau nomor sudah terdaftar');
     }
 
+    if (!input.consent) {
+      throw new AppError(
+        'VALIDATION_ERROR',
+        'Persetujuan Syarat & Ketentuan serta Kebijakan Privasi wajib dicentang'
+      );
+    }
+
+    // Only the version that is active right now may be accepted. This stops a
+    // stale tab from recording consent to text the user no longer saw.
+    const [tos, privacy] = await Promise.all([
+      this.repository.findActivePolicyVersion('tos'),
+      this.repository.findActivePolicyVersion('privacy')
+    ]);
+    if (!tos || !privacy) {
+      throw new AppError('INTERNAL_ERROR', 'Kebijakan belum tersedia');
+    }
+    if (
+      input.consent.tos_version_id !== tos.id ||
+      input.consent.privacy_version_id !== privacy.id
+    ) {
+      throw new AppError(
+        'VALIDATION_ERROR',
+        'Versi kebijakan sudah berubah. Muat ulang halaman pendaftaran.'
+      );
+    }
+
     const now = this.now();
     const passwordHash = await hashPassword(input.password);
+    const consents: NewUserConsent[] = [
+      {
+        policyCode: tos.code,
+        policyVersionId: tos.id,
+        acceptedAt: now,
+        ip: input.ip ?? null,
+        userAgent: input.userAgent ?? null
+      },
+      {
+        policyCode: privacy.code,
+        policyVersionId: privacy.id,
+        acceptedAt: now,
+        ip: input.ip ?? null,
+        userAgent: input.userAgent ?? null
+      }
+    ];
     const newUser: NewUser = {
       id: this.newId(),
       phone: phone ?? null,
@@ -483,7 +540,8 @@ export class AuthService {
       passwordHash,
       passwordUpdatedAt: now,
       googleSub: null,
-      emailVerifiedAt: null
+      emailVerifiedAt: null,
+      consents
     };
 
     const user = await this.repository.createUser(newUser);

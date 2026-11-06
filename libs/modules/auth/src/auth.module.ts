@@ -7,6 +7,7 @@ import { AuthController } from './auth.controller';
 import { PgAuthRepository } from './auth.repository';
 import { AuthService } from './auth.service';
 import { GoogleTokenInfoVerifier } from './google-verifier';
+import { createMailer } from './mailer';
 
 /**
  * `AppModule` is lead-owned and does not import this module yet; register
@@ -42,6 +43,12 @@ import { GoogleTokenInfoVerifier } from './google-verifier';
           loginIpRateLimitMax: cfg.LOGIN_IP_RATE_LIMIT_MAX,
           otpIpRateLimitMax: cfg.OTP_IP_RATE_LIMIT_MAX,
           googleVerifier: googleClientId ? new GoogleTokenInfoVerifier(googleClientId) : null,
+          mailer: createMailer({
+            nodeEnv: cfg.NODE_ENV,
+            apiUrl: cfg.EMAIL_API_URL,
+            apiKey: cfg.EMAIL_API_KEY,
+            from: cfg.EMAIL_FROM
+          }),
           removePrivateFiles: async (keys) => {
             const root = resolve(process.cwd(), cfg.PRIVATE_UPLOAD_DIR);
             for (const key of keys) {

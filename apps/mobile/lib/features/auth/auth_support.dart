@@ -166,6 +166,101 @@ class AuthTagline extends StatelessWidget {
   }
 }
 
+/// FR-103 consent checkbox. Shown on registration only; the accepted version
+/// ids are sent to `POST /auth/register`.
+class AuthConsentBox extends StatelessWidget {
+  const AuthConsentBox({
+    super.key,
+    required this.value,
+    required this.onChanged,
+    this.tosVersion,
+    this.privacyVersion,
+  });
+
+  final bool value;
+  final ValueChanged<bool?> onChanged;
+  final String? tosVersion;
+  final String? privacyVersion;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final versionSuffix = <String>[
+      if (tosVersion != null) 'S&K v$tosVersion',
+      if (privacyVersion != null) 'Privasi v$privacyVersion',
+    ].join(' · ');
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(Sp.sm, Sp.sm, Sp.md, Sp.sm),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceTint,
+        borderRadius: BorderRadius.circular(Radii.sm),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 40,
+            height: 40,
+            child: Checkbox(
+              value: value,
+              onChanged: onChanged,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+          ),
+          const SizedBox(width: Sp.sm),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text.rich(
+                    TextSpan(
+                      style: text.bodySmall?.copyWith(
+                        color: AppColors.ink,
+                        height: 1.4,
+                      ),
+                      children: const [
+                        TextSpan(text: 'Saya menyetujui '),
+                        TextSpan(
+                          text: 'Syarat & Ketentuan',
+                          style: TextStyle(
+                            color: AppColors.primary,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        TextSpan(text: ' serta '),
+                        TextSpan(
+                          text: 'Kebijakan Privasi',
+                          style: TextStyle(
+                            color: AppColors.primary,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        TextSpan(text: ' Tarlink.'),
+                      ],
+                    ),
+                  ),
+                  if (versionSuffix.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      versionSuffix,
+                      style: text.labelSmall?.copyWith(
+                        color: AppColors.inkMuted,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Inline server error: 12px danger under the field, announced to readers.
 class AuthInlineError extends StatelessWidget {
   const AuthInlineError(this.message, {super.key});

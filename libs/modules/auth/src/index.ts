@@ -22,6 +22,14 @@ export {
   type GoogleTokenVerifier
 } from './google-verifier';
 export {
+  HttpMailer,
+  LoggingMailer,
+  createMailer,
+  type Mailer,
+  type MailerEnv,
+  type OtpEmail
+} from './mailer';
+export {
   AuthService,
   INVALID_CREDENTIALS_MESSAGE,
   LOGIN_IP_RATE_LIMIT_MAX,

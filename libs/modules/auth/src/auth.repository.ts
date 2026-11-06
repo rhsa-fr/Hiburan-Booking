@@ -9,11 +9,12 @@ import { AppError } from '@tarlink/core/errors';
 import { query, withTransaction } from '@tarlink/core/db';
 import type { Role } from '@tarlink/platform/auth';
 
-export type OtpChannel = 'whatsapp' | 'sms';
+/** New OTPs use `email`; legacy rows may still carry whatsapp/sms. */
+export type OtpChannel = 'email' | 'whatsapp' | 'sms';
 
 export interface OtpRequestRecord {
   readonly id: string;
-  readonly phone: string;
+  readonly email: string;
   readonly codeHash: string;
   readonly attempts: number;
   readonly maxAttempts: number;
@@ -24,7 +25,7 @@ export interface OtpRequestRecord {
 
 export interface NewOtpRequest {
   readonly id: string;
-  readonly phone: string;
+  readonly email: string;
   readonly codeHash: string;
   readonly channel: OtpChannel;
   readonly maxAttempts: number;
@@ -48,6 +49,22 @@ export interface AuthUserProfile extends AuthUserRecord {
   readonly createdAt: Date;
 }
 
+/** Active version of one policy code (`tos`, `privacy`, `cancellation`). */
+export interface ActivePolicyVersion {
+  readonly id: string;
+  readonly code: string;
+  readonly version: number;
+}
+
+/** One accepted policy version, written with the user in the same transaction. */
+export interface NewUserConsent {
+  readonly policyCode: string;
+  readonly policyVersionId: string;
+  readonly acceptedAt: Date;
+  readonly ip: string | null;
+  readonly userAgent: string | null;
+}
+
 export interface NewUser {
   readonly id: string;
   readonly phone: string | null;
@@ -57,6 +74,11 @@ export interface NewUser {
   readonly passwordUpdatedAt: Date | null;
   readonly googleSub: string | null;
   readonly emailVerifiedAt: Date | null;
+  /**
+   * FR-103: public registration records the accepted ToS/privacy versions.
+   * Google sign-up passes none; that gap is tracked separately.
+   */
+  readonly consents?: readonly NewUserConsent[];
 }
 
 export interface NewLoginAttempt {
@@ -106,13 +128,13 @@ export interface SessionRefreshRecord {
 }
 
 export interface AuthRepository {
-  /** Number of OTP requests for `phone` created at/after `since`. */
-  countRecentOtpRequests(phone: string, since: Date): Promise<number>;
+  /** Number of OTP requests for `email` created at/after `since`. */
+  countRecentOtpRequests(email: string, since: Date): Promise<number>;
   /** Number of OTP requests from `ip` created at/after `since` (null when no IP). */
   countRecentOtpRequestsByIp(ip: string, since: Date): Promise<number>;
   insertOtpRequest(input: NewOtpRequest): Promise<void>;
-  /** Newest request for `phone` that is neither consumed nor expired. */
-  findActiveOtpRequest(phone: string, now: Date): Promise<OtpRequestRecord | null>;
+  /** Newest request for `email` that is neither consumed nor expired. */
+  findActiveOtpRequest(email: string, now: Date): Promise<OtpRequestRecord | null>;
   /** Atomically bumps `attempts` and returns the new value. */
   incrementOtpAttempts(id: string): Promise<number>;
   /** Atomically marks the request consumed; false when another caller won. */
@@ -127,6 +149,8 @@ export interface AuthRepository {
   emailExists(email: string): Promise<boolean>;
   /** True when any user already owns this phone. */
   phoneExists(phone: string): Promise<boolean>;
+  /** Version that is active right now for `code`, or null when none is published. */
+  findActivePolicyVersion(code: string): Promise<ActivePolicyVersion | null>;
   /**
    * Creates a user with the `customer` role in one transaction. Unique
    * violations become CONFLICT. New accounts created here are customers only.
@@ -174,7 +198,7 @@ export interface AuthRepository {
 
 interface OtpRow {
   id: string;
-  phone: string;
+  email: string;
   code_hash: string;
   attempts: number;
   max_attempts: number;
@@ -239,10 +263,10 @@ function isUniqueViolation(err: unknown): boolean {
 }
 
 export class PgAuthRepository implements AuthRepository {
-  async countRecentOtpRequests(phone: string, since: Date): Promise<number> {
+  async countRecentOtpRequests(email: string, since: Date): Promise<number> {
     const rows = await query<{ count: number }>(
-      'SELECT COUNT(*)::int AS count FROM otp_requests WHERE phone = $1 AND created_at >= $2',
-      [phone, since]
+      'SELECT COUNT(*)::int AS count FROM otp_requests WHERE lower(email) = lower($1) AND created_at >= $2',
+      [email, since]
     );
     return rows[0]?.count ?? 0;
   }
@@ -258,11 +282,11 @@ export class PgAuthRepository implements AuthRepository {
   async insertOtpRequest(input: NewOtpRequest): Promise<void> {
     await query(
       `INSERT INTO otp_requests
-         (id, phone, code_hash, channel, max_attempts, expires_at, requester_ip, created_at)
+         (id, email, code_hash, channel, max_attempts, expires_at, requester_ip, created_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7::inet, $8)`,
       [
         input.id,
-        input.phone,
+        input.email,
         input.codeHash,
         input.channel,
         input.maxAttempts,
@@ -273,23 +297,23 @@ export class PgAuthRepository implements AuthRepository {
     );
   }
 
-  async findActiveOtpRequest(phone: string, now: Date): Promise<OtpRequestRecord | null> {
+  async findActiveOtpRequest(email: string, now: Date): Promise<OtpRequestRecord | null> {
     const rows = await query<OtpRow>(
-      `SELECT id, phone, code_hash, attempts, max_attempts, expires_at, consumed_at, created_at
+      `SELECT id, email, code_hash, attempts, max_attempts, expires_at, consumed_at, created_at
          FROM otp_requests
-        WHERE phone = $1
+        WHERE lower(email) = lower($1)
           AND consumed_at IS NULL
           AND expires_at > $2
         ORDER BY created_at DESC
         LIMIT 1`,
-      [phone, now]
+      [email, now]
     );
     const row = rows[0];
     if (!row) return null;
 
     return {
       id: row.id,
-      phone: row.phone,
+      email: row.email,
       codeHash: row.code_hash,
       attempts: row.attempts,
       maxAttempts: row.max_attempts,
@@ -376,6 +400,21 @@ export class PgAuthRepository implements AuthRepository {
     return rows[0]?.exists ?? false;
   }
 
+  async findActivePolicyVersion(code: string): Promise<ActivePolicyVersion | null> {
+    const rows = await query<ActivePolicyVersion>(
+      `SELECT id, code, version
+         FROM policy_versions
+        WHERE code = $1
+          AND is_active
+          AND effective_from <= now()
+          AND (effective_to IS NULL OR effective_to > now())
+        ORDER BY effective_from DESC, version DESC
+        LIMIT 1`,
+      [code]
+    );
+    return rows[0] ?? null;
+  }
+
   async createUser(input: NewUser): Promise<AuthUserRecord> {
     try {
       await withTransaction(async (client) => {
@@ -398,6 +437,24 @@ export class PgAuthRepository implements AuthRepository {
         await client.query("INSERT INTO user_roles (user_id, role) VALUES ($1, 'customer')", [
           input.id
         ]);
+        // Consent is part of the same transaction: a user never exists without
+        // the policy versions they accepted at sign-up.
+        for (const consent of input.consents ?? []) {
+          await client.query(
+            `INSERT INTO user_consents
+               (user_id, policy_code, policy_version_id, accepted_at, ip, user_agent)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (user_id, policy_version_id) DO NOTHING`,
+            [
+              input.id,
+              consent.policyCode,
+              consent.policyVersionId,
+              consent.acceptedAt,
+              consent.ip,
+              consent.userAgent
+            ]
+          );
+        }
       });
     } catch (err) {
       if (isUniqueViolation(err)) {
