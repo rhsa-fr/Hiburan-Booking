@@ -419,6 +419,7 @@ export function settleBooking(
     `/api/v1/admin/bookings/${encodeURIComponent(id)}/settle`,
     {
       method: 'POST',
+      headers: idempotencyHeaders(), // Idempotency-Key
       body: JSON.stringify(input)
     }
   );

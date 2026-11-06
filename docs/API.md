@@ -48,11 +48,15 @@ Query: `page` (mulai 1, default 1), `page_size` (default 20, maks 100).
 **Uang** — selalu integer rupiah (`1500000`), tidak pernah string atau desimal.
 Format tampilan dilakukan klien.
 
-**Idempotensi** — `POST /bookings`, `POST /payments/dp`, dan `POST /payments/settlement` mewajibkan header
-`Idempotency-Key` (16–80 karakter). Request dengan key dan payload sama
-mengembalikan hasil yang sama; replay ditandai header `Idempotency-Replayed: true`.
-`POST /bookings` juga menerima `client_generated_id` (UUID) sebagai fallback dan
-sebagai guard unik per pelanggan.
+**Idempotensi** — `POST /bookings`, `POST /payments/dp`, `POST /payments/settlement`,
+`POST /admin/bookings/:id/settle`, `POST /admin/release`, `POST /admin/payouts`, dan
+`POST /admin/payouts/:id/approve` mewajibkan header `Idempotency-Key` (16–80 karakter).
+Request dengan key dan payload sama mengembalikan hasil yang sama; replay ditandai
+header `Idempotency-Replayed: true`. Key yang sama dengan payload berbeda dijawab
+`409 IDEMPOTENCY_MISMATCH` **setelah permintaan pertama berhasil** — selama permintaan
+pertama gagal, klaimnya ditandai `failed` dan key itu boleh dicoba ulang dengan payload
+yang sama. `POST /bookings` juga menerima `client_generated_id` (UUID) sebagai fallback
+dan sebagai guard unik per pelanggan.
 
 ---
 
@@ -934,6 +938,46 @@ hanya bila paket itu milik vendor yang sama.
 
 `POST /admin/media/:id/reject` wajib menyertakan `note` (minimal 5 karakter).
 Media yang sudah diproses tidak bisa diproses ulang (`CONFLICT`).
+
+### `POST /admin/bookings/:id/settle`
+
+Pelunasan manual (transfer bank atau tunai) untuk booking `dp_paid`. Peran
+`admin_finance`/`admin_super`; header `Idempotency-Key` (16–80 karakter)
+**wajib** — tanpa header itu permintaan ditolak `400 VALIDATION_ERROR` sebelum
+menyentuh data.
+
+```json
+{
+  "amount_idr": 3550000,
+  "method": "transfer_manual",
+  "reference": "BCA 21/10/2026",
+  "note": "Transfer telat"
+}
+```
+
+`amount_idr` harus persis sisa tagihan (`total_customer_idr - dp_amount_idr`)
+versi server; selisih sekecil apa pun dijawab `409`. Respons:
+
+```json
+{
+  "booking_id": "uuid",
+  "payment_id": "uuid",
+  "journal_entry_id": "uuid",
+  "payment_status": "fully_paid",
+  "outstanding_before_idr": 3550000,
+  "already_settled": false
+}
+```
+
+Retry aman: key yang sama dengan payload yang sama mengembalikan respons
+pertama (tidak ada jurnal atau perubahan booking kedua), sedangkan key yang
+sama dengan payload berbeda dijawab `409 IDEMPOTENCY_MISMATCH` **setelah
+permintaan pertama berhasil**. Klaim key disimpan di luar transaksi uang dan
+sudah ter-commit sebelum langkah bisnis mulai; bila proses mati setelah uang
+ter-commit tetapi sebelum klaim ditandai selesai, retry menjalankan ulang
+langkah bisnis dan tidak menggandakan efek karena booking dikunci `FOR UPDATE`,
+status `fully_paid` dicek ulang, dan jurnal memakai `source_event_key`. Key baru
+diperlukan bila operator memang ingin mencatat pelunasan lain.
 
 ### Payout vendor
 

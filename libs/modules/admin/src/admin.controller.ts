@@ -157,15 +157,15 @@ export class AdminController {
   async settleBooking(
     @Param('id') id: string,
     @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
     @Headers('x-request-id') requestId: string | undefined,
     @Req() request: AuthenticatedRequest
   ): Promise<SettleBookingResponse> {
-    const result = await this.admin.settleBookingManual(
-      id,
-      body,
-      settleActor(request),
-      requestId ?? null
-    );
+    const result = await this.admin.settleBookingManual(id, body, {
+      actor: settleActor(request),
+      idempotencyKey: requireIdempotencyKey(idempotencyKey),
+      requestId: requestId ?? null
+    });
     return {
       booking_id: result.booking_id,
       payment_id: result.payment_id,
