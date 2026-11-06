@@ -1,13 +1,14 @@
 import { createHmac } from 'node:crypto';
 import type { ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { AppError } from '@tarlink/core/errors';
 import {
   AuthGuard,
   ROLES_KEY,
   Roles,
   RolesGuard,
+  configureSessionChecker,
   signAccessToken,
   verifyAccessToken,
   type Role
@@ -109,6 +110,9 @@ describe('HS256 access tokens', () => {
 describe('AuthGuard', () => {
   const guard = new AuthGuard(SECRET);
 
+  // `isSessionActive` reads module state; never leak a checker into another test.
+  afterEach(() => configureSessionChecker(null));
+
   it('sets request.user from verified claims', () => {
     const token = signAccessToken({ sub: 'user-9', roles: ['customer'] }, SECRET, 900);
     const request: FakeRequest = { headers: { authorization: `Bearer ${token}` } };
@@ -129,6 +133,62 @@ describe('AuthGuard', () => {
     const request: FakeRequest = { headers: { authorization: `Basic ${token}` } };
 
     expectAppError(() => guard.canActivate(contextFor(request)), 'UNAUTHENTICATED');
+  });
+
+  it('rejects a token whose session was revoked', async () => {
+    const seen: Array<[string, string]> = [];
+    configureSessionChecker({
+      isActive: async (userId, jti) => {
+        seen.push([userId, jti]);
+        return false;
+      }
+    });
+    const token = signAccessToken(
+      { sub: 'user-9', roles: ['customer'], jti: 'session-9' },
+      SECRET,
+      900
+    );
+    const request: FakeRequest = { headers: { authorization: `Bearer ${token}` } };
+
+    const error = await Promise.resolve(guard.canActivate(contextFor(request))).catch(
+      (err: unknown) => err
+    );
+
+    expect(seen).toEqual([['user-9', 'session-9']]);
+    expect(error).toBeInstanceOf(AppError);
+    expect((error as AppError).code).toBe('UNAUTHENTICATED');
+    expect((error as AppError).message).toContain('Sesi sudah dicabut');
+  });
+
+  it('propagates a failing session check instead of allowing the request', async () => {
+    configureSessionChecker({
+      isActive: async () => {
+        throw new Error('session store unavailable');
+      }
+    });
+    const token = signAccessToken(
+      { sub: 'user-9', roles: ['customer'], jti: 'session-9' },
+      SECRET,
+      900
+    );
+    const request: FakeRequest = { headers: { authorization: `Bearer ${token}` } };
+
+    await expect(Promise.resolve(guard.canActivate(contextFor(request)))).rejects.toThrow(
+      'session store unavailable'
+    );
+  });
+
+  it('allows a jti token when no checker is configured', async () => {
+    configureSessionChecker(null);
+    const token = signAccessToken(
+      { sub: 'user-9', roles: ['customer'], jti: 'session-9' },
+      SECRET,
+      900
+    );
+    const request: FakeRequest = { headers: { authorization: `Bearer ${token}` } };
+
+    await expect(Promise.resolve(guard.canActivate(contextFor(request)))).resolves.toBe(true);
+    expect(request.user).toMatchObject({ id: 'user-9', jti: 'session-9' });
   });
 });
 

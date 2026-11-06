@@ -3,7 +3,12 @@ import type { Duplex } from 'node:stream';
 import type { Notification, Pool, PoolClient } from 'pg';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import { AppError } from '@tarlink/core/errors';
-import { verifyAccessToken, type AccessTokenClaims, type Role } from '@tarlink/platform/auth';
+import {
+  isSessionActive,
+  verifyAccessToken,
+  type AccessTokenClaims,
+  type Role
+} from '@tarlink/platform/auth';
 import type { ChatMessageView, ChatRole } from './chat.contracts';
 import { ChatService } from './chat.service';
 
@@ -136,6 +141,8 @@ export function parseChatNotification(payload: string): ChatMessageView | null {
 interface ClientState {
   userId: string;
   roles: Role[];
+  /** Session id from the token; re-checked per event so logout closes the socket. */
+  jti: string;
   rooms: Set<string>;
 }
 
@@ -176,29 +183,32 @@ export class ChatGateway {
     this.wss.close();
   }
 
-  private readonly handleUpgrade = (
+  /**
+   * Validates everything that can still reject the upgrade. Returns the claims
+   * to accept with, or null after the socket has already been rejected.
+   */
+  private async authorizeUpgrade(
     request: IncomingMessage,
-    socket: Duplex,
-    head: Buffer
-  ): void => {
+    socket: Duplex
+  ): Promise<(AccessTokenClaims & { jti: string }) | null> {
     const url = new URL(request.url ?? '/', 'http://localhost');
     if (url.pathname !== CHAT_WS_PATH) {
       // No other WebSocket endpoint exists; leaving the socket open would leak.
       this.rejectUpgrade(socket, 404, 'Not Found');
-      return;
+      return null;
     }
 
     const origin =
       typeof request.headers['origin'] === 'string' ? request.headers['origin'] : undefined;
     if (!isChatOriginAllowed(origin, this.options.allowedOrigins ?? [])) {
       this.rejectUpgrade(socket, 403, 'Forbidden');
-      return;
+      return null;
     }
 
     const token = extractChatToken(request, url);
     if (!token) {
       this.rejectUpgrade(socket, 401, 'Unauthorized');
-      return;
+      return null;
     }
 
     let claims: AccessTokenClaims;
@@ -206,23 +216,67 @@ export class ChatGateway {
       claims = verifyAccessToken(token, this.options.jwtSecret);
     } catch {
       this.rejectUpgrade(socket, 401, 'Unauthorized');
-      return;
+      return null;
     }
 
+    // A signature only proves the token was minted; without a session id the
+    // revocation check cannot run, so the upgrade fails closed.
+    const { jti } = claims;
+    if (!jti) {
+      this.rejectUpgrade(socket, 401, 'Unauthorized');
+      return null;
+    }
+
+    let active: boolean;
+    try {
+      active = await isSessionActive(claims.sub, jti);
+    } catch {
+      // Database unavailable: never let a logout survive on an outage.
+      this.rejectUpgrade(socket, 401, 'Unauthorized');
+      return null;
+    }
+    if (!active) {
+      this.rejectUpgrade(socket, 401, 'Unauthorized');
+      return null;
+    }
+
+    return { ...claims, jti };
+  }
+
+  private readonly handleUpgrade = async (
+    request: IncomingMessage,
+    socket: Duplex,
+    head: Buffer
+  ): Promise<void> => {
+    let claims: (AccessTokenClaims & { jti: string }) | null;
+    try {
+      claims = await this.authorizeUpgrade(request, socket);
+    } catch {
+      // `server.on('upgrade')` ignores the returned promise; an escaping error
+      // would become an unhandled rejection instead of a clean 401.
+      if (!socket.destroyed) this.rejectUpgrade(socket, 401, 'Unauthorized');
+      return;
+    }
+    if (!claims) return;
+
+    const accepted = claims;
     this.wss.handleUpgrade(request, socket, head, (ws) => {
-      this.onConnection(ws, claims.sub, claims.roles);
+      this.onConnection(ws, accepted.sub, accepted.roles, accepted.jti);
     });
   };
 
   private rejectUpgrade(socket: Duplex, status: number, reason: string): void {
+    // The client may disconnect while the awaited session query runs; writing to
+    // a destroyed socket throws out of a fire-and-forget upgrade listener.
+    if (socket.destroyed) return;
     socket.write(
       `HTTP/1.1 ${status} ${reason}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`
     );
     socket.destroy();
   }
 
-  private onConnection(ws: WebSocket, userId: string, roles: Role[]): void {
-    this.clients.set(ws, { userId, roles, rooms: new Set() });
+  private onConnection(ws: WebSocket, userId: string, roles: Role[], jti: string): void {
+    this.clients.set(ws, { userId, roles, jti, rooms: new Set() });
     ws.on('message', (data) => {
       void this.onMessage(ws, data);
     });
@@ -238,8 +292,26 @@ export class ChatGateway {
     try {
       const event = parseChatClientEvent(rawToString(data));
 
+      // `ping` stays unauthenticated: keeping the socket warm must not cost a
+      // database round trip.
       if (event.type === 'ping') {
         this.send(ws, { type: 'pong' });
+        return;
+      }
+
+      // The upgrade only proved the session was active then. Logout or account
+      // deletion mid-session must stop this socket, so every other event
+      // re-checks before it can read or write chat data.
+      let active: boolean;
+      try {
+        active = await isSessionActive(state.userId, state.jti);
+      } catch {
+        // Database unavailable: fail closed instead of trusting a stale socket.
+        active = false;
+      }
+      if (!active) {
+        ws.close(4401, 'session revoked');
+        this.dropClient(ws);
         return;
       }
 

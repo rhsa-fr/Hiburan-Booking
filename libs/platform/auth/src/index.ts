@@ -204,6 +204,17 @@ export function configureSessionChecker(checker: SessionChecker | null): void {
   sessionChecker = checker;
 }
 
+/**
+ * Single source of truth for revocation. With no checker wired (unit tests,
+ * scripts) the session is assumed active; otherwise the answer comes from the
+ * configured checker. Callers that require a session id validate `jti` first.
+ */
+export async function isSessionActive(userId: string, jti: string): Promise<boolean> {
+  const checker = sessionChecker;
+  if (!checker) return true;
+  return checker.isActive(userId, jti);
+}
+
 @Injectable()
 export class AuthGuard implements CanActivate {
   constructor(@Inject(JWT_SECRET) private readonly secret: string) {}
@@ -226,10 +237,10 @@ export class AuthGuard implements CanActivate {
     };
     request.user = user;
 
-    const checker = sessionChecker;
-    if (!checker || !claims.jti) return true;
+    // A token without a session id predates revocation checks; keep accepting it.
+    if (!claims.jti) return true;
 
-    return checker.isActive(claims.sub, claims.jti).then((active) => {
+    return isSessionActive(claims.sub, claims.jti).then((active) => {
       if (!active) throw new AppError('UNAUTHENTICATED', 'Sesi sudah dicabut, silakan masuk lagi');
       return true;
     });
