@@ -997,6 +997,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
                 const SizedBox(height: Sp.md),
                 for (final method in _paymentMethods) ...[
                   _MethodOption(
+                    method: method.value,
                     label: method.label,
                     selected: _method == method.value,
                     onTap: _paying
@@ -1065,6 +1066,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
               const SizedBox(height: Sp.md),
               for (final method in _paymentMethods) ...[
                 _MethodOption(
+                  method: method.value,
                   label: method.label,
                   selected: _method == method.value,
                   onTap: _paying
@@ -1770,13 +1772,75 @@ class _Countdown extends StatelessWidget {
   }
 }
 
+/// Official payment-method wordmark (PNG, transparent) shown next to each
+/// option. Kept as a fixed-size tile so the row height never depends on the
+/// logo's aspect ratio.
+class _PaymentBadge extends StatelessWidget {
+  const _PaymentBadge({required this.method});
+
+  final String method;
+
+  static const _assets = <String, String>{
+    'qris': 'assets/images/payments/qris.png',
+    'va_bca': 'assets/images/payments/bca.png',
+    'va_bni': 'assets/images/payments/bni.png',
+    'va_bri': 'assets/images/payments/bri.png',
+    'va_mandiri': 'assets/images/payments/mandiri.png',
+  };
+
+  /// Text used only if the bitmap fails to decode.
+  static const _fallback = <String, String>{
+    'qris': 'QRIS',
+    'va_bca': 'BCA',
+    'va_bni': 'BNI',
+    'va_bri': 'BRI',
+    'va_mandiri': 'mandiri',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final asset = _assets[method];
+    if (asset == null) return const SizedBox.shrink();
+    return Container(
+      width: 58,
+      height: 30,
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 5),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: AppColors.line),
+      ),
+      child: Image.asset(
+        asset,
+        fit: BoxFit.contain,
+        filterQuality: FilterQuality.high,
+        excludeFromSemantics: true,
+        errorBuilder: (_, _, _) => Center(
+          child: Text(
+            _fallback[method] ?? '',
+            maxLines: 1,
+            style: const TextStyle(
+              color: AppColors.ink,
+              fontSize: 9,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _MethodOption extends StatelessWidget {
   const _MethodOption({
+    this.method,
     required this.label,
     required this.selected,
     required this.onTap,
   });
 
+  /// Payment method code (`qris`, `va_bca`, ...). Null for non-payment options.
+  final String? method;
   final String label;
   final bool selected;
   final VoidCallback? onTap;
@@ -1812,7 +1876,11 @@ class _MethodOption extends StatelessWidget {
                 size: 22,
                 color: selected ? AppColors.primary : AppColors.inkMuted,
               ),
-              const SizedBox(width: Sp.md),
+              if (method != null) ...[
+                const SizedBox(width: Sp.sm),
+                ExcludeSemantics(child: _PaymentBadge(method: method!)),
+              ],
+              const SizedBox(width: Sp.sm),
               Expanded(child: Text(label, style: text.titleMedium)),
             ],
           ),
