@@ -45,7 +45,8 @@ import {
   mapVendorCategory,
   mapVendorDetail,
   mapVendorSummary,
-  mapVerifyResult
+  mapVerifyResult,
+  toIso
 } from './mappers';
 import { idrToPgParam } from './money';
 import { CatalogRepository } from './catalog.repository';
@@ -85,11 +86,26 @@ export interface SetVendorCategoriesInput {
   categories: ReadonlyArray<{ slug: string; is_primary?: boolean }>;
 }
 
-export interface VerifyContext {
+export interface ActorContext {
   actorId: string;
   /** `audit_logs.actor_role`; `admin_super` for this route. */
   actorRole: string | null;
   requestId: string | null;
+}
+
+export type VerifyContext = ActorContext;
+
+export interface SuspendVendorInput {
+  reason: string;
+  note?: string;
+}
+
+export interface SuspendVendorResult {
+  id: string;
+  verification_status: string;
+  suspended_at: string | null;
+  suspension_reason: string | null;
+  suspended_by: string | null;
 }
 
 export interface CreatePackageInput {
@@ -264,6 +280,13 @@ export class CatalogService {
       const before = await this.repository.lockVendor(client, id);
       if (!before) throw new AppError('NOT_FOUND', 'Vendor tidak ditemukan');
 
+      if (before.verification_status === 'suspended') {
+        throw new AppError(
+          'CONFLICT',
+          'Vendor sedang ditangguhkan. Batalkan penangguhan terlebih dahulu sebelum memverifikasi.'
+        );
+      }
+
       const after =
         input.decision === 'approve'
           ? await this.repository.setApproved(client, id, context.actorId)
@@ -287,6 +310,129 @@ export class CatalogService {
       });
 
       return mapVerifyResult(after);
+    });
+  }
+
+  async suspendVendor(
+    id: string,
+    input: SuspendVendorInput,
+    context: ActorContext
+  ): Promise<SuspendVendorResult> {
+    const trimmedReason = input.reason.trim();
+    if (trimmedReason.length < 10 || trimmedReason.length > 500) {
+      throw new AppError(
+        'VALIDATION_ERROR',
+        'Alasan penangguhan harus antara 10 dan 500 karakter'
+      );
+    }
+
+    return withTransaction(async (client) => {
+      const before = await this.repository.lockVendor(client, id);
+      if (!before) throw new AppError('NOT_FOUND', 'Vendor tidak ditemukan');
+
+      if (before.verification_status === 'suspended') {
+        throw new AppError('CONFLICT', 'Vendor sudah dalam status ditangguhkan');
+      }
+      if (before.verification_status !== 'approved') {
+        throw new AppError(
+          'CONFLICT',
+          `Hanya vendor berstatus approved yang dapat ditangguhkan (status saat ini: ${before.verification_status})`
+        );
+      }
+
+      const after = await this.repository.setSuspended(client, id, {
+        actorId: context.actorId,
+        reason: trimmedReason,
+        previousStatus: 'approved'
+      });
+      if (!after) throw new AppError('NOT_FOUND', 'Vendor tidak ditemukan');
+
+      await this.repository.insertAudit(client, {
+        actorId: context.actorId,
+        actorRole: context.actorRole,
+        action: 'vendor.suspend',
+        entityType: 'vendor',
+        entityId: id,
+        beforeState: {
+          verification_status: before.verification_status,
+          suspended_at: toIso(before.suspended_at ?? null),
+          suspended_by: before.suspended_by ?? null,
+          suspension_reason: before.suspension_reason ?? null,
+          suspension_previous_status: before.suspension_previous_status ?? null
+        },
+        afterState: {
+          verification_status: after.verification_status,
+          suspended_at: toIso(after.suspended_at ?? null),
+          suspended_by: after.suspended_by ?? null,
+          suspension_reason: after.suspension_reason ?? null,
+          suspension_previous_status: after.suspension_previous_status ?? null
+        },
+        requestId: context.requestId
+      });
+
+      return {
+        id: after.id,
+        verification_status: after.verification_status,
+        suspended_at: toIso(after.suspended_at ?? null),
+        suspension_reason: after.suspension_reason ?? null,
+        suspended_by: after.suspended_by ?? null
+      };
+    });
+  }
+
+  async unsuspendVendor(
+    id: string,
+    context: ActorContext
+  ): Promise<SuspendVendorResult> {
+    return withTransaction(async (client) => {
+      const before = await this.repository.lockVendor(client, id);
+      if (!before) throw new AppError('NOT_FOUND', 'Vendor tidak ditemukan');
+
+      if (before.verification_status !== 'suspended') {
+        throw new AppError(
+          'CONFLICT',
+          `Hanya vendor berstatus suspended yang dapat dipulihkan (status saat ini: ${before.verification_status})`
+        );
+      }
+
+      const restoreStatus: 'approved' =
+        before.suspension_previous_status === 'approved' ? 'approved' : 'approved';
+
+      const after = await this.repository.setUnsuspended(client, id, {
+        restoreStatus
+      });
+      if (!after) throw new AppError('NOT_FOUND', 'Vendor tidak ditemukan');
+
+      await this.repository.insertAudit(client, {
+        actorId: context.actorId,
+        actorRole: context.actorRole,
+        action: 'vendor.unsuspend',
+        entityType: 'vendor',
+        entityId: id,
+        beforeState: {
+          verification_status: before.verification_status,
+          suspended_at: toIso(before.suspended_at ?? null),
+          suspended_by: before.suspended_by ?? null,
+          suspension_reason: before.suspension_reason ?? null,
+          suspension_previous_status: before.suspension_previous_status ?? null
+        },
+        afterState: {
+          verification_status: after.verification_status,
+          suspended_at: toIso(after.suspended_at ?? null),
+          suspended_by: after.suspended_by ?? null,
+          suspension_reason: after.suspension_reason ?? null,
+          suspension_previous_status: after.suspension_previous_status ?? null
+        },
+        requestId: context.requestId
+      });
+
+      return {
+        id: after.id,
+        verification_status: after.verification_status,
+        suspended_at: toIso(after.suspended_at ?? null),
+        suspension_reason: after.suspension_reason ?? null,
+        suspended_by: after.suspended_by ?? null
+      };
     });
   }
 

@@ -49,7 +49,11 @@ export const VENDOR_COLUMNS = `
   v.avatar_url,
   v.banner_url,
   v.photo_urls,
-  v.video_url
+  v.video_url,
+  v.suspended_at,
+  v.suspended_by,
+  v.suspension_reason,
+  v.suspension_previous_status::text AS suspension_previous_status
 `;
 
 const PACKAGE_COLUMNS = `
@@ -96,6 +100,11 @@ function escapeLike(value: string): string {
 const PUBLIC_VENDOR_WHERE = `
   v.verification_status = 'approved'
   AND v.is_active
+  AND EXISTS (
+        SELECT 1 FROM regions vr
+         WHERE vr.code = v.region_code
+           AND vr.is_active
+      )
   AND ($1::text IS NULL
        OR v.display_name ILIKE $1 ESCAPE '\\'
        OR v.legal_name ILIKE $1 ESCAPE '\\'
@@ -276,7 +285,7 @@ export class CatalogRepository {
 
   async regionExists(client: PoolClient, code: string): Promise<boolean> {
     const result = await client.query<{ code: string }>(
-      `SELECT code FROM regions WHERE code = $1`,
+      `SELECT code FROM regions WHERE code = $1 AND is_active`,
       [code]
     );
     return result.rowCount === 1;
@@ -542,6 +551,54 @@ export class CatalogRepository {
         WHERE id = $1::uuid
         RETURNING ${VERIFY_RETURNING}`,
       [id, note]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async setSuspended(
+    client: PoolClient,
+    id: string,
+    input: { actorId: string; reason: string; previousStatus: 'approved' }
+  ): Promise<VendorRow | null> {
+    if (!isUuid(id)) return null;
+    const result = await client.query<VendorRow>(
+      `WITH updated AS (
+         UPDATE vendors
+            SET verification_status = 'suspended',
+                suspended_at = now(),
+                suspended_by = $2::uuid,
+                suspension_reason = $3,
+                suspension_previous_status = $4::vendor_verification_status,
+                updated_at = now()
+          WHERE id = $1::uuid
+          RETURNING *
+       )
+       SELECT ${VENDOR_COLUMNS} FROM updated v`,
+      [id, input.actorId, input.reason, input.previousStatus]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async setUnsuspended(
+    client: PoolClient,
+    id: string,
+    input: { restoreStatus: 'approved' }
+  ): Promise<VendorRow | null> {
+    if (!isUuid(id)) return null;
+    const result = await client.query<VendorRow>(
+      `WITH updated AS (
+         UPDATE vendors
+            SET verification_status = $2::vendor_verification_status,
+                suspended_at = NULL,
+                suspended_by = NULL,
+                suspension_reason = NULL,
+                suspension_previous_status = NULL,
+                updated_at = now()
+          WHERE id = $1::uuid
+          RETURNING *
+       )
+       SELECT ${VENDOR_COLUMNS} FROM updated v`,
+      [id, input.restoreStatus]
     );
     return result.rows[0] ?? null;
   }
@@ -836,6 +893,11 @@ export class CatalogRepository {
         WHERE ${predicate}
           AND v.verification_status = 'approved'
           AND v.is_active
+          AND EXISTS (
+                SELECT 1 FROM regions vr
+                 WHERE vr.code = v.region_code
+                   AND vr.is_active
+              )
         LIMIT 1`,
       [idOrSlug]
     );
