@@ -948,10 +948,57 @@ Semua butuh peran `admin`/`operator`.
 | GET | `/admin/vendors/:vendorId/bank-accounts` | Rekening pencairan vendor |
 | POST | `/admin/vendors/:vendorId/bank-accounts/:id/verify` | Verifikasi rekening (`admin_super`) |
 | POST | `/admin/vendors/:vendorId/bank-accounts/:id/reject` | Tolak rekening (`admin_super`) |
+| POST | `/admin/reconciliation/runs` | Jalankan rekonsiliasi lane payment (body `{ provider, report_date }`) |
+| GET | `/admin/reconciliation/runs` | Daftar run (`page`, `page_size` maks 100) |
+| GET | `/admin/reconciliation/runs/:id` | Detail run + daftar diff |
 
 `PATCH /admin/vendors/:id` juga menerima `avatar_url`, `banner_url`,
 `photo_urls`, `video_url`. `POST/PATCH .../packages` menerima
 `personnel_count`, `inclusions[]`, dan `photo_url` (sama seperti portal vendor).
+
+### Rekonsiliasi harian (FR-131)
+
+Fase 1 bersifat **read-only**: membandingkan sisi gateway dengan ledger dan
+menyimpan temuan. Tidak ada jurnal yang diposting dan tidak ada baris
+`payments`/`payouts`/`refunds` yang diubah. Peran: `admin_finance`/`admin_super`.
+
+`POST /admin/reconciliation/runs` menerima `{ "provider": "midtrans" | "pjp",
+"report_date": "YYYY-MM-DD" }` (tanggal kalender WIB). Sisi gateway dibaca dari
+`webhook_events` (`signature_valid = true`, event `payment.paid`) pada
+`received_at`; sisi ledger dari `payments` berstatus `paid` pada `paid_at`.
+Batas hari setengah-terbuka: `>= 00:00 WIB` dan `< 00:00 WIB hari berikutnya`.
+`Idempotency-Key` opsional pada fase ini karena `UNIQUE (provider, scope,
+report_date)` sudah membuat operasi idempoten: panggilan kedua mengembalikan run
+yang sama tanpa menulis diff/audit baru.
+
+Status run: `balanced` bila tidak ada temuan, `discrepancy` bila ada minimal
+satu diff selain `matched`. Respons:
+
+```json
+{
+  "run_id": "uuid",
+  "provider": "midtrans",
+  "report_date": "2026-11-06",
+  "status": "discrepancy",
+  "report_source": "webhook_events",
+  "trigger_source": "admin",
+  "checked_count": 12,
+  "matched_count": 11,
+  "diff_count": 1,
+  "gateway_total_idr": 2400000,
+  "ledger_total_idr": 1200000,
+  "diff_idr": 1200000,
+  "started_at": "2026-11-07T00:00:00.000Z",
+  "finished_at": "2026-11-07T00:00:00.000Z"
+}
+```
+
+`GET /admin/reconciliation/runs/:id` menambahkan `diffs[]` berisi
+`classification` (`matched`, `duplicate`, `missing_in_ledger`,
+`missing_at_gateway`, `amount_mismatch`), `severity`, `external_id`,
+`gateway_amount_idr`, `ledger_amount_idr`, `delta_idr` (`gateway - ledger`), dan
+`detail`. Temuan `duplicate` tidak menambah total karena total memakai satu
+nilai per `external_id` unik.
 
 ### Wilayah (FR-125)
 
