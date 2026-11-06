@@ -14,14 +14,14 @@ Repositori ini berisi **API**, **panel admin**, **worker**, **library domain**, 
 | `apps/api` — NestJS `/v1` | Berjalan | `GET /v1/health` → 200 |
 | `apps/admin` — Next.js | Berjalan | `http://localhost:3002/login` |
 | `apps/worker` — poller PostgreSQL | Berjalan | log `tick=done` tiap interval |
-| `apps/mobile` — Flutter pelanggan | 31 widget test lulus, `flutter analyze` bersih | `cd apps/mobile && flutter test` |
+| `apps/mobile` — Flutter pelanggan | 41 widget test lulus, `flutter analyze` bersih | `cd apps/mobile && flutter test` |
 | `apps/mobile` — portal vendor | dashboard, kalender, saldo, profil, pesanan, paket, media, rekening | login akun `vendor_owner` |
 | Payout vendor + rekening | `payouts`/`payout_items`, rekening terenkripsi, maker-checker, worker rekonsiliasi | `PAYOUT_PROVIDER=local` (default) |
 | Chat booking (FR-050) | REST riwayat/kirim + WebSocket per booking, izin per relasi booking | `GET/POST /v1/bookings/:id/chat/messages`, `WS /v1/chat/ws` |
 | Consent ToS + Privasi (FR-103) | `user_consents` append-only per versi; register wajib mengirim versi aktif | `POST /v1/auth/register`, `GET /v1/policies/:code` |
 | Toggle wilayah (FR-125) | Wilayah nonaktif hilang dari katalog & formulir vendor; panel `/regions` | `GET/PATCH /v1/admin/regions` |
-| Ledger double-entry | 1028 test backend lulus (3 skip) | `npm test` |
-| Skema DB | migrasi `001`-`023` | `npm run migrate` |
+| Ledger double-entry | 1054 test lulus (1031 backend + 23 worker, 3 skip) | `npm test` |
+| Skema DB | migrasi `001`-`023` diterapkan; `024` rekonsiliasi masih WIP | `npm run migrate` |
 
 ## Stack
 
@@ -40,8 +40,8 @@ Repositori ini berisi **API**, **panel admin**, **worker**, **library domain**, 
 | `apps/mobile` | Aplikasi pelanggan Flutter + portal vendor (`lib/features/*`) |
 | `apps/worker` | Job: `expire-unpaid`, `expire-unresponsive`, `expire-holds`, `auto-complete`, `auto-release`, `payout-reconcile`, `outbox`, `cleanup-auth`, `cleanup-media` |
 | `libs/modules/*` | Domain: `auth`, `booking`, `chat`, `payment`, `payout`, `ledger`, `catalog`, `calendar`, `admin`, `notifications`, `vendor-onboarding`, `vendor-portal` |
-| `libs/platform/*` | Fondasi: db, config, auth (JWT + `jti`), error, uang, idempotensi |
-| `db/migrations` | Skema PostgreSQL `001`-`023` |
+| `libs/platform/*` | Fondasi: auth (JWT + `jti`), clock, crypto (AES-256-GCM), idempotensi, outbox, pricing. DB/config/money ada di `apps/api/src/core/` |
+| `db/migrations` | Skema PostgreSQL `001`-`023` diterapkan; `024` WIP |
 | `scripts/` | Migrasi, seed, smoke test, webhook PJP, probe browser |
 | `opendesain/` | Ekspor HTML acuan desain pelanggan & vendor (bukan aplikasi) — lihat [docs/DESIGN-REFERENCES.md](docs/DESIGN-REFERENCES.md) |
 | `docs/` | PRD, tech design, UX flow, brief legal, SOP, arsitektur, API |
@@ -104,7 +104,7 @@ curl http://localhost:3001/v1/health
 |---|---|
 | `npm run migrate` | Terapkan `db/migrations` (ada `migrate:dry` untuk cek) |
 | `npm run verify:db` | Verifikasi invarian DB |
-| `npm test` | Seluruh test backend (Vitest) |
+| `npm test` | Seluruh test backend + worker (Vitest) |
 | `npm run typecheck` | Typecheck API |
 | `npm run typecheck:admin` | Typecheck panel |
 | `npm run build:api` / `start:api` | Bangun / jalankan API (`dist/`) |
@@ -112,7 +112,7 @@ curl http://localhost:3001/v1/health
 | `npm run dev:admin` | Panel dev (`:3002`) |
 | `npm run smoke:booking` / `smoke:admin` / `smoke:catalog` / `smoke:settle` | Smoke test alur nyata |
 | `cd apps/mobile && flutter analyze` | Analisis statis mobile |
-| `cd apps/mobile && flutter test` | 31 widget test mobile |
+| `cd apps/mobile && flutter test` | 41 widget test mobile |
 | `cd apps/mobile && flutter run -d web-server --web-port 8080 --dart-define=API_BASE_URL=http://localhost:3001` | Jalankan mobile web, buka `http://localhost:8080` di Chrome biasa |
 
 ## Pengujian mobile (E2E)
