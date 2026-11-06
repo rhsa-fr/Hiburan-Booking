@@ -31,8 +31,6 @@ export type JournalEventType =
   | 'payout_settled'
   | 'clawback_recognized'
   | 'clawback_paid'
-  | 'margin_sweep'
-  | 'bad_debt_writeoff'
   | 'adjustment'
   | 'reversal';
 
