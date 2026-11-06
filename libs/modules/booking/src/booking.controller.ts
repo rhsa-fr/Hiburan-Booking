@@ -24,6 +24,7 @@ import {
   declineBookingSchema,
   listBookingsQuerySchema,
   noShowBookingSchema,
+  openDisputeSchema,
   parseInput
 } from './dto';
 import { RequestIdInterceptor } from './request-context';
@@ -143,5 +144,31 @@ export class BookingController {
   ) {
     const dto = parseInput(noShowBookingSchema, body);
     return { data: await this.bookings.noShow(id, dto, user) };
+  }
+
+  /** FR-056: a participant opens a dispute within 7 days of the event. */
+  @Post('bookings/:id/disputes')
+  @HttpCode(201)
+  @Roles('customer', 'vendor_owner')
+  async openDispute(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @CurrentUser() user: AuthUser
+  ) {
+    const dto = parseInput(openDisputeSchema, body);
+    return { data: await this.bookings.openDispute(id, dto, user) };
+  }
+
+  @Get('bookings/:id/disputes')
+  @Roles(
+    'customer',
+    'vendor_owner',
+    'vendor_member',
+    'admin_support',
+    'admin_finance',
+    'admin_super'
+  )
+  async listDisputes(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return { data: await this.bookings.listBookingDisputes(id, user) };
   }
 }

@@ -330,6 +330,75 @@ agar dana tidak bisa dirilis.
 
 Konflik status → `409`.
 
+### `POST /bookings/:id/disputes`
+
+FR-056: pelanggan atau vendor membuka sengketa sendiri di dalam **7 hari setelah
+acara** (`dispute_window_ends_at` = `scheduled_end_at` + 7 hari). Wajib bearer token
+pemilik booking (`customer`) atau vendor yang berwenang (`vendor_owner`). Admin
+**tidak** memakai endpoint ini; admin menangani antrean `/admin/disputes`.
+
+```json
+{
+  "reason_code": "quality",
+  "description": "Fotografer tidak datang sesuai paket yang disepakati."
+}
+```
+
+- `reason_code` wajib salah satu dari: `not_as_described`, `late_arrival`, `fraud`,
+  `quality`, `cancellation_abuse`, `other`. `no_show` tidak dapat dipilih di sini —
+  jalur itu hanya lewat `POST /bookings/:id/no-show`.
+- `description` wajib 10–1000 karakter.
+
+Status `201 Created`. Respons:
+
+```json
+{
+  "data": {
+    "dispute_id": "uuid",
+    "booking_id": "uuid",
+    "status": "open",
+    "reason_code": "quality",
+    "description": "…",
+    "opened_at": "2026-11-07T10:00:00.000Z",
+    "sla_due_at": "2026-11-10T10:00:00.000Z"
+  }
+}
+```
+
+Efeknya, dalam satu transaksi: settlement `held` → `disputed`
+(`dispute.open`) atau settlement `released` → `disputed`
+(`dispute.open_post_release`, hanya pelanggan), satu baris `disputes` baru,
+satu baris riwayat, dan outbox `booking.dispute_opened`. Baris sengketa memakai
+SLA admin **72 jam** (`sla_due_at = opened_at + 72 jam`).
+
+`409 CONFLICT` bila: jendela 7 hari sudah lewat, settlement bukan `held`/`released`,
+atau sudah ada sengketa aktif untuk booking tersebut. `403 FORBIDDEN` bila pemanggil
+bukan peserta booking.
+
+### `GET /bookings/:id/disputes`
+
+Daftar sengketa booking, urut `opened_at` terbaru. Boleh diakses pelanggan pemilik
+booking, vendor terkait (`vendor_owner` / `vendor_member` yang berwenang), dan admin
+(`admin_support` / `admin_finance` / `admin_super`). Pemanggil lain → `403 FORBIDDEN`.
+
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "status": "open",
+      "reason_code": "quality",
+      "description": "…",
+      "opened_at": "2026-11-07T10:00:00.000Z",
+      "sla_due_at": "2026-11-10T10:00:00.000Z",
+      "resolved_at": null,
+      "resolution": null,
+      "resolution_note": null
+    }
+  ]
+}
+```
+
 ### `POST /bookings/:bookingId/review`
 
 Mengirim ulasan dan rating untuk booking yang sudah `completed`. Wajib bearer token pemilik booking.
