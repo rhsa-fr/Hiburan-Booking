@@ -84,6 +84,13 @@ const EnvSchema = z.object({
   BANK_ACCOUNT_ENCRYPTION_KEY: z.string().optional(),
   BANK_ACCOUNT_ENCRYPTION_KEY_PREVIOUS: z.string().optional(),
   BANK_ACCOUNT_KEY_ID: z.string().default('v1'),
+  /**
+   * base64(32 bytes) for the admin TOTP secret. Optional on purpose: dev/test
+   * must boot without it, and only enrollment fails when it is missing.
+   */
+  TOTP_ENCRYPTION_KEY: z.string().optional(),
+  TOTP_ENCRYPTION_KEY_PREVIOUS: z.string().optional(),
+  TOTP_KEY_ID: z.string().default('v1'),
   /** Local upload directory; relative paths resolve from the repo root. */
   UPLOAD_DIR: z.string().default('storage/uploads'),
   /** Private uploads (KTP). Never served by the public media route. */

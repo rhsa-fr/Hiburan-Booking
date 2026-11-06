@@ -42,6 +42,9 @@ import { createMailer } from './mailer';
           otpDevMode: cfg.OTP_DEV_MODE,
           loginIpRateLimitMax: cfg.LOGIN_IP_RATE_LIMIT_MAX,
           otpIpRateLimitMax: cfg.OTP_IP_RATE_LIMIT_MAX,
+          totpEncryptionKey: cfg.TOTP_ENCRYPTION_KEY,
+          totpEncryptionKeyPrevious: cfg.TOTP_ENCRYPTION_KEY_PREVIOUS,
+          totpKeyId: cfg.TOTP_KEY_ID,
           googleVerifier: googleClientId ? new GoogleTokenInfoVerifier(googleClientId) : null,
           mailer: createMailer({
             nodeEnv: cfg.NODE_ENV,

@@ -81,11 +81,66 @@ export interface NewUser {
   readonly consents?: readonly NewUserConsent[];
 }
 
+/** Steps of the login pipeline; quotas count per stage (migration 025). */
+export type LoginStage = 'password' | 'totp' | 'session';
+
 export interface NewLoginAttempt {
   readonly email: string;
   readonly ip: string | null;
   readonly succeeded: boolean;
   readonly createdAt: Date;
+  /** Defaults to `password` so existing callers keep their meaning. */
+  readonly stage?: LoginStage;
+}
+
+/** FR-128: temporary ticket between the password step and the TOTP step. */
+export type AdminChallengeKind = 'enroll' | 'verify';
+
+export interface AdminChallengeRecord {
+  readonly id: string;
+  readonly userId: string;
+  readonly kind: AdminChallengeKind;
+  readonly attempts: number;
+  readonly maxAttempts: number;
+  readonly expiresAt: Date;
+  readonly consumedAt: Date | null;
+}
+
+export interface NewAdminChallenge {
+  readonly id: string;
+  readonly userId: string;
+  readonly kind: AdminChallengeKind;
+  /** sha256 of the opaque token; the plaintext only ever reaches the client. */
+  readonly tokenHash: string;
+  readonly maxAttempts: number;
+  readonly expiresAt: Date;
+  readonly requesterIp: string | null;
+  readonly userAgent: string | null;
+  readonly createdAt: Date;
+}
+
+/**
+ * 2FA state of a user. `secretEncrypted` is AES-256-GCM ciphertext and is only
+ * decrypted inside `AuthService`; it never leaves this interface as plaintext.
+ */
+export interface TwoFactorState extends AuthUserRecord {
+  readonly twoFactorEnabled: boolean;
+  readonly totpSecretEncrypted: Buffer | null;
+  readonly totpKeyId: string | null;
+}
+
+export interface TwoFactorResetInput {
+  readonly userId: string;
+  readonly actorId: string;
+  readonly actorRole: Role | null;
+  /** `audit_logs.request_id` is VARCHAR(40); the service truncates it. */
+  readonly requestId: string | null;
+  readonly at: Date;
+}
+
+export interface TwoFactorResetOutcome {
+  readonly userId: string;
+  readonly revokedSessions: number;
 }
 
 export interface NewSession {
@@ -186,6 +241,47 @@ export interface AuthRepository {
   revokeFamily(familyId: string, at: Date): Promise<number>;
   /** Revokes the session owning `refreshTokenHash` (logout by refresh token). */
   revokeByRefreshHash(refreshTokenHash: string, at: Date): Promise<number>;
+  /* ------------------------------------------------------------------ 2FA */
+  /** 2FA state of an active user; null when the account does not exist. */
+  findTwoFactorState(userId: string): Promise<TwoFactorState | null>;
+  insertAdminChallenge(input: NewAdminChallenge): Promise<void>;
+  /** Challenge lookup by sha256(token); the plaintext token is never stored. */
+  findChallengeByTokenHash(tokenHash: string): Promise<AdminChallengeRecord | null>;
+  /**
+   * Atomically bumps `attempts` while the challenge is open and under its cap.
+   * Returns the new count, or null when the row is consumed, expired or locked,
+   * so two concurrent guesses cannot both pass the limit.
+   */
+  incrementChallengeAttempt(id: string, now: Date): Promise<number | null>;
+  /** Atomically marks a challenge consumed; false when another caller won. */
+  consumeChallenge(id: string, consumedAt: Date): Promise<boolean>;
+  /**
+   * Stores the freshly generated TOTP secret (still disabled) and replaces any
+   * previous unverified secret. False when 2FA is already enabled.
+   */
+  storeTotpSecret(
+    userId: string,
+    secretEncrypted: Buffer,
+    keyId: string,
+    at: Date
+  ): Promise<boolean>;
+  /**
+   * Enables 2FA and replaces the backup-code set in one transaction. False when
+   * another request already enabled it.
+   */
+  completeTwoFactorEnrollment(
+    userId: string,
+    backupCodeHashes: readonly string[],
+    at: Date
+  ): Promise<boolean>;
+  /** Claims one unused backup code atomically; false when it is unknown/used. */
+  markBackupCodeUsed(userId: string, codeHash: string, at: Date): Promise<boolean>;
+  /**
+   * Clears every TOTP artefact of the target, revokes all of its sessions and
+   * writes `audit_logs` in one transaction. NOT_FOUND when the target is not an
+   * active admin.
+   */
+  resetTwoFactor(input: TwoFactorResetInput): Promise<TwoFactorResetOutcome>;
   /**
    * Anonymises the user's personal data, revokes sessions and roles, and
    * records a completed deletion request in one transaction. The row is kept so
@@ -238,6 +334,25 @@ interface DeletionRow {
   reason: string | null;
   requested_at: Date;
   completed_at: Date | null;
+}
+
+interface TwoFactorRow {
+  id: string;
+  phone: string | null;
+  email: string | null;
+  two_factor_enabled: boolean;
+  totp_secret_encrypted: Buffer | null;
+  totp_key_id: string | null;
+}
+
+interface ChallengeRow {
+  id: string;
+  user_id: string;
+  kind: AdminChallengeKind;
+  attempts: number;
+  max_attempts: number;
+  expires_at: Date;
+  consumed_at: Date | null;
 }
 
 const SELECT_DELETION_SQL = `
@@ -496,7 +611,12 @@ export class PgAuthRepository implements AuthRepository {
 
   async countFailedLoginAttempts(email: string, since: Date): Promise<number> {
     const rows = await query<{ count: number }>(
-      'SELECT COUNT(*)::int AS count FROM login_attempts WHERE lower(email) = lower($1) AND succeeded = false AND created_at >= $2',
+      `SELECT COUNT(*)::int AS count
+         FROM login_attempts
+        WHERE lower(email) = lower($1)
+          AND succeeded = false
+          AND stage = 'password'
+          AND created_at >= $2`,
       [email, since]
     );
     return rows[0]?.count ?? 0;
@@ -504,7 +624,12 @@ export class PgAuthRepository implements AuthRepository {
 
   async countFailedLoginAttemptsByIp(ip: string, since: Date): Promise<number> {
     const rows = await query<{ count: number }>(
-      'SELECT COUNT(*)::int AS count FROM login_attempts WHERE ip = $1::inet AND succeeded = false AND created_at >= $2',
+      `SELECT COUNT(*)::int AS count
+         FROM login_attempts
+        WHERE ip = $1::inet
+          AND succeeded = false
+          AND stage = 'password'
+          AND created_at >= $2`,
       [ip, since]
     );
     return rows[0]?.count ?? 0;
@@ -512,8 +637,9 @@ export class PgAuthRepository implements AuthRepository {
 
   async recordLoginAttempt(input: NewLoginAttempt): Promise<void> {
     await query(
-      'INSERT INTO login_attempts (email, ip, succeeded, created_at) VALUES ($1, $2::inet, $3, $4)',
-      [input.email, input.ip, input.succeeded, input.createdAt]
+      `INSERT INTO login_attempts (email, ip, succeeded, created_at, stage)
+       VALUES ($1, $2::inet, $3, $4, $5)`,
+      [input.email, input.ip, input.succeeded, input.createdAt, input.stage ?? 'password']
     );
   }
 
@@ -767,5 +893,223 @@ export class PgAuthRepository implements AuthRepository {
     const rows = await query<DeletionRow>(`${SELECT_DELETION_SQL} LIMIT 1`, [userId]);
     const row = rows[0];
     return row ? mapDeletion(row) : null;
+  }
+
+  /* --------------------------------------------------------------- 2FA/FR-128 */
+
+  async findTwoFactorState(userId: string): Promise<TwoFactorState | null> {
+    const rows = await query<TwoFactorRow>(
+      `SELECT id, phone, email, two_factor_enabled, totp_secret_encrypted, totp_key_id
+         FROM users
+        WHERE id = $1 AND status = 'active'`,
+      [userId]
+    );
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      id: row.id,
+      phone: row.phone,
+      email: row.email,
+      passwordHash: null,
+      twoFactorEnabled: row.two_factor_enabled,
+      totpSecretEncrypted: row.totp_secret_encrypted,
+      totpKeyId: row.totp_key_id
+    };
+  }
+
+  async insertAdminChallenge(input: NewAdminChallenge): Promise<void> {
+    await query(
+      `INSERT INTO admin_2fa_challenges
+         (id, user_id, kind, token_hash, max_attempts, expires_at, requester_ip, user_agent, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::inet, $8, $9)`,
+      [
+        input.id,
+        input.userId,
+        input.kind,
+        input.tokenHash,
+        input.maxAttempts,
+        input.expiresAt,
+        input.requesterIp,
+        input.userAgent,
+        input.createdAt
+      ]
+    );
+  }
+
+  async findChallengeByTokenHash(tokenHash: string): Promise<AdminChallengeRecord | null> {
+    const rows = await query<ChallengeRow>(
+      `SELECT id, user_id, kind, attempts, max_attempts, expires_at, consumed_at
+         FROM admin_2fa_challenges
+        WHERE token_hash = $1
+        LIMIT 1`,
+      [tokenHash]
+    );
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      id: row.id,
+      userId: row.user_id,
+      kind: row.kind,
+      attempts: row.attempts,
+      maxAttempts: row.max_attempts,
+      expiresAt: row.expires_at,
+      consumedAt: row.consumed_at
+    };
+  }
+
+  async incrementChallengeAttempt(id: string, now: Date): Promise<number | null> {
+    const rows = await query<{ attempts: number }>(
+      `UPDATE admin_2fa_challenges
+          SET attempts = attempts + 1
+        WHERE id = $1
+          AND consumed_at IS NULL
+          AND expires_at > $2
+          AND attempts < max_attempts
+        RETURNING attempts`,
+      [id, now]
+    );
+    return rows[0]?.attempts ?? null;
+  }
+
+  async consumeChallenge(id: string, consumedAt: Date): Promise<boolean> {
+    const rows = await query<{ id: string }>(
+      `UPDATE admin_2fa_challenges
+          SET consumed_at = $2
+        WHERE id = $1 AND consumed_at IS NULL AND expires_at > $2
+        RETURNING id`,
+      [id, consumedAt]
+    );
+    return rows.length > 0;
+  }
+
+  async storeTotpSecret(
+    userId: string,
+    secretEncrypted: Buffer,
+    keyId: string,
+    at: Date
+  ): Promise<boolean> {
+    const rows = await query<{ id: string }>(
+      `UPDATE users
+          SET totp_secret_encrypted = $2,
+              totp_key_id = $3,
+              totp_enrolled_at = NULL,
+              updated_at = $4
+        WHERE id = $1 AND two_factor_enabled = false
+        RETURNING id`,
+      [userId, secretEncrypted, keyId, at]
+    );
+    return rows.length > 0;
+  }
+
+  async completeTwoFactorEnrollment(
+    userId: string,
+    backupCodeHashes: readonly string[],
+    at: Date
+  ): Promise<boolean> {
+    return withTransaction(async (client) => {
+      // Guarded update: two concurrent completions cannot both enable 2FA.
+      const updated = await client.query<{ id: string }>(
+        `UPDATE users
+            SET two_factor_enabled = true,
+                totp_enrolled_at = $2,
+                two_factor_enforced_at = COALESCE(two_factor_enforced_at, $2),
+                updated_at = $2
+          WHERE id = $1 AND two_factor_enabled = false
+          RETURNING id`,
+        [userId, at]
+      );
+      if (updated.rows.length === 0) return false;
+
+      // Re-enrolling replaces the whole set: an old code must never survive.
+      await client.query('DELETE FROM admin_backup_codes WHERE user_id = $1', [userId]);
+      for (const codeHash of backupCodeHashes) {
+        await client.query(
+          `INSERT INTO admin_backup_codes (user_id, code_hash, created_at)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (user_id, code_hash) DO NOTHING`,
+          [userId, codeHash, at]
+        );
+      }
+      return true;
+    });
+  }
+
+  async markBackupCodeUsed(userId: string, codeHash: string, at: Date): Promise<boolean> {
+    const rows = await query<{ id: string }>(
+      `UPDATE admin_backup_codes
+          SET used_at = $3
+        WHERE user_id = $1 AND code_hash = $2 AND used_at IS NULL
+        RETURNING id`,
+      [userId, codeHash, at]
+    );
+    return rows.length > 0;
+  }
+
+  async resetTwoFactor(input: TwoFactorResetInput): Promise<TwoFactorResetOutcome> {
+    return withTransaction(async (client) => {
+      const users = await client.query<{ id: string; two_factor_enabled: boolean }>(
+        "SELECT id, two_factor_enabled FROM users WHERE id = $1 AND status = 'active' FOR UPDATE",
+        [input.userId]
+      );
+      const user = users.rows[0];
+      if (!user) throw new AppError('NOT_FOUND', 'Akun admin tidak ditemukan');
+
+      // The reset is admin-only by contract; a customer id answers 404 so the
+      // caller cannot probe which accounts exist.
+      const roles = await client.query<{ role: string }>(
+        `SELECT role::text AS role
+           FROM user_roles
+          WHERE user_id = $1 AND revoked_at IS NULL AND role::text LIKE 'admin%'
+          LIMIT 1`,
+        [input.userId]
+      );
+      if (roles.rows.length === 0) throw new AppError('NOT_FOUND', 'Akun admin tidak ditemukan');
+
+      await client.query('DELETE FROM admin_backup_codes WHERE user_id = $1', [input.userId]);
+      await client.query(
+        'DELETE FROM admin_2fa_challenges WHERE user_id = $1 AND consumed_at IS NULL',
+        [input.userId]
+      );
+      await client.query(
+        `UPDATE users
+            SET totp_secret_encrypted = NULL,
+                totp_key_id = NULL,
+                totp_enrolled_at = NULL,
+                two_factor_enabled = false,
+                updated_at = $2
+          WHERE id = $1`,
+        [input.userId, input.at]
+      );
+
+      // Every existing session belongs to a weaker login, so none survives.
+      const revoked = await client.query<{ id: string }>(
+        `UPDATE sessions
+            SET revoked_at = $2,
+                revoke_reason = COALESCE(revoke_reason, '2fa_reset')
+          WHERE user_id = $1 AND revoked_at IS NULL
+          RETURNING id`,
+        [input.userId, input.at]
+      );
+
+      // Hash chain columns are filled by the DB trigger, same as admin writes.
+      await client.query(
+        `INSERT INTO audit_logs
+           (actor_id, actor_role, action, entity_type, entity_id,
+            before_state, after_state, request_id)
+         VALUES ($1::uuid, $2::user_role, $3, $4, $5, $6::jsonb, $7::jsonb, $8)`,
+        [
+          input.actorId,
+          input.actorRole,
+          'auth.2fa.reset',
+          'user',
+          input.userId,
+          JSON.stringify({ two_factor_enabled: user.two_factor_enabled }),
+          JSON.stringify({ two_factor_enabled: false, sessions_revoked: revoked.rows.length }),
+          input.requestId
+        ]
+      );
+
+      return { userId: input.userId, revokedSessions: revoked.rows.length };
+    });
   }
 }

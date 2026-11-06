@@ -7,6 +7,11 @@
  *   POST /v1/auth/login        — public (email + password, all roles)
  *   POST /v1/auth/register     — public (customer self-registration)
  *   POST /v1/auth/google       — public (Google ID token)
+ *   POST /v1/auth/2fa/verify   — public (challenge token + TOTP code)
+ *   POST /v1/auth/2fa/backup-code — public (challenge token + backup code)
+ *   POST /v1/auth/2fa/enroll   — public (enroll ticket -> secret)
+ *   POST /v1/auth/2fa/enroll/verify — public (enroll ticket + code -> session)
+ *   POST /v1/auth/2fa/reset    — admin_super bearer token required
  *   POST /v1/auth/logout       — bearer token required
  *
  * Credential endpoints are public by design: the credential is the proof.
@@ -31,6 +36,8 @@ import { loadConfig } from '@tarlink/core/config';
 import { AppError } from '@tarlink/core/errors';
 import {
   AuthGuard,
+  Roles,
+  RolesGuard,
   verifyAccessToken,
   type AuthenticatedRequest
 } from '@tarlink/platform/auth';
@@ -41,6 +48,9 @@ import {
   type LogoutResult,
   type PasswordLoginResult,
   type RequestOtpResult,
+  type TwoFactorEnrolledResult,
+  type TwoFactorEnrollmentStartResult,
+  type TwoFactorResetResult,
   type VerifyOtpResult
 } from './auth.service';
 
@@ -95,6 +105,31 @@ const DeleteAccountBody = z.object({
   reason: z.string().max(300).optional()
 });
 
+/** FR-128: opaque ticket from the login step plus the authenticator code. */
+const TwoFactorVerifyBody = z.object({
+  challenge_token: z.string().min(1).max(256),
+  code: z.string().regex(/^\d{6}$/, 'code must be 6 digits')
+});
+
+/** Backup codes are `XXXX-XXXX`; dashes and case are normalised by the service. */
+const TwoFactorBackupBody = z.object({
+  challenge_token: z.string().min(1).max(256),
+  code: z.string().min(1).max(32)
+});
+
+const TwoFactorEnrollBody = z.object({
+  enroll_token: z.string().min(1).max(256)
+});
+
+const TwoFactorEnrollVerifyBody = z.object({
+  enroll_token: z.string().min(1).max(256),
+  code: z.string().regex(/^\d{6}$/, 'code must be 6 digits')
+});
+
+const TwoFactorResetBody = z.object({
+  user_id: z.string().uuid()
+});
+
 function bearerClaims(authorization: string | undefined): { sub: string; jti?: string } | null {
   if (typeof authorization !== 'string' || !authorization.startsWith('Bearer ')) return null;
   try {
@@ -125,7 +160,7 @@ export class AuthController {
     @Body() body: unknown,
     @Ip() ip: string,
     @Headers('user-agent') userAgent?: string
-  ): Promise<{ data: VerifyOtpResult }> {
+  ): Promise<{ data: PasswordLoginResult }> {
     const parsed = VerifyOtpBody.safeParse(body);
     if (!parsed.success) {
       throw new AppError('VALIDATION_ERROR', 'invalid OTP verification request', parsed.error.issues);
@@ -179,13 +214,115 @@ export class AuthController {
     @Body() body: unknown,
     @Ip() ip: string,
     @Headers('user-agent') userAgent?: string
-  ): Promise<{ data: VerifyOtpResult }> {
+  ): Promise<{ data: PasswordLoginResult }> {
     const parsed = GoogleBody.safeParse(body);
     if (!parsed.success) {
       throw new AppError('VALIDATION_ERROR', 'invalid Google sign-in request', parsed.error.issues);
     }
 
     return { data: await this.auth.loginWithGoogle({ ...parsed.data, ip, userAgent }) };
+  }
+
+  /**
+   * FR-128: completes an admin login that was paused before a session was
+   * issued. Public by design: the challenge token is the credential.
+   */
+  @Post('2fa/verify')
+  @HttpCode(200)
+  async verifyTwoFactor(
+    @Body() body: unknown,
+    @Ip() ip: string,
+    @Headers('user-agent') userAgent?: string
+  ): Promise<{ data: VerifyOtpResult }> {
+    const parsed = TwoFactorVerifyBody.safeParse(body);
+    if (!parsed.success) {
+      throw new AppError('VALIDATION_ERROR', 'invalid 2FA verification request', parsed.error.issues);
+    }
+
+    return { data: await this.auth.verifyTwoFactorCode({ ...parsed.data, ip, userAgent }) };
+  }
+
+  /** Same challenge, backup-code credential instead of TOTP. */
+  @Post('2fa/backup-code')
+  @HttpCode(200)
+  async verifyBackupCode(
+    @Body() body: unknown,
+    @Ip() ip: string,
+    @Headers('user-agent') userAgent?: string
+  ): Promise<{ data: VerifyOtpResult }> {
+    const parsed = TwoFactorBackupBody.safeParse(body);
+    if (!parsed.success) {
+      throw new AppError('VALIDATION_ERROR', 'invalid backup code request', parsed.error.issues);
+    }
+
+    return { data: await this.auth.verifyBackupCode({ ...parsed.data, ip, userAgent }) };
+  }
+
+  /** Step 1 of enrollment: returns the secret and `otpauth://` URI exactly once. */
+  @Post('2fa/enroll')
+  @HttpCode(200)
+  async enrollTwoFactor(@Body() body: unknown): Promise<{ data: TwoFactorEnrollmentStartResult }> {
+    const parsed = TwoFactorEnrollBody.safeParse(body);
+    if (!parsed.success) {
+      throw new AppError('VALIDATION_ERROR', 'invalid 2FA enrollment request', parsed.error.issues);
+    }
+
+    return { data: await this.auth.beginTwoFactorEnrollment(parsed.data) };
+  }
+
+  /** Step 2: activates 2FA, issues the session and shows backup codes once. */
+  @Post('2fa/enroll/verify')
+  @HttpCode(200)
+  async completeTwoFactorEnrollment(
+    @Body() body: unknown,
+    @Ip() ip: string,
+    @Headers('user-agent') userAgent?: string
+  ): Promise<{ data: TwoFactorEnrolledResult }> {
+    const parsed = TwoFactorEnrollVerifyBody.safeParse(body);
+    if (!parsed.success) {
+      throw new AppError('VALIDATION_ERROR', 'invalid 2FA enrollment request', parsed.error.issues);
+    }
+
+    return {
+      data: await this.auth.completeTwoFactorEnrollment({ ...parsed.data, ip, userAgent })
+    };
+  }
+
+  /**
+   * FR-128 recovery: only `admin_super` may clear another admin's TOTP. The
+   * service revokes every session of the target and writes `audit_logs`.
+   */
+  @Post('2fa/reset')
+  @HttpCode(200)
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles('admin_super')
+  async resetTwoFactor(
+    @Body() body: unknown,
+    @Req() req: AuthenticatedRequest,
+    @Headers('x-request-id') requestId?: string
+  ): Promise<{ data: TwoFactorResetResult }> {
+    const actor = req.user;
+    if (!actor) {
+      throw new AppError('UNAUTHENTICATED', 'Authentication is required');
+    }
+
+    const parsed = TwoFactorResetBody.safeParse(body);
+    if (!parsed.success) {
+      throw new AppError('VALIDATION_ERROR', 'invalid 2FA reset request', parsed.error.issues);
+    }
+
+    const actorRole = actor.roles.includes('admin_super')
+      ? 'admin_super'
+      : (actor.roles.find((role) => role.startsWith('admin_')) ?? null);
+
+    return {
+      data: await this.auth.resetTwoFactor({
+        userId: parsed.data.user_id,
+        actorId: actor.id,
+        actorRole,
+        requestId: requestId ?? null
+      })
+    };
   }
 
   @Post('logout')

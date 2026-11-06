@@ -27,16 +27,30 @@ import {
 } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { AppError } from '@tarlink/core/errors';
+import { createSecretCipherFromKey, type SecretCipher } from '@tarlink/platform/crypto';
 import { signAccessToken, type Role } from '@tarlink/platform/auth';
 import type { GoogleTokenVerifier } from './google-verifier';
 import { LoggingMailer, type Mailer } from './mailer';
+import {
+  BACKUP_CODE_COUNT,
+  buildOtpauthUri,
+  generateBackupCodes,
+  generateChallengeToken,
+  generateTotpSecret,
+  hashBackupCode,
+  hashChallengeToken,
+  verifyTotpCode
+} from './totp';
 import type {
   AccountDeletionRecord,
+  AdminChallengeKind,
+  AdminChallengeRecord,
   AuthRepository,
   AuthUserRecord,
   NewUser,
   NewUserConsent,
-  OtpChannel
+  OtpChannel,
+  TwoFactorState
 } from './auth.repository';
 
 export const OTP_TTL_SECONDS = 5 * 60;
@@ -52,6 +66,13 @@ export const LOGIN_IP_RATE_LIMIT_MAX = 30;
 export const OTP_IP_RATE_LIMIT_MAX = 10;
 export const OTP_IP_RATE_LIMIT_WINDOW_SECONDS = 60 * 60;
 export const REFRESH_TOKEN_BYTES = 32;
+
+/** FR-128: the 2FA ticket lives ten minutes and tolerates six code guesses. */
+export const TOTP_CHALLENGE_TTL_SECONDS = 10 * 60;
+export const TOTP_CHALLENGE_MAX_ATTEMPTS = 6;
+const TOTP_ISSUER = 'Tarlink';
+const INVALID_CHALLENGE_MESSAGE = 'Token 2FA tidak valid atau sudah kedaluwarsa';
+const TOTP_LOCKED_MESSAGE = 'Terlalu banyak percobaan kode 2FA. Mulai ulang proses login.';
 
 /** One message for every password-login rejection, so nothing is enumerated. */
 export const INVALID_CREDENTIALS_MESSAGE = 'Email atau kata sandi salah';
@@ -95,6 +116,15 @@ export interface AuthServiceDeps {
   readonly newId?: () => string;
   /** Removes encrypted private documents (KTP) after account deletion. */
   readonly removePrivateFiles?: (keys: readonly string[]) => Promise<void>;
+  /**
+   * FR-128: base64(32 bytes) for the TOTP secret. Optional so dev/test boots
+   * without it; enrollment fails closed when it is missing.
+   */
+  readonly totpEncryptionKey?: string;
+  readonly totpEncryptionKeyPrevious?: string;
+  readonly totpKeyId?: string;
+  /** Issuer label shown by the authenticator app. */
+  readonly totpIssuer?: string;
 }
 
 export interface RequestOtpInput {
@@ -163,8 +193,59 @@ export interface VerifyOtpResult {
   readonly user: AuthenticatedUserSummary;
 }
 
-/** Password login returns the same payload as OTP verification. */
-export type PasswordLoginResult = VerifyOtpResult;
+/** FR-128: the admin must finish TOTP enrollment before any session exists. */
+export interface MfaSetupRequiredResult {
+  readonly mfa_setup_required: true;
+  readonly enroll_token: string;
+  readonly expires_in: number;
+}
+
+/** FR-128: the admin has TOTP; the login is paused between password and code. */
+export interface MfaRequiredResult {
+  readonly mfa_required: true;
+  readonly challenge_token: string;
+  readonly expires_in: number;
+}
+
+export type MfaChallengeResult = MfaSetupRequiredResult | MfaRequiredResult;
+
+/** Password/OTP/Google login: a session for users, a challenge for admins. */
+export type PasswordLoginResult = VerifyOtpResult | MfaChallengeResult;
+
+export interface TwoFactorVerifyInput {
+  readonly challenge_token: string;
+  readonly code: string;
+  readonly ip?: string | null;
+  readonly userAgent?: string | null;
+}
+
+export interface TwoFactorEnrollInput {
+  readonly enroll_token: string;
+}
+
+export interface TwoFactorEnrollVerifyInput extends TwoFactorEnrollInput {
+  readonly code: string;
+  readonly ip?: string | null;
+  readonly userAgent?: string | null;
+}
+
+export interface TwoFactorEnrollmentStartResult {
+  /** Shown once, then only the encrypted copy exists in the database. */
+  readonly secret: string;
+  readonly otpauth_uri: string;
+  /** Seconds left on the enroll ticket, not a new TTL. */
+  readonly expires_in: number;
+}
+
+/** Enrollment completes with a session; plaintext codes are shown once. */
+export interface TwoFactorEnrolledResult extends VerifyOtpResult {
+  readonly backup_codes: string[];
+}
+
+export interface TwoFactorResetResult {
+  readonly user_id: string;
+  readonly revoked_sessions: number;
+}
 
 /** `GET /auth/me`: profile read from the database, not from the token claims. */
 export interface CurrentUserResult {
@@ -299,6 +380,12 @@ export class AuthService {
   private readonly now: () => Date;
   private readonly newId: () => string;
   private readonly removePrivateFiles?: (keys: readonly string[]) => Promise<void>;
+  private readonly totpEncryptionKey?: string;
+  private readonly totpEncryptionKeyPrevious?: string;
+  private readonly totpKeyId?: string;
+  private readonly totpIssuer: string;
+  /** Built lazily so a missing key only fails the enrollment that needs it. */
+  private cipherCache?: SecretCipher | null;
 
   constructor(deps: AuthServiceDeps) {
     this.repository = deps.repository;
@@ -314,6 +401,10 @@ export class AuthService {
     this.now = deps.now ?? (() => new Date());
     this.newId = deps.newId ?? (() => randomUUID());
     this.removePrivateFiles = deps.removePrivateFiles;
+    this.totpEncryptionKey = deps.totpEncryptionKey;
+    this.totpEncryptionKeyPrevious = deps.totpEncryptionKeyPrevious;
+    this.totpKeyId = deps.totpKeyId;
+    this.totpIssuer = deps.totpIssuer ?? TOTP_ISSUER;
   }
 
   async requestOtp(input: RequestOtpInput): Promise<RequestOtpResult> {
@@ -371,7 +462,7 @@ export class AuthService {
     };
   }
 
-  async verifyOtp(input: VerifyOtpInput): Promise<VerifyOtpResult> {
+  async verifyOtp(input: VerifyOtpInput): Promise<PasswordLoginResult> {
     const email = normalizeEmail(input.email);
     const now = this.now();
 
@@ -402,7 +493,7 @@ export class AuthService {
     }
 
     const roles = await this.repository.listActiveRoles(user.id);
-    return this.issueSession(user, roles, now, {
+    return this.issueSessionOrChallenge(user, roles, now, {
       ip: input.ip ?? null,
       userAgent: input.userAgent ?? null
     });
@@ -459,7 +550,7 @@ export class AuthService {
 
     const roles = await this.repository.listActiveRoles(user.id);
     await this.repository.recordLoginAttempt({ email, ip, succeeded: true, createdAt: now });
-    return this.issueSession(user, roles, now, {
+    return this.issueSessionOrChallenge(user, roles, now, {
       includeEmail: true,
       ip,
       userAgent: input.userAgent ?? null
@@ -557,7 +648,7 @@ export class AuthService {
    * Google Sign-In. The ID token is verified server-side by the injected
    * verifier; this module never trusts claims decoded by the client.
    */
-  async loginWithGoogle(input: GoogleLoginInput): Promise<VerifyOtpResult> {
+  async loginWithGoogle(input: GoogleLoginInput): Promise<PasswordLoginResult> {
     if (!this.googleVerifier) {
       throw new AppError('UPSTREAM_ERROR', 'Google Sign-In belum dikonfigurasi');
     }
@@ -596,11 +687,169 @@ export class AuthService {
     }
 
     const roles = await this.repository.listActiveRoles(user.id);
-    return this.issueSession(user, roles, now, {
+    return this.issueSessionOrChallenge(user, roles, now, {
       includeEmail: true,
       ip: input.ip ?? null,
       userAgent: input.userAgent ?? null
     });
+  }
+
+  /**
+   * FR-128 step 2: finish a password/OTP/Google login with a TOTP code. The
+   * challenge is single-use and rate limited atomically by the repository.
+   */
+  async verifyTwoFactorCode(input: TwoFactorVerifyInput): Promise<VerifyOtpResult> {
+    const now = this.now();
+    const challenge = await this.loadChallenge(input.challenge_token, 'verify', now);
+    const attempts = await this.claimAttempt(challenge, now);
+    const state = await this.requireTwoFactorState(challenge.userId);
+
+    if (!state.twoFactorEnabled || !state.totpSecretEncrypted) {
+      // `two_factor_enabled` without a secret is corrupt data: fail closed
+      // instead of letting the account log in as if 2FA were off.
+      throw new AppError(
+        'INTERNAL_ERROR',
+        'Status 2FA akun tidak konsisten. Minta admin lain melakukan reset 2FA.'
+      );
+    }
+
+    const secret = this.requireCipher().decrypt(state.totpSecretEncrypted, state.totpKeyId);
+    if (!verifyTotpCode(secret, input.code, now)) {
+      await this.recordTotpAttempt(state.email, input.ip ?? null, false, now);
+      throw this.invalidCodeError(attempts, challenge.maxAttempts);
+    }
+
+    return this.finishChallenge(challenge, state, input.ip ?? null, input.userAgent ?? null, now);
+  }
+
+  /** Backup code fallback for a lost authenticator; each code works once. */
+  async verifyBackupCode(input: TwoFactorVerifyInput): Promise<VerifyOtpResult> {
+    const now = this.now();
+    const challenge = await this.loadChallenge(input.challenge_token, 'verify', now);
+    const attempts = await this.claimAttempt(challenge, now);
+    const state = await this.requireTwoFactorState(challenge.userId);
+
+    const claimed = await this.repository.markBackupCodeUsed(
+      state.id,
+      hashBackupCode(input.code),
+      now
+    );
+    if (!claimed) {
+      await this.recordTotpAttempt(state.email, input.ip ?? null, false, now);
+      throw this.invalidCodeError(attempts, challenge.maxAttempts);
+    }
+
+    return this.finishChallenge(challenge, state, input.ip ?? null, input.userAgent ?? null, now);
+  }
+
+  /**
+   * Starts enrollment: the secret is stored encrypted right away (still
+   * disabled) so the client gets exactly one copy of the plaintext, and only
+   * the enroll ticket can read it back for verification.
+   */
+  async beginTwoFactorEnrollment(
+    input: TwoFactorEnrollInput
+  ): Promise<TwoFactorEnrollmentStartResult> {
+    const now = this.now();
+    const challenge = await this.loadChallenge(input.enroll_token, 'enroll', now);
+    const state = await this.requireTwoFactorState(challenge.userId);
+    if (state.twoFactorEnabled) {
+      throw new AppError('CONFLICT', '2FA sudah aktif untuk akun ini.');
+    }
+
+    const cipher = this.requireCipher();
+    const secret = generateTotpSecret();
+    const stored = await this.repository.storeTotpSecret(
+      state.id,
+      cipher.encrypt(secret),
+      cipher.keyId,
+      now
+    );
+    if (!stored) {
+      throw new AppError('CONFLICT', '2FA sudah aktif untuk akun ini.');
+    }
+
+    return {
+      secret,
+      otpauth_uri: buildOtpauthUri({
+        issuer: this.totpIssuer,
+        account: state.email ?? state.id,
+        secret
+      }),
+      expires_in: Math.max(0, Math.floor((challenge.expiresAt.getTime() - now.getTime()) / 1000))
+    };
+  }
+
+  /**
+   * Finishes enrollment: activates 2FA, issues ten single-use backup codes and
+   * returns a session in one step, so the admin is never left half-enrolled.
+   */
+  async completeTwoFactorEnrollment(
+    input: TwoFactorEnrollVerifyInput
+  ): Promise<TwoFactorEnrolledResult> {
+    const now = this.now();
+    const challenge = await this.loadChallenge(input.enroll_token, 'enroll', now);
+    const attempts = await this.claimAttempt(challenge, now);
+    const state = await this.requireTwoFactorState(challenge.userId);
+
+    if (state.twoFactorEnabled) {
+      throw new AppError('CONFLICT', '2FA sudah aktif untuk akun ini.');
+    }
+    if (!state.totpSecretEncrypted) {
+      throw new AppError('UNAUTHENTICATED', 'Mulai enrollment TOTP terlebih dahulu.');
+    }
+
+    const secret = this.requireCipher().decrypt(state.totpSecretEncrypted, state.totpKeyId);
+    if (!verifyTotpCode(secret, input.code, now)) {
+      await this.recordTotpAttempt(state.email, input.ip ?? null, false, now);
+      throw this.invalidCodeError(attempts, challenge.maxAttempts);
+    }
+
+    const backupCodes = generateBackupCodes(BACKUP_CODE_COUNT);
+    const enabled = await this.repository.completeTwoFactorEnrollment(
+      state.id,
+      backupCodes.map((code) => hashBackupCode(code)),
+      now
+    );
+    if (!enabled) {
+      throw new AppError('CONFLICT', '2FA sudah aktif untuk akun ini.');
+    }
+
+    const session = await this.finishChallenge(
+      challenge,
+      state,
+      input.ip ?? null,
+      input.userAgent ?? null,
+      now
+    );
+    return { ...session, backup_codes: backupCodes };
+  }
+
+  /**
+   * FR-128 recovery: an `admin_super` clears the target's TOTP, backup codes and
+   * open challenges, revokes every session of that user and records the action.
+   */
+  async resetTwoFactor(input: {
+    readonly userId: string;
+    readonly actorId: string;
+    readonly actorRole: Role | null;
+    readonly requestId?: string | null;
+  }): Promise<TwoFactorResetResult> {
+    if (!input.userId) {
+      throw new AppError('VALIDATION_ERROR', 'user_id wajib diisi');
+    }
+
+    // `audit_logs.request_id` is VARCHAR(40); a long header must not fail the write.
+    const requestId = input.requestId ? input.requestId.slice(0, 40) : null;
+    const outcome = await this.repository.resetTwoFactor({
+      userId: input.userId,
+      actorId: input.actorId,
+      actorRole: input.actorRole,
+      requestId,
+      at: this.now()
+    });
+
+    return { user_id: outcome.userId, revoked_sessions: outcome.revokedSessions };
   }
 
   /**
@@ -773,6 +1022,170 @@ export class AuthService {
       throw new AppError('NOT_FOUND', 'User not found');
     }
     await this.repository.revokeAllSessions(userId, now);
+  }
+
+  /**
+   * FR-128 gate: a session is issued directly to customers/vendors, while any
+   * `admin_*` account is paused on a challenge. Called from every path that
+   * issues a session (password, OTP, Google), so OTP cannot bypass 2FA.
+   */
+  private async issueSessionOrChallenge(
+    user: AuthUserRecord,
+    roles: Role[],
+    now: Date,
+    options: {
+      includeEmail?: boolean;
+      ip?: string | null;
+      userAgent?: string | null;
+    } = {}
+  ): Promise<PasswordLoginResult> {
+    if (!roles.some((role) => role.startsWith('admin_'))) {
+      return this.issueSession(user, roles, now, options);
+    }
+
+    const state = await this.repository.findTwoFactorState(user.id);
+    if (!state) {
+      // The row disappeared between the credential check and here (deleted
+      // account). Refuse instead of inserting a challenge with a dangling FK.
+      throw new AppError('UNAUTHENTICATED', 'Sesi tidak valid');
+    }
+    const kind: AdminChallengeKind = state.twoFactorEnabled ? 'verify' : 'enroll';
+    const token = generateChallengeToken();
+
+    await this.repository.insertAdminChallenge({
+      id: this.newId(),
+      userId: user.id,
+      kind,
+      tokenHash: hashChallengeToken(token),
+      maxAttempts: TOTP_CHALLENGE_MAX_ATTEMPTS,
+      expiresAt: new Date(now.getTime() + TOTP_CHALLENGE_TTL_SECONDS * 1000),
+      requesterIp: options.ip ?? null,
+      userAgent: options.userAgent ?? null,
+      createdAt: now
+    });
+
+    return kind === 'verify'
+      ? {
+          mfa_required: true,
+          challenge_token: token,
+          expires_in: TOTP_CHALLENGE_TTL_SECONDS
+        }
+      : {
+          mfa_setup_required: true,
+          enroll_token: token,
+          expires_in: TOTP_CHALLENGE_TTL_SECONDS
+        };
+  }
+
+  /** Resolves an opaque token to an open challenge of the expected kind. */
+  private async loadChallenge(
+    token: string,
+    kind: AdminChallengeKind,
+    now: Date
+  ): Promise<AdminChallengeRecord> {
+    if (typeof token !== 'string' || token.length === 0) {
+      throw new AppError('UNAUTHENTICATED', INVALID_CHALLENGE_MESSAGE);
+    }
+
+    const challenge = await this.repository.findChallengeByTokenHash(hashChallengeToken(token));
+    // A mismatch of kind is reported exactly like an unknown token: a `verify`
+    // token must never reach the enroll endpoints or vice versa.
+    if (!challenge || challenge.kind !== kind) {
+      throw new AppError('UNAUTHENTICATED', INVALID_CHALLENGE_MESSAGE);
+    }
+    if (challenge.consumedAt !== null || challenge.expiresAt.getTime() <= now.getTime()) {
+      throw new AppError('UNAUTHENTICATED', INVALID_CHALLENGE_MESSAGE);
+    }
+    return challenge;
+  }
+
+  /**
+   * Counts one guess against the challenge cap. The repository does the
+   * increment in a single UPDATE ... WHERE attempts < max_attempts, so two
+   * parallel guesses cannot both slip past the limit.
+   */
+  private async claimAttempt(challenge: AdminChallengeRecord, now: Date): Promise<number> {
+    const attempts = await this.repository.incrementChallengeAttempt(challenge.id, now);
+    if (attempts === null) {
+      // Null means locked, consumed or expired. Only a locked row is a 429.
+      if (challenge.attempts >= challenge.maxAttempts) {
+        throw new AppError('RATE_LIMITED', TOTP_LOCKED_MESSAGE);
+      }
+      throw new AppError('UNAUTHENTICATED', INVALID_CHALLENGE_MESSAGE);
+    }
+    return attempts;
+  }
+
+  /** Wrong code: the last permitted guess answers 429, earlier ones 401. */
+  private invalidCodeError(attempts: number, maxAttempts: number): AppError {
+    return attempts >= maxAttempts
+      ? new AppError('RATE_LIMITED', TOTP_LOCKED_MESSAGE)
+      : new AppError('UNAUTHENTICATED', 'Kode 2FA salah');
+  }
+
+  private async requireTwoFactorState(userId: string): Promise<TwoFactorState> {
+    const state = await this.repository.findTwoFactorState(userId);
+    if (!state) {
+      throw new AppError('UNAUTHENTICATED', INVALID_CHALLENGE_MESSAGE);
+    }
+    return state;
+  }
+
+  /**
+   * Missing key material is an operator error, not a user error: enrollment and
+   * verification must fail closed rather than store or accept a plaintext
+   * secret.
+   */
+  private requireCipher(): SecretCipher {
+    if (this.cipherCache === undefined) {
+      this.cipherCache = createSecretCipherFromKey({
+        key: this.totpEncryptionKey,
+        previousKey: this.totpEncryptionKeyPrevious,
+        keyId: this.totpKeyId,
+        name: 'TOTP_ENCRYPTION_KEY'
+      });
+    }
+    if (!this.cipherCache) {
+      throw new AppError(
+        'INTERNAL_ERROR',
+        'TOTP_ENCRYPTION_KEY belum diisi. Enrollment 2FA tidak bisa disimpan sebelum kunci enkripsi tersedia.'
+      );
+    }
+    return this.cipherCache;
+  }
+
+  private async recordTotpAttempt(
+    email: string | null,
+    ip: string | null,
+    succeeded: boolean,
+    at: Date
+  ): Promise<void> {
+    await this.repository.recordLoginAttempt({
+      email: email ?? '',
+      ip,
+      succeeded,
+      createdAt: at,
+      stage: 'totp'
+    });
+  }
+
+  /** Consumes the challenge, records the attempt and mints the real session. */
+  private async finishChallenge(
+    challenge: AdminChallengeRecord,
+    state: TwoFactorState,
+    ip: string | null,
+    userAgent: string | null,
+    now: Date
+  ): Promise<VerifyOtpResult> {
+    const consumed = await this.repository.consumeChallenge(challenge.id, now);
+    if (!consumed) {
+      // A concurrent request already used it; no second session.
+      throw new AppError('UNAUTHENTICATED', INVALID_CHALLENGE_MESSAGE);
+    }
+
+    await this.recordTotpAttempt(state.email, ip, true, now);
+    const roles = await this.repository.listActiveRoles(state.id);
+    return this.issueSession(state, roles, now, { includeEmail: true, ip, userAgent });
   }
 
   /**
