@@ -23,6 +23,7 @@ const VENDOR_ID = '22222222-2222-4222-8222-222222222222';
 const VENDOR_USER_ID = '55555555-5555-4555-8555-555555555555';
 const OTHER_VENDOR_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const MEMBER_USER_ID = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+const OTHER_VENDOR_OWNER_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
 const CUSTOMER_ID = '77777777-7777-4777-8777-777777777777';
 const STRANGER_ID = '88888888-8888-4888-8888-888888888888';
 const DISPUTE_ID = '99999999-9999-4999-8999-999999999999';
@@ -35,6 +36,15 @@ const VENDOR: AuthUser = { id: VENDOR_USER_ID, roles: ['vendor_owner'] };
 const DUAL_ROLE_VENDOR: AuthUser = { id: VENDOR_USER_ID, roles: ['customer', 'vendor_owner'] };
 const VENDOR_MEMBER: AuthUser = { id: MEMBER_USER_ID, roles: ['vendor_member'] };
 const DUAL_ROLE_VENDOR_MEMBER: AuthUser = { id: MEMBER_USER_ID, roles: ['customer', 'vendor_member'] };
+/**
+ * Owns vendor A while being an active `can_respond` member of vendor B: the
+ * P2 case, where the global `vendor_owner` role string must not grant
+ * owner-level writes on B's bookings.
+ */
+const OWNER_OF_A_MEMBER_OF_B: AuthUser = {
+  id: OTHER_VENDOR_OWNER_ID,
+  roles: ['customer', 'vendor_owner']
+};
 const CUSTOMER: AuthUser = { id: CUSTOMER_ID, roles: ['customer'] };
 const STRANGER: AuthUser = { id: STRANGER_ID, roles: ['customer'] };
 const ADMIN: AuthUser = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', roles: ['admin_support'] };
@@ -111,6 +121,10 @@ function harness(initial: BookingRow, disputes: DisputeRow[] = [disputeRow()]) {
   const repo = {
     findByIdForUpdate: vi.fn(async () => row),
     findById: vi.fn(async () => row),
+    isVendorOwner: vi.fn(
+      async (vendorId: string, userId: string) =>
+        vendorId === VENDOR_ID && userId === VENDOR_USER_ID
+    ),
     isVendorResponder: vi.fn(
       async (vendorId: string, userId: string) =>
         vendorId === VENDOR_ID && userId === VENDOR_USER_ID
@@ -237,7 +251,7 @@ describe('BookingService.openDispute', () => {
       NOW
     );
 
-    expect(repo.isVendorResponder).toHaveBeenCalledWith(VENDOR_ID, VENDOR_USER_ID);
+    expect(repo.isVendorOwner).toHaveBeenCalledWith(VENDOR_ID, VENDOR_USER_ID);
     expect(repo.insertDispute.mock.calls[0][1]).toMatchObject({
       raisedBy: VENDOR_USER_ID,
       reasonCode: 'cancellation_abuse'
@@ -254,7 +268,7 @@ describe('BookingService.openDispute', () => {
       NOW
     );
 
-    expect(repo.isVendorResponder).toHaveBeenCalledWith(VENDOR_ID, VENDOR_USER_ID);
+    expect(repo.isVendorOwner).toHaveBeenCalledWith(VENDOR_ID, VENDOR_USER_ID);
     expect(repo.insertDispute.mock.calls[0][1]).toMatchObject({ raisedBy: VENDOR_USER_ID });
     // Ownership decides the actor: the customer role must not win by being first.
     expect(repo.insertHistory.mock.calls[0][1][0]).toMatchObject({
@@ -275,6 +289,33 @@ describe('BookingService.openDispute', () => {
       )
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
 
+    expect(repo.insertDispute).not.toHaveBeenCalled();
+  });
+
+  it('rejects an owner of vendor A who is only a can_respond member of vendor B', async () => {
+    const { repo, service } = harness(confirmedRow());
+    // The exact P2: `isVendorResponder(B, user)` is true because of the active
+    // `vendor_members` row, but the user owns a different vendor.
+    repo.isVendorResponder.mockImplementation(
+      async (vendorId: string, userId: string) =>
+        vendorId === VENDOR_ID && userId === OTHER_VENDOR_OWNER_ID
+    );
+    repo.isVendorOwner.mockImplementation(
+      async (vendorId: string, userId: string) =>
+        vendorId === OTHER_VENDOR_ID && userId === OTHER_VENDOR_OWNER_ID
+    );
+
+    await expect(
+      service.openDispute(
+        BOOKING_ID,
+        { reason_code: 'cancellation_abuse', description: 'Pemilik vendor lain mencoba membuka sengketa' },
+        OWNER_OF_A_MEMBER_OF_B,
+        NOW
+      )
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+    expect(repo.isVendorOwner).toHaveBeenCalledWith(VENDOR_ID, OTHER_VENDOR_OWNER_ID);
+    expect(repo.updateStatus).not.toHaveBeenCalled();
     expect(repo.insertDispute).not.toHaveBeenCalled();
   });
 
@@ -470,13 +511,29 @@ describe('BookingService.listBookingDisputes', () => {
     expect(repo.listDisputes).not.toHaveBeenCalled();
   });
 
-  it('rejects vendor_member even when they can respond for the vendor', async () => {
+  it('lets an active can_respond vendor_member read the disputes', async () => {
     const { repo, service } = harness(confirmedRow());
     repo.isVendorResponder.mockResolvedValue(true);
 
-    await expect(
-      service.listBookingDisputes(BOOKING_ID, DUAL_ROLE_VENDOR_MEMBER)
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    expect(repo.listDisputes).not.toHaveBeenCalled();
+    const list = await service.listBookingDisputes(BOOKING_ID, DUAL_ROLE_VENDOR_MEMBER);
+
+    expect(list).toHaveLength(1);
+    expect(repo.isVendorResponder).toHaveBeenCalledWith(VENDOR_ID, MEMBER_USER_ID);
+  });
+
+  it('lets an owner of vendor A read vendor B disputes through the member path', async () => {
+    const { repo, service } = harness(confirmedRow());
+    // Reading only needs a responder relationship: ownership of another vendor
+    // neither grants nor blocks it.
+    repo.isVendorResponder.mockImplementation(
+      async (vendorId: string, userId: string) =>
+        vendorId === VENDOR_ID && userId === OTHER_VENDOR_OWNER_ID
+    );
+    repo.isVendorOwner.mockResolvedValue(false);
+
+    const list = await service.listBookingDisputes(BOOKING_ID, OWNER_OF_A_MEMBER_OF_B);
+
+    expect(list).toHaveLength(1);
+    expect(repo.listDisputes).toHaveBeenCalledWith(BOOKING_ID);
   });
 });

@@ -814,6 +814,22 @@ export class BookingRepository {
     );
   }
 
+  /**
+   * True only for the vendor's `owner_user_id`. Owner-level writes must use
+   * this, not `isVendorResponder`: a user can own one vendor while being a
+   * responder member of another, and a global `vendor_owner` role string does
+   * not say which vendor they own.
+   */
+  async isVendorOwner(vendorId: string, userId: string): Promise<boolean> {
+    const rows = await query<{ allowed: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM vendors WHERE id = $1 AND owner_user_id = $2
+       ) AS allowed`,
+      [vendorId, userId]
+    );
+    return rows[0]?.allowed ?? false;
+  }
+
   async isVendorResponder(vendorId: string, userId: string): Promise<boolean> {
     const rows = await query<{ allowed: boolean }>(
       `SELECT EXISTS (

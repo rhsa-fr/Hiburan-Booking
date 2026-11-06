@@ -957,9 +957,7 @@ export class BookingService {
     const row = await this.repo.findById(id);
     if (!row) throw new AppError('NOT_FOUND', `Booking ${id} tidak ditemukan`);
 
-    if (!isAdmin(user)) {
-      await this.resolveDisputeActor(row, user);
-    }
+    await this.resolveDisputeReader(row, user);
 
     const disputes = await this.repo.listDisputes(id);
     return disputes.map((dispute) => this.toDisputeView(dispute));
@@ -1308,8 +1306,17 @@ export class BookingService {
    * FR-056 / S-04 / S-08: the acting dispute role comes from row ownership, not
    * from the order of the user's roles. Real vendor accounts also carry the
    * `customer` role, so a role-priority lookup always answers `'customer'` and
-   * then fails the ownership check. `vendor_member` is deliberately excluded:
-   * S-04/S-08 only admit the vendor owner (or the customer).
+   * then fails the ownership check.
+   *
+   * The `vendor_owner` role string is global, so it is paired with
+   * `isVendorOwner(row.vendor_id, ...)`: owning vendor A must not grant
+   * owner-level write access to vendor B's bookings just because the user is an
+   * active `can_respond` member there (`isVendorResponder` would say yes).
+   *
+   * S-04 (`settlement_status = 'held'`) admits customer, vendor_owner and
+   * admin_support on the vendor's own booking. S-08 (`released`, post-release
+   * clawback) admits customer and admin only, so a vendor that reaches that
+   * state is refused by the state machine itself with a 409.
    */
   private async resolveDisputeActor(
     row: BookingRow,
@@ -1318,13 +1325,30 @@ export class BookingService {
     if (row.customer_id === user.id) return 'customer';
     if (
       user.roles.includes('vendor_owner') &&
-      (await this.repo.isVendorResponder(row.vendor_id, user.id))
+      (await this.repo.isVendorOwner(row.vendor_id, user.id))
     ) {
       return 'vendor_owner';
     }
     throw new AppError(
       'FORBIDDEN',
       `Peran [${user.roles.join(', ')}] tidak berwenang atas sengketa booking ini`
+    );
+  }
+
+  /**
+   * FR-056 read path (GET /bookings/:id/disputes). Reading is wider than
+   * writing: the customer, admins, and any vendor responder — the owner or an
+   * active `can_respond` `vendor_members` row — may see the dispute history.
+   * That matches the controller's `vendor_member` grant; a member cannot open a
+   * dispute, but must be able to read the one their vendor is party to.
+   */
+  private async resolveDisputeReader(row: BookingRow, user: AuthUser): Promise<void> {
+    if (row.customer_id === user.id) return;
+    if (isAdmin(user)) return;
+    if (await this.repo.isVendorResponder(row.vendor_id, user.id)) return;
+    throw new AppError(
+      'FORBIDDEN',
+      `Peran [${user.roles.join(', ')}] tidak berwenang membaca sengketa booking ini`
     );
   }
 
