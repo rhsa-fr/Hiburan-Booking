@@ -25,12 +25,13 @@ import type { KeyValueItem } from '@/components/ui';
 import { VendorCalendar } from '@/components/vendors/vendor-calendar';
 import { VendorPackages } from '@/components/vendors/vendor-packages';
 import { VendorVerification } from '@/components/vendors/vendor-verification';
+import { VendorSuspension } from '@/components/vendors/vendor-suspension';
 import { BankAccountVerification } from '@/components/payouts/bank-account-verification';
 import type { VendorNotice } from '@/components/vendors/notice';
 import { getVendor } from '@/lib/api';
 import { ApiError } from '@/lib/errors';
 import { formatDateID, formatIDR, formatPercentFromBp } from '@/lib/format';
-import { hasAnyRole, useRoles, VENDOR_VERIFY_ROLES, VENDOR_WRITE_ROLES } from '@/lib/use-roles';
+import { hasAnyRole, useRoles, VENDOR_SUSPEND_ROLES, VENDOR_VERIFY_ROLES, VENDOR_WRITE_ROLES } from '@/lib/use-roles';
 import type { VendorDetail } from '@/lib/types';
 
 function optionalNumber(value: number | null | undefined, suffix = ''): string {
@@ -153,6 +154,7 @@ export function VendorDetailPage({ vendorId }: { vendorId: string }) {
   const { roles, ready: rolesReady } = useRoles();
   const canVerify = hasAnyRole(roles, VENDOR_VERIFY_ROLES);
   const canWrite = hasAnyRole(roles, VENDOR_WRITE_ROLES);
+  const canSuspend = hasAnyRole(roles, VENDOR_SUSPEND_ROLES);
   const queryClient = useQueryClient();
 
   const detailQuery = useQuery({
@@ -296,6 +298,13 @@ export function VendorDetailPage({ vendorId }: { vendorId: string }) {
           <VendorVerification
             vendor={vendor}
             canVerify={canVerify}
+            rolesReady={rolesReady}
+            onNotify={setNotice}
+            onChanged={handleChanged}
+          />
+          <VendorSuspension
+            vendor={vendor}
+            canSuspend={canSuspend}
             rolesReady={rolesReady}
             onNotify={setNotice}
             onChanged={handleChanged}

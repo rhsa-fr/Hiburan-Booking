@@ -51,6 +51,16 @@ export class VendorPortalService {
     }
   }
 
+  /**
+   * FR-132: Vendor yang sedang ditangguhkan dibekukan dari perubahan katalog
+   * (paket dan unggahan media baru).
+   */
+  assertVendorCanEditCatalogue(vendor: { verification_status?: string | null }): void {
+    if (vendor.verification_status === 'suspended') {
+      throw new AppError('CONFLICT', 'Vendor sedang ditangguhkan; perubahan katalog dibekukan.');
+    }
+  }
+
   async getMe(userId: string) {
     return this.requireVendor(userId);
   }
@@ -98,6 +108,7 @@ export class VendorPortalService {
 
   async createPackage(userId: string, input: CreatePackageBody): Promise<PackageRow> {
     const vendor = await this.requireVendor(userId);
+    this.assertVendorCanEditCatalogue(vendor);
     if (input.photo_url) {
       await this.assertApprovedMedia(vendor.id, [input.photo_url]);
     }
@@ -110,6 +121,7 @@ export class VendorPortalService {
     input: UpdatePackageBody
   ): Promise<PackageRow> {
     const vendor = await this.requireVendor(userId);
+    this.assertVendorCanEditCatalogue(vendor);
     if (input.photo_url) {
       await this.assertApprovedMedia(vendor.id, [input.photo_url]);
     }
@@ -118,6 +130,7 @@ export class VendorPortalService {
 
   async deletePackage(userId: string, packageId: string): Promise<void> {
     const vendor = await this.requireVendor(userId);
+    this.assertVendorCanEditCatalogue(vendor);
     await this.catalog.deletePackage(vendor.id, packageId);
   }
 

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/api_client.dart';
+import '../core/notifications.dart';
 import '../core/session.dart';
 import 'routes.dart';
 import 'theme.dart';
@@ -29,23 +30,99 @@ class AppScope extends InheritedNotifier<Session> {
 bool _isVendorOwner(Session session) =>
     session.user?.roles.contains('vendor_owner') == true;
 
-class TarlinkApp extends StatelessWidget {
+class TarlinkApp extends StatefulWidget {
   const TarlinkApp({super.key, required this.session, required this.api});
 
   final Session session;
   final ApiClient api;
 
   @override
+  State<TarlinkApp> createState() => _TarlinkAppState();
+}
+
+class _TarlinkAppState extends State<TarlinkApp> {
+  final _navigatorKey = GlobalKey<NavigatorState>();
+  final _messengerKey = GlobalKey<ScaffoldMessengerState>();
+  late final NotificationPoller _poller;
+
+  @override
+  void initState() {
+    super.initState();
+    _poller = NotificationPoller(
+      session: widget.session,
+      api: widget.api,
+      onNotification: _showPopup,
+    );
+    widget.session.addListener(_syncPoller);
+    _syncPoller();
+  }
+
+  /// Poll only while a session exists; stop the moment the user signs out.
+  void _syncPoller() {
+    if (widget.session.authorized) {
+      _poller.start();
+    } else {
+      _poller.stop();
+    }
+  }
+
+  void _showPopup(InAppNotification notification) {
+    final messenger = _messengerKey.currentState;
+    if (messenger == null) return;
+    final bookingId = notification.bookingId;
+    messenger.showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 6),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              notification.title,
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 2),
+            Text(notification.body),
+          ],
+        ),
+        action: bookingId == null
+            ? null
+            : SnackBarAction(
+                label: 'Lihat',
+                onPressed: () {
+                  messenger.hideCurrentSnackBar();
+                  _navigatorKey.currentState?.pushNamed(
+                    _isVendorOwner(widget.session)
+                        ? Routes.vendorBookingDetail
+                        : Routes.bookingStatus,
+                    arguments: bookingId,
+                  );
+                },
+              ),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    widget.session.removeListener(_syncPoller);
+    _poller.stop();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return AppScope(
-      session: session,
-      api: api,
+      session: widget.session,
+      api: widget.api,
       child: MaterialApp(
         title: 'Tarlink',
         debugShowCheckedModeBanner: false,
         theme: buildTheme(),
-        initialRoute: session.authorized
-            ? (_isVendorOwner(session) ? Routes.vendorHome : Routes.home)
+        navigatorKey: _navigatorKey,
+        scaffoldMessengerKey: _messengerKey,
+        initialRoute: widget.session.authorized
+            ? (_isVendorOwner(widget.session) ? Routes.vendorHome : Routes.home)
             : Routes.welcome,
         onGenerateRoute: Routes.onGenerateRoute,
       ),

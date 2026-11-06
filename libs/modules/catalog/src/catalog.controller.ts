@@ -43,7 +43,7 @@ import type {
   VendorSummary,
   VerifyVendorResult
 } from './contracts';
-import { CatalogService } from './catalog.service';
+import { CatalogService, type SuspendVendorResult } from './catalog.service';
 
 const READ_ROLES = ['admin_support', 'admin_finance', 'admin_super'] as const;
 const WRITE_ROLES = ['admin_finance', 'admin_super'] as const;
@@ -135,6 +135,17 @@ const VERIFY_BODY = z
   .object({
     decision: z.enum(['approve', 'reject']),
     note: optionalText(2000)
+  })
+  .passthrough();
+
+const SUSPEND_BODY = z
+  .object({
+    reason: z
+      .string()
+      .trim()
+      .min(10, 'Alasan penangguhan minimal 10 karakter')
+      .max(500, 'Alasan penangguhan maksimal 500 karakter'),
+    note: optionalText(500)
   })
   .passthrough();
 
@@ -313,6 +324,41 @@ export class CatalogController {
         requestId: requestId ?? null
       }
     );
+  }
+
+  @Post(':id/suspend')
+  @HttpCode(200)
+  @Roles('admin_super')
+  async suspendVendor(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Headers('x-request-id') requestId: string | undefined,
+    @Req() request: AuthenticatedRequest
+  ): Promise<SuspendVendorResult> {
+    return this.catalog.suspendVendor(
+      id,
+      parse(SUSPEND_BODY, body, 'Data penangguhan tidak valid'),
+      {
+        actorId: requireActor(request),
+        actorRole: requireActorRole(request),
+        requestId: requestId ?? null
+      }
+    );
+  }
+
+  @Post(':id/unsuspend')
+  @HttpCode(200)
+  @Roles('admin_super')
+  async unsuspendVendor(
+    @Param('id') id: string,
+    @Headers('x-request-id') requestId: string | undefined,
+    @Req() request: AuthenticatedRequest
+  ): Promise<SuspendVendorResult> {
+    return this.catalog.unsuspendVendor(id, {
+      actorId: requireActor(request),
+      actorRole: requireActorRole(request),
+      requestId: requestId ?? null
+    });
   }
 
   @Get(':id/packages')

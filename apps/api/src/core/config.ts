@@ -41,7 +41,6 @@ const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(3001),
   DATABASE_URL: z.string().min(1),
-  REDIS_URL: z.string().min(1).default('redis://localhost:6379'),
   JWT_SECRET: z.string().min(16),
   JWT_TTL_SECONDS: z.coerce.number().int().positive().default(900),
   REFRESH_TTL_DAYS: z.coerce.number().int().positive().default(30),
@@ -49,6 +48,13 @@ const EnvSchema = z.object({
   OTP_DEV_MODE: boolFromEnv.default(false),
   LOGIN_IP_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(30),
   OTP_IP_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
+  /** Generic email provider endpoint; unset uses a log-only mailer in dev. */
+  EMAIL_API_URL: z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    z.string().url().optional()
+  ),
+  EMAIL_API_KEY: z.string().optional(),
+  EMAIL_FROM: z.string().default('Tarlink <no-reply@tarlink.id>'),
   /** Trust `X-Forwarded-For`; enable behind Railway/reverse proxies. */
   TRUST_PROXY: boolFromEnv.default(false),
   /** `local` = deterministic no-network gateway; `midtrans` = Core API (sandbox by default). */

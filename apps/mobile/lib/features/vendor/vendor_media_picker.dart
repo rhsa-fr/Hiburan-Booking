@@ -13,13 +13,76 @@ import 'vendor_ui.dart';
 
 const int maxVendorImageBytes = 5 * 1024 * 1024;
 
+typedef VendorMediaPickerFn = Future<VendorMediaPickResult> Function(
+  BuildContext context, {
+  String kind,
+  String? packageId,
+});
+
+class VendorMediaUpload {
+  const VendorMediaUpload({
+    required this.id,
+    required this.url,
+    required this.status,
+    required this.kind,
+    this.packageId,
+    this.reviewNote,
+  });
+
+  final String id;
+  final String url;
+  final String status;
+  final String kind;
+  final String? packageId;
+  final String? reviewNote;
+
+  bool get isPending => status == 'pending';
+  bool get isApproved => status == 'approved';
+  bool get isRejected => status == 'rejected';
+
+  factory VendorMediaUpload.fromJson(Map<String, dynamic> json) {
+    return VendorMediaUpload(
+      id: json['id']?.toString() ?? '',
+      url: json['url']?.toString() ?? '',
+      status: json['status']?.toString() ?? 'pending',
+      kind: json['kind']?.toString() ?? '',
+      packageId: json['package_id']?.toString(),
+      reviewNote: json['review_note']?.toString(),
+    );
+  }
+}
+
+sealed class VendorMediaPickResult {
+  const VendorMediaPickResult();
+
+  const factory VendorMediaPickResult.cancelled() = VendorMediaCancelled;
+  const factory VendorMediaPickResult.failed(String message) =
+      VendorMediaFailed;
+  const factory VendorMediaPickResult.uploaded(VendorMediaUpload media) =
+      VendorMediaUploaded;
+}
+
+final class VendorMediaCancelled extends VendorMediaPickResult {
+  const VendorMediaCancelled();
+}
+
+final class VendorMediaFailed extends VendorMediaPickResult {
+  const VendorMediaFailed(this.message);
+  final String message;
+}
+
+final class VendorMediaUploaded extends VendorMediaPickResult {
+  const VendorMediaUploaded(this.media);
+  final VendorMediaUpload media;
+}
+
 /// Pick one image from the gallery, ask for a license statement, upload it
 /// to `/vendor/media` with multipart fields (`kind`, `license_statement`,
-/// optional `package_id`), and return `null`.
+/// optional `package_id`), and return a typed [VendorMediaPickResult].
 ///
 /// New uploads require admin review before appearing on the public profile.
 /// Callers must never write an unapproved upload URL to profile/package fields.
-Future<String?> pickAndUploadVendorImage(
+Future<VendorMediaPickResult> pickAndUploadVendorImage(
   BuildContext context, {
   String kind = 'gallery',
   String? packageId,
@@ -32,38 +95,31 @@ Future<String?> pickAndUploadVendorImage(
       imageQuality: 80,
     );
   } catch (error) {
-    if (context.mounted) {
-      _notice(context, 'Tidak bisa membuka galeri: $error');
-    }
-    return null;
+    return VendorMediaPickResult.failed('Tidak bisa membuka galeri: $error');
   }
-  if (picked == null) return null;
-  if (!context.mounted) return null;
+  if (picked == null) return const VendorMediaPickResult.cancelled();
+  if (!context.mounted) return const VendorMediaPickResult.cancelled();
 
   final List<int> bytes;
   try {
     bytes = await picked.readAsBytes();
   } catch (error) {
-    if (context.mounted) {
-      _notice(context, 'Tidak bisa membaca gambar: $error');
-    }
-    return null;
+    return VendorMediaPickResult.failed('Tidak bisa membaca gambar: $error');
   }
-  if (!context.mounted) return null;
+  if (!context.mounted) return const VendorMediaPickResult.cancelled();
   if (bytes.length > maxVendorImageBytes) {
-    _notice(context, 'Ukuran gambar maksimal 5 MB.');
-    return null;
+    return const VendorMediaPickResult.failed('Ukuran gambar maksimal 5 MB.');
   }
 
   final licenseStatement = await _askLicenseStatement(context);
   if (licenseStatement == null || licenseStatement.trim().length < 10) {
-    return null;
+    return const VendorMediaPickResult.cancelled();
   }
-  if (!context.mounted) return null;
+  if (!context.mounted) return const VendorMediaPickResult.cancelled();
 
   try {
     final api = AppScope.of(context).api;
-    await _sendMultipartUpload(
+    final media = await _sendMultipartUpload(
       api: api,
       filename: picked.name,
       bytes: bytes,
@@ -71,33 +127,25 @@ Future<String?> pickAndUploadVendorImage(
       licenseStatement: licenseStatement.trim(),
       packageId: packageId,
     );
-    if (!context.mounted) return null;
-    _notice(
-      context,
-      'Media terkirim. Menunggu tinjauan admin sebelum tampil di profil.',
-    );
-    return null;
+    return VendorMediaPickResult.uploaded(media);
   } on ApiException catch (error) {
-    if (context.mounted) _notice(context, _mapApiException(error));
-    return null;
+    return VendorMediaPickResult.failed(_mapApiException(error));
   } catch (error) {
-    if (context.mounted) {
-      _notice(context, 'Gagal mengunggah gambar: $error');
-    }
-    return null;
+    return VendorMediaPickResult.failed('Gagal mengunggah gambar: $error');
   }
 }
 
-Future<void> _sendMultipartUpload({
+Future<VendorMediaUpload> _sendMultipartUpload({
   required ApiClient api,
   required String filename,
   required List<int> bytes,
   required String kind,
   required String licenseStatement,
   String? packageId,
+  http.Client? httpClient,
 }) async {
   final uri = _resolveUri(api, '/vendor/media');
-  final client = http.Client();
+  final client = httpClient ?? http.Client();
   http.Response response;
   try {
     final req1 = _createMultipartRequest(
@@ -143,7 +191,9 @@ Future<void> _sendMultipartUpload({
       message: 'Tidak bisa terhubung ke server. Periksa sinyal internet, lalu coba lagi.',
     );
   } finally {
-    client.close();
+    if (httpClient == null) {
+      client.close();
+    }
   }
 
   dynamic body;
@@ -156,7 +206,23 @@ Future<void> _sendMultipartUpload({
   }
 
   if (response.statusCode >= 200 && response.statusCode < 300) {
-    return;
+    if (body is Map) {
+      final data = body['data'];
+      if (data is Map && data['media'] is Map) {
+        return VendorMediaUpload.fromJson(
+          (data['media'] as Map).cast<String, dynamic>(),
+        );
+      }
+      if (body['media'] is Map) {
+        return VendorMediaUpload.fromJson(
+          (body['media'] as Map).cast<String, dynamic>(),
+        );
+      }
+    }
+    throw const ApiException(
+      code: 'INVALID_RESPONSE',
+      message: 'Respons upload media tidak valid.',
+    );
   }
 
   final error = body is Map ? body['error'] : null;
@@ -175,6 +241,25 @@ Future<void> _sendMultipartUpload({
     statusCode: response.statusCode,
   );
 }
+
+@visibleForTesting
+Future<VendorMediaUpload> sendMultipartUploadForTesting({
+  required ApiClient api,
+  required String filename,
+  required List<int> bytes,
+  required String kind,
+  required String licenseStatement,
+  String? packageId,
+  http.Client? httpClient,
+}) => _sendMultipartUpload(
+  api: api,
+  filename: filename,
+  bytes: bytes,
+  kind: kind,
+  licenseStatement: licenseStatement,
+  packageId: packageId,
+  httpClient: httpClient,
+);
 
 http.MultipartRequest _createMultipartRequest({
   required Uri uri,
@@ -330,8 +415,4 @@ String _mapApiException(ApiException error) {
     return error.userMessage;
   }
   return error.message.isNotEmpty ? error.message : 'Gagal mengunggah media.';
-}
-
-void _notice(BuildContext context, String message) {
-  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
 }

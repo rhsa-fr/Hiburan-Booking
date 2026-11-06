@@ -30,6 +30,7 @@ import type {
   OperatorRow,
   PaymentRow,
   QueueRow,
+  RegionRow,
   ReleasedRow,
   SettingsRow,
   StatusHistoryRow,
@@ -364,6 +365,9 @@ const VENDOR_SELECT = `
          u.phone,
          v.verification_status::text AS verification_status,
          v.verified_at,
+         v.suspended_at,
+         v.suspended_by,
+         v.suspension_reason,
          v.calendar_updated_at,
          v.created_at,
          v.response_rate_bp,
@@ -850,7 +854,10 @@ export class AdminRepository {
           where.push(`v.verification_status = 'pending'`);
           break;
         case 'rejected':
-          where.push(`v.verification_status IN ('rejected', 'suspended')`);
+          where.push(`v.verification_status = 'rejected'`);
+          break;
+        case 'suspended':
+          where.push(`v.verification_status = 'suspended'`);
           break;
         default:
           throw new AppError(
@@ -1033,6 +1040,56 @@ export class AdminRepository {
              updated_at = now()`,
       [write.key, JSON.stringify(write.value), write.isPublic, write.description, actorId]
     );
+  }
+
+  /* --------------------------------------------------------------- regions */
+
+  async listRegions(): Promise<RegionRow[]> {
+    return query<RegionRow>(
+      `SELECT r.code,
+              r.name,
+              r.level,
+              r.parent_code,
+              r.is_active,
+              (SELECT count(*)::int
+                 FROM vendors v
+                WHERE v.region_code = r.code
+                  AND v.is_active
+                  AND v.verification_status <> 'suspended') AS vendor_count
+         FROM regions r
+        ORDER BY r.level ASC, r.sort_order ASC, r.name ASC`
+    );
+  }
+
+  async findRegion(code: string): Promise<RegionRow | null> {
+    const rows = await query<RegionRow>(
+      `SELECT r.code,
+              r.name,
+              r.level,
+              r.parent_code,
+              r.is_active,
+              (SELECT count(*)::int
+                 FROM vendors v
+                WHERE v.region_code = r.code
+                  AND v.is_active
+                  AND v.verification_status <> 'suspended') AS vendor_count
+         FROM regions r
+        WHERE r.code = $1
+        LIMIT 1`,
+      [code]
+    );
+    return rows[0] ?? null;
+  }
+
+  async setRegionActive(client: PoolClient, code: string, isActive: boolean): Promise<boolean> {
+    const result = await client.query(
+      `UPDATE regions
+          SET is_active = $2,
+              updated_at = now()
+        WHERE code = $1`,
+      [code, isActive]
+    );
+    return (result.rowCount ?? 0) > 0;
   }
 
   /* ------------------------------------------------------- secondary reads */

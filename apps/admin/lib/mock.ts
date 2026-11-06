@@ -35,6 +35,7 @@ import type {
   ReleaseResult,
   SettlementStatus,
   StatusAxis,
+  SuspendVendorResult,
   Vendor,
   VendorDetail,
   VendorFilters
@@ -46,7 +47,6 @@ import type {
  * or Date.now; mutations only happen after an explicit user action.
  */
 export const MOCK_NOW = '2026-10-21T09:15:00+07:00';
-export const DEMO_OTP = '246810';
 export const MAX_RELEASE_BATCH = 5;
 
 const OPERATORS: Operator[] = [
@@ -122,6 +122,9 @@ function buildVendor(input: {
   cooling_until: string | null;
   bank_verified_at: string | null;
   rejection_reason: string | null;
+  suspended_at?: string | null;
+  suspended_by?: string | null;
+  suspension_reason?: string | null;
 }): Vendor {
   return {
     id: input.id,
@@ -136,7 +139,7 @@ function buildVendor(input: {
     response_rate_bp: input.response_rate_bp,
     rating_x10: input.rating_x10,
     completed_bookings: input.completed_bookings,
-    is_active: input.verification_status !== 'rejected',
+    is_active: input.verification_status !== 'rejected' && input.verification_status !== 'suspended',
     bank_account: {
       id: `bank-${input.id}`,
       bank_name: input.bank_name,
@@ -146,7 +149,10 @@ function buildVendor(input: {
       cooling_until: input.cooling_until,
       verified_at: input.bank_verified_at,
       rejection_reason: input.rejection_reason
-    }
+    },
+    suspended_at: input.suspended_at ?? null,
+    suspended_by: input.suspended_by ?? null,
+    suspension_reason: input.suspension_reason ?? null
   };
 }
 
@@ -318,6 +324,30 @@ const VENDORS: Vendor[] = [
     cooling_until: '2026-03-15T08:20:00+07:00',
     bank_verified_at: '2026-03-15T09:00:00+07:00',
     rejection_reason: null
+  }),
+  buildVendor({
+    id: 'v-09',
+    name: 'Campursari Pantura Sakti',
+    city: 'Indramayu',
+    category: 'Campursari',
+    owner_name: 'Bambang Irawan',
+    phone: '081233445566',
+    verification_status: 'suspended',
+    verified_at: '2026-02-10T11:00:00+07:00',
+    calendar_updated_at: '2026-10-15T10:00:00+07:00',
+    response_rate_bp: 7200,
+    rating_x10: 41,
+    completed_bookings: 14,
+    bank_name: 'BCA',
+    account_number_masked: '**** **** 9012',
+    account_holder: 'Bambang Irawan',
+    bank_status: 'verified',
+    cooling_until: '2026-02-11T11:00:00+07:00',
+    bank_verified_at: '2026-02-11T12:00:00+07:00',
+    rejection_reason: null,
+    suspended_at: '2026-10-20T14:30:00+07:00',
+    suspended_by: 'admin-mock-super',
+    suspension_reason: 'Pelanggaran syarat operasional: pembatalan sepihak berulang.'
   })
 ];
 
@@ -1615,25 +1645,6 @@ export function mockSaveSettings(next: PlatformSettings): PlatformSettings {
   return { ...state.settings };
 }
 
-export function mockRequestOtp(phone: string): { ok: boolean; demo_code: string } {
-  const digits = phone.replace(/\D/g, '');
-  if (!/^08\d{8,12}$/.test(digits)) {
-    throw new ApiError('Nomor tidak valid. Gunakan format 08xxxxxxxxxx (10–14 digit).', 400);
-  }
-  return { ok: true, demo_code: DEMO_OTP };
-}
-
-export function mockVerifyOtp(phone: string, code: string): { operator_name: string; role: string } {
-  const digits = phone.replace(/\D/g, '');
-  if (!/^08\d{8,12}$/.test(digits)) {
-    throw new ApiError('Nomor tidak valid. Kembali ke langkah pertama.', 400);
-  }
-  if (code.replace(/\D/g, '') !== DEMO_OTP) {
-    throw new ApiError('Kode OTP salah. Periksa 6 digit terakhir yang dikirim.', 401);
-  }
-  return { operator_name: 'Sari Wulandari', role: 'admin_finance' };
-}
-
 export function mockGetOperators(): Operator[] {
   return [...OPERATORS];
 }
@@ -1687,6 +1698,61 @@ export function mockRejectMedia(id: string, note: string): AdminMediaItem {
   item.review_note = trimmed;
   item.reviewed_at = MOCK_NOW;
   return { ...item };
+}
+
+export function mockSuspendVendor(
+  id: string,
+  input: { reason: string; note?: string }
+): SuspendVendorResult {
+  const trimmed = (input?.reason ?? '').trim();
+  if (trimmed.length < 10 || trimmed.length > 500) {
+    throw new ApiError('Alasan penangguhan harus antara 10 hingga 500 karakter.', 400);
+  }
+  const vendor = state.vendors.find((v) => v.id === id);
+  if (!vendor) {
+    throw new ApiError('Vendor tidak ditemukan.', 404);
+  }
+  if (vendor.verification_status !== 'verified') {
+    throw new ApiError(
+      `Hanya vendor berstatus verified yang dapat ditangguhkan (status saat ini: ${vendor.verification_status})`,
+      409
+    );
+  }
+  vendor.verification_status = 'suspended';
+  vendor.suspended_at = MOCK_NOW;
+  vendor.suspension_reason = trimmed;
+  vendor.suspended_by = 'admin-mock-super';
+  return {
+    id: vendor.id,
+    verification_status: 'suspended',
+    suspended_at: vendor.suspended_at,
+    suspension_reason: vendor.suspension_reason,
+    suspended_by: vendor.suspended_by
+  };
+}
+
+export function mockUnsuspendVendor(id: string): SuspendVendorResult {
+  const vendor = state.vendors.find((v) => v.id === id);
+  if (!vendor) {
+    throw new ApiError('Vendor tidak ditemukan.', 404);
+  }
+  if (vendor.verification_status !== 'suspended') {
+    throw new ApiError(
+      `Hanya vendor berstatus suspended yang dapat dipulihkan (status saat ini: ${vendor.verification_status})`,
+      409
+    );
+  }
+  vendor.verification_status = 'verified';
+  vendor.suspended_at = null;
+  vendor.suspension_reason = null;
+  vendor.suspended_by = null;
+  return {
+    id: vendor.id,
+    verification_status: 'verified',
+    suspended_at: null,
+    suspension_reason: null,
+    suspended_by: null
+  };
 }
 
 export { ACCOUNT_NAMES as MOCK_ACCOUNT_NAMES };

@@ -27,7 +27,66 @@ class _RegisterPageState extends State<RegisterPage> {
   bool _obscure = true;
   bool _obscureConfirm = true;
   bool _loading = false;
+  bool _consent = false;
+  bool _policiesLoading = true;
+  String? _policiesError;
+  String? _tosVersionId;
+  String? _privacyVersionId;
+  String? _tosVersion;
+  String? _privacyVersion;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _loadPolicies();
+    });
+  }
+
+  /// FR-103: the user must see which policy versions they accept. The ids are
+  /// sent again on submit; the API rejects a stale version.
+  Future<void> _loadPolicies() async {
+    final api = AppScope.of(context).api;
+    setState(() {
+      _policiesLoading = true;
+      _policiesError = null;
+    });
+    try {
+      final results = await Future.wait([
+        api.get('/policies/tos', auth: false),
+        api.get('/policies/privacy', auth: false),
+      ]);
+      final tos = _policy(results[0]);
+      final privacy = _policy(results[1]);
+      final tosId = tos?['id'];
+      final privacyId = privacy?['id'];
+      if (!mounted) return;
+      if (tosId is! String || privacyId is! String) {
+        setState(() {
+          _policiesLoading = false;
+          _policiesError = 'Kebijakan belum bisa dimuat.';
+        });
+        return;
+      }
+      setState(() {
+        _tosVersionId = tosId;
+        _privacyVersionId = privacyId;
+        _tosVersion = tos?['version']?.toString();
+        _privacyVersion = privacy?['version']?.toString();
+        _policiesLoading = false;
+      });
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _policiesLoading = false;
+        _policiesError = authErrorMessage(error, register: true);
+      });
+    }
+  }
+
+  Map<String, dynamic>? _policy(dynamic raw) =>
+      raw is Map ? raw.cast<String, dynamic>() : null;
 
   @override
   void dispose() {
@@ -51,6 +110,19 @@ class _RegisterPageState extends State<RegisterPage> {
       return;
     }
 
+    final tosVersionId = _tosVersionId;
+    final privacyVersionId = _privacyVersionId;
+    if (_policiesLoading || tosVersionId == null || privacyVersionId == null) {
+      setState(() => _error = 'Kebijakan belum bisa dimuat. Coba lagi.');
+      return;
+    }
+    if (!_consent) {
+      setState(
+        () => _error = 'Centang persetujuan Syarat & Ketentuan dulu.',
+      );
+      return;
+    }
+
     FocusScope.of(context).unfocus();
     final scope = AppScope.of(context);
     final name = _name.text.trim();
@@ -58,6 +130,10 @@ class _RegisterPageState extends State<RegisterPage> {
       'email': _email.text.trim(),
       'password': _password.text,
       if (name.isNotEmpty) 'full_name': name,
+      'consent': {
+        'tos_version_id': tosVersionId,
+        'privacy_version_id': privacyVersionId,
+      },
     };
 
     setState(() => _loading = true);
@@ -293,12 +369,49 @@ class _RegisterPageState extends State<RegisterPage> {
                             onChanged: (_) => _clearError(),
                             onFieldSubmitted: (_) => _submit(),
                           ),
+                          const SizedBox(height: Sp.lg),
+                          AuthConsentBox(
+                            value: _consent,
+                            tosVersion: _tosVersion,
+                            privacyVersion: _privacyVersion,
+                            onChanged: (value) => setState(() {
+                              _consent = value ?? false;
+                              _error = null;
+                            }),
+                          ),
+                          if (_policiesLoading)
+                            Padding(
+                              padding: const EdgeInsets.only(top: Sp.sm),
+                              child: Text(
+                                'Memuat versi kebijakan…',
+                                style: text.bodySmall,
+                              ),
+                            ),
+                          if (_policiesError != null)
+                            Padding(
+                              padding: const EdgeInsets.only(top: Sp.sm),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: AuthInlineError(_policiesError!),
+                                  ),
+                                  TextButton(
+                                    onPressed: _policiesLoading
+                                        ? null
+                                        : _loadPolicies,
+                                    child: const Text('Muat ulang'),
+                                  ),
+                                ],
+                              ),
+                            ),
                           if (_error != null) AuthInlineError(_error!),
                           const SizedBox(height: Sp.lg),
                           SizedBox(
                             height: 52,
                             child: FilledButton(
-                              onPressed: _loading ? null : _submit,
+                              onPressed: _loading || _policiesLoading
+                                  ? null
+                                  : _submit,
                               child: Row(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [

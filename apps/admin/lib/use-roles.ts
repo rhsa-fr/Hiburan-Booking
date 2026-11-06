@@ -31,13 +31,14 @@ function decodeRoleCodes(token: string | null): string[] {
   }
 }
 
-export function hasAnyRole(roles: string[], allowed: string[]): boolean {
+export function hasAnyRole(roles: string[], allowed: readonly string[]): boolean {
   return roles.some((role) => allowed.includes(role));
 }
 
 export const VENDOR_READ_ROLES = ['admin_support', 'admin_finance', 'admin_super'];
 export const VENDOR_WRITE_ROLES = ['admin_finance', 'admin_super'];
 export const VENDOR_VERIFY_ROLES = ['admin_super'];
+export const VENDOR_SUSPEND_ROLES = ['admin_super'] as const;
 
 export const PAYOUT_READ_ROLES = ['admin_support', 'admin_finance', 'admin_super'];
 export const PAYOUT_WRITE_ROLES = ['admin_finance', 'admin_super'];

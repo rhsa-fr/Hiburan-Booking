@@ -23,7 +23,6 @@ class _LoginPageState extends State<LoginPage> {
   final _passwordFocus = FocusNode();
 
   bool _obscure = true;
-  bool _consent = false;
   bool _loading = false;
   String? _error;
 
@@ -39,16 +38,9 @@ class _LoginPageState extends State<LoginPage> {
     if (_error != null) setState(() => _error = null);
   }
 
-  bool _checkConsent() {
-    if (_consent) return true;
-    setState(() => _error = 'Centang persetujuan Syarat & Ketentuan dulu.');
-    return false;
-  }
-
   Future<void> _submit() async {
     if (_loading) return;
     setState(() => _error = null);
-    if (!_checkConsent()) return;
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
     FocusScope.of(context).unfocus();
@@ -319,11 +311,6 @@ class _LoginPageState extends State<LoginPage> {
               ],
             ),
             const SizedBox(height: Sp.lg),
-            _ConsentBox(
-              value: _consent,
-              onChanged: (value) =>
-                  setState(() => _consent = value ?? false),
-            ),
             if (_error != null) AuthInlineError(_error!),
             const SizedBox(height: Sp.md),
             _SubmitButton(
@@ -369,72 +356,6 @@ class _FieldLabel extends StatelessWidget {
             ),
           ),
       ],
-    );
-  }
-}
-
-class _ConsentBox extends StatelessWidget {
-  const _ConsentBox({required this.value, required this.onChanged});
-
-  final bool value;
-  final ValueChanged<bool?> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    return Container(
-      padding: const EdgeInsets.fromLTRB(Sp.sm, Sp.sm, Sp.md, Sp.sm),
-      decoration: BoxDecoration(
-        color: AppColors.surfaceTint,
-        borderRadius: BorderRadius.circular(Radii.sm),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 40,
-            height: 40,
-            child: Checkbox(
-              value: value,
-              onChanged: onChanged,
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-          ),
-          const SizedBox(width: Sp.sm),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.only(top: 2),
-              child: Text.rich(
-                TextSpan(
-                  style: text.bodySmall?.copyWith(
-                    color: AppColors.ink,
-                    height: 1.4,
-                  ),
-                  children: const [
-                    TextSpan(text: 'Saya menyetujui '),
-                    TextSpan(
-                      text: 'Syarat & Ketentuan',
-                      style: TextStyle(
-                        color: AppColors.primary,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    TextSpan(text: ' serta '),
-                    TextSpan(
-                      text: 'Kebijakan Privasi',
-                      style: TextStyle(
-                        color: AppColors.primary,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    TextSpan(text: ' Tarlink.'),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

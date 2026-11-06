@@ -32,7 +32,7 @@ export type SettlementStatus =
 
 export type StatusAxis = 'lifecycle' | 'payment' | 'settlement';
 
-export type VendorVerificationStatus = 'verified' | 'pending' | 'rejected';
+export type VendorVerificationStatus = 'verified' | 'pending' | 'rejected' | 'suspended';
 
 export type BankAccountStatus = 'verified' | 'pending' | 'rejected';
 
@@ -154,6 +154,9 @@ export interface Vendor {
   verification_note?: string | null;
   verified_by?: string | null;
   owner_email?: string | null;
+  suspended_at?: string | null;
+  suspended_by?: string | null;
+  suspension_reason?: string | null;
 }
 
 export interface Payment {
@@ -475,6 +478,16 @@ export interface Operator {
   role: string;
 }
 
+/** FR-125: region toggle in the admin panel. */
+export interface AdminRegion {
+  code: string;
+  name: string;
+  level: string;
+  parent_code: string | null;
+  is_active: boolean;
+  vendor_count: number;
+}
+
 export interface LoginSession {
   operator_name: string;
   role: string;
@@ -528,6 +541,19 @@ export interface VendorVerifyResult {
   verification_status: VendorVerificationStatus;
   verified_at: string | null;
   verified_by: string | null;
+}
+
+export interface SuspendVendorInput {
+  reason: string;
+  note?: string;
+}
+
+export interface SuspendVendorResult {
+  id: string;
+  verification_status: VendorVerificationStatus;
+  suspended_at: string | null;
+  suspension_reason: string | null;
+  suspended_by: string | null;
 }
 
 export interface PackageRow {

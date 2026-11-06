@@ -47,7 +47,7 @@ Klien Flutter (`ApiClient`) membuka `data` otomatis bila ada.
 |---|---|
 | `users` + `user_roles` | akun (pelanggan, vendor, operator, admin) dan perannya |
 | `sessions` | sesi + `jti`, refresh token (hash), family rotasi, status pencabutan |
-| `otp_requests` + `login_attempts` | OTP WhatsApp dan kuota login/OTP per email/phone/IP |
+| `otp_requests` + `login_attempts` | OTP email (migrasi `020`) dan kuota login/OTP per email/IP |
 | `regions` | referensi wilayah (kode, nama, level) |
 | `vendors` + `vendor_members` | profil vendor, wilayah, harga mulai, `min_dp_bp`, media |
 | `categories` + `vendor_categories` | kategori referensi; satu vendor multi-kategori, satu primer |
@@ -65,6 +65,11 @@ Klien Flutter (`ApiClient`) membuka `data` otomatis bila ada.
 | `chart_of_accounts` | daftar akun ledger dan tipe normalnya |
 | `disputes` | sengketa dan resolusinya |
 | `policy_versions` | teks kebijakan berversi (`code`, `version`, `body`) |
+| `user_consents` | persetujuan ToS/Privasi per versi (`022`), append-only per (user, versi) |
+| `vendor_media` | unggahan media vendor + status moderasi (`016_vendor_media_moderation.sql`) |
+| `vendor_applications` + `account_deletion_requests` | pengajuan vendor mandiri dan permintaan hapus akun (`017`) |
+| `notifications` | notifikasi in-app per pengguna (`018`) |
+| `chat_messages` | pesan chat per booking, append-only, memicu `NOTIFY tarlink_chat` (`021`) |
 | `outbox_messages` | antrean event untuk worker |
 | `audit_logs` | aksi admin/operator |
 | `idempotency_keys` | hasil request idempoten (`POST /bookings`, `POST /payments/dp`, `POST /payments/settlement`) |
@@ -74,7 +79,7 @@ Settlement tidak punya tabel sendiri: statusnya hidup di `bookings.settlement_st
 Pelunasan manual maupun online (Midtrans) dicatat sebagai baris `payments` berjenis `settlement`; migrasi 007
 menjaga hanya satu baris `pending`/`paid` per booking.
 
-Migrasi: `db/migrations/001_core.sql` … `017_refund_approval_account_deletion.sql`. Migrasi 002 menambah
+Migrasi: `db/migrations/001_core.sql` → `023_vendor_suspension.sql`. Migrasi 002 menambah
 add-on dan snapshot istilah, 003 auth, 004 password admin + `login_attempts`, 005
 Google, 006 metode pembayaran manual, 007 keunikan pelunasan, 008 kategori katalog +
 tabel favorit, 009 kolom media vendor/paket, 010 guard idempotensi booking
@@ -82,7 +87,12 @@ tabel favorit, 009 kolom media vendor/paket, 010 guard idempotensi booking
 pencarian vendor, 013 payout vendor maker-checker, 014 review booking pelanggan,
 015 pembersihan media stok bawaan 009, 016 moderasi media vendor (`vendor_media`),
 017 maker-checker refund + bukti, hapus akun mandiri, dan pengajuan vendor
-(`vendor_applications`). Nomor berikutnya: `018`.
+(`vendor_applications`), 018 notifikasi in-app (`notifications`), 019 enkripsi NIK
+vendor (`nik_ciphertext`), 020 OTP email (`otp_requests.email`), 021 chat booking
+(`chat_messages` + trigger `NOTIFY tarlink_chat`), 022 consent (`user_consents` +
+seed `tos`/`privacy` v1), 023 penangguhan vendor (`suspended_at`, `suspended_by`,
+`suspension_reason`, `suspension_previous_status` + CHECK `vendors_suspension_consistent`).
+Nomor berikutnya: `024`.
 
 ### 3.1 Moderasi media
 
@@ -112,8 +122,37 @@ vendor unggah → vendor_media (status=pending) → admin approve → kolom publ
   `vendor.application.ktp_access` ke `audit_logs`. `admin_support` melihat NIK tersamar.
 - Data minimisation: reject pengajuan dan hapus akun mengosongkan referensi KTP dan
   menghapus file terenkripsinya.
-- Belum ada: enkripsi kolom `nik` di DB, 2FA admin, dan pengecekan sesi per-request
-  (access token 15 menit tetap berlaku setelah sesi dicabut).
+- Kolom `nik` di `users` dienkripsi AES-256-GCM (`nik_ciphertext`, migrasi `019`);
+  baris lama di-backfill saat dibaca.
+- Setiap request yang membawa `jti` dicek ke `sessions` (§6), jadi token dari sesi
+  yang dicabut langsung ditolak. Yang belum ada: 2FA admin dan token admin HttpOnly.
+
+### 3.3 Chat booking (FR-050)
+
+- Satu thread per booking di `chat_messages`; tidak ada tabel percakapan terpisah.
+- Peserta ditentukan dari relasi booking (`customer_id`, pemilik/anggota aktif vendor),
+  dengan admin sebagai jalur baca/tulis untuk sengketa. Peran di token tidak dipakai
+  untuk menentukan sisi percakapan.
+- REST: `GET/POST /v1/bookings/:bookingId/chat/messages`; riwayat memakai cursor
+  `(created_at, id)`, bukan offset.
+- Real-time: `WS /v1/chat/ws?token=…`. Trigger `AFTER INSERT` mengirim baris lengkap
+  lewat `pg_notify('tarlink_chat', …)`; setiap instance API memegang satu koneksi
+  `LISTEN` dan meneruskan ke socket yang berlangganan booking tersebut. Tidak ada
+  Redis/broker tambahan. Pengiriman lewat REST juga memicu siaran yang sama.
+- Socket hanya boleh mengikuti maksimal 20 thread; reconnect klien diikuti muat ulang
+  riwayat lewat REST.
+
+### 3.4 Consent kebijakan (FR-103)
+
+- `user_consents` menyimpan satu baris per (user, `policy_version_id`) dengan
+  `accepted_at`, `ip`, dan `user_agent`. Tidak ada UPDATE; persetujuan versi baru
+  adalah baris baru.
+- Registrasi mengirim `id` versi `tos`/`privacy` yang ditampilkan klien; API
+  membandingkannya dengan versi aktif dan menolak versi basi.
+- body `tos`/`privacy` v1 masih placeholder bertanda `draft`; penggantian teks
+  final harus lewat migrasi baru.
+- Jalur Google belum mencatat consent karena tidak ada layar persetujuan; gap ini
+  dicatat, bukan ditutupi.
 
 ## 4. Ledger (bagian paling sensitif)
 
@@ -193,9 +232,11 @@ untuk nilai ≥ Rp10 juta, 48 jam.
 
 ## 6. Autentikasi & sesi
 
-1. `POST /auth/login` (email + password), `POST /auth/register`, atau OTP WhatsApp
-   (`POST /auth/otp/request` → `POST /auth/otp/verify`). Mobile menampilkan dua tab:
-   Akun Email dan WhatsApp / SMS. Login Google tersedia di API tetapi tidak dipakai mobile.
+1. `POST /auth/login` (email + password), `POST /auth/register`, atau OTP **email**
+   (`POST /auth/otp/request` → `POST /auth/otp/verify`, ADR 0011). Email dikirim lewat
+   port `Mailer` (`HttpMailer` bila `EMAIL_API_URL` diisi, `LoggingMailer` di dev).
+   Mobile saat ini memakai email + password; Login Google tersedia di API tetapi tidak
+   dipakai mobile.
 2. Server membuat baris `sessions` dengan `jti` + refresh token opaque (disimpan
    sebagai `refresh_token_hash`). Respons login berisi `access_token` (15 menit) dan
    `refresh_token` (30 hari, `REFRESH_TTL_DAYS`).
@@ -206,13 +247,17 @@ untuk nilai ≥ Rp10 juta, 48 jam.
 5. Klien (`ApiClient` Flutter) menyimpan access + refresh token di
    `flutter_secure_storage`; cold start memakai refresh token walau access token
    sudah kedaluwarsa, lalu refresh-on-401 untuk request lain.
-6. Kuota login/OTP dicek per email/phone **dan** per IP (`login_attempts`,
+6. Kuota login/OTP dicek per email **dan** per IP (`login_attempts`,
    `otp_requests.requester_ip`); `TRUST_PROXY=true` diperlukan di belakang proxy.
    OTP `dev_code` hanya keluar bila `NODE_ENV != production` dan `OTP_DEV_MODE=true`.
 7. Hapus akun mandiri (FR-101): `DELETE /auth/me` menganonimkan kolom pribadi
    (`phone`, `email`, `name`, `password_hash`, `google_sub`), mencabut semua sesi dan
    peran, lalu mencatat `account_deletion_requests`. Baris `users` dipertahankan agar
    foreign key booking/payment/payout tetap utuh. Idempoten.
+
+Setiap request yang membawa `jti` juga dicek ke `sessions` (`installSessionChecker`
+di `apps/api/src/core/session-checker.ts`): token yang tanda tangannya sah tetap
+ditolak bila sesinya sudah dicabut, sehingga logout/hapus akun berlaku seketika.
 
 ## 7. Worker
 
@@ -226,16 +271,31 @@ Poller PostgreSQL, interval pendek, tanpa broker.
 | `auto-complete` | menutup acara yang sudah lewat |
 | `auto-release` | melepas dana ke vendor setelah jendela sengketa |
 | `payout-reconcile` | mengirim ulang payout `approved` dan menanyakan status `processing` ke provider |
-| `outbox` | mengirim event `booking.*` keluar |
+| `outbox` | memetakan event `booking.*` menjadi baris `notifications` (in-app) |
 | `cleanup-auth` | memangkas `sessions`/`otp_requests`/`login_attempts` yang kedaluwarsa |
+| `cleanup-media` | menghapus unggahan yatim (>24 jam, tidak dirujuk `vendor_media`/vendor/paket) |
 
 Semua job idempoten dan mencatat `processed / skipped / failed` di log.
+
+### Notifikasi in-app
+
+- Tabel `notifications` (migrasi `018`): `user_id`, `type`, `title`, `body`,
+  `payload`, `dedupe_key` unik, `read_at`.
+- `runOutbox` memakai `NotificationSink`, bukan `LoggingMessageSink`. Penerima
+  ditentukan dari `bookings.customer_id` dan `vendors.owner_user_id`.
+- Idempoten: `dedupe_key = outbox:<message_id>:<user_id>`; sink yang di-retry
+  tidak membuat baris ganda.
+- Mobile `NotificationPoller` (`lib/core/notifications.dart`) mem-poll
+  `/v1/notifications` tiap 20 detik selama sesi aktif dan menampilkan popup.
+  Tidak ada provider WhatsApp/push pada rilis ini.
 
 ## 8. Panel admin
 
 Next.js App Router dengan dua grup rute: `(auth)` untuk login, `(panel)` untuk
-operasional: dashboard, booking, vendor, antrean pelepasan dana, ledger, pembayaran,
-sengketa, audit, operator, pengaturan.
+operasional: dashboard, booking, vendor, pelepasan dana (`release`), ledger, pembayaran,
+sengketa, audit, pengaturan, wilayah (`regions`, FR-125), pengajuan vendor
+(`applications`), moderasi media (`moderation`), payout (`payouts`), dan refund
+(`refunds`).
 
 Aturan: panel tidak menghitung uang sendiri; semua angka dari `GET /admin/*`.
 
@@ -245,12 +305,15 @@ Aturan: panel tidak menghitung uang sendiri; semua angka dari `GET /admin/*`.
 apps/mobile/lib/
   app/            app.dart (shell pelanggan 4 tab), routes.dart, theme.dart
   core/           api_client.dart, api_exception.dart, session.dart, models.dart,
-                  format.dart, ui.dart (komponen bersama), widgets.dart (state UI)
+                  format.dart, notifications.dart (poller), chat.dart,
+                  chat_socket*.dart (WebSocket per platform), ui.dart (komponen bersama),
+                  widgets.dart (state UI)
   features/
     auth/         welcome_page, login_page, register_page, auth_support
-    discovery/    home_page (Beranda), browse_page (Jelajah), vendor_page
+    discovery/    home_page (Beranda), browse_page (Jelajah), vendor_page, favorites_page
     booking/      create_page, list_page, status_page, booking_support
-    profile/      account_page
+    chat/         chat_page (riwayat REST + langganan WebSocket)
+    profile/      account_page, vendor_apply_page
     vendor/       vendor_shell, dashboard, calendar, earnings, profile, bookings,
                   booking_detail, manage_packages, manage_profile, package_edit,
                   media_picker, vendor_theme, vendor_ui
@@ -321,17 +384,22 @@ Midtrans tidak mendukung reverse bank transfer.
 | — | Ledger append-only, uang integer rupiah |
 | — | Settlement disimpan di `bookings.settlement_status`, bukan tabel terpisah |
 | — | Worker polling DB, tanpa Redis |
-| — | Mobile tanpa dependency berat; WhatsApp deep link, bukan chat in-app |
+| — | Chat real-time in-app via WebSocket (ADR 0011); WhatsApp deep link hanya cadangan |
 
 ## 12. Batasan yang tersisa
 
 Sudah diselesaikan: idempotensi `POST /bookings`, validasi `policy_version_id` +
 snapshot, rate limit per IP, index trigram pencarian, guard `dev_code`, refresh token
-panjang, pemangkasan sesi, dan penolakan e-wallet yang eksplisit.
+panjang, pemangkasan sesi, penolakan e-wallet yang eksplisit, notifikasi in-app
+(migrasi `018`), enkripsi NIK (migrasi `019`), pengecekan `sessions.jti` per request,
+antrean pengajuan vendor + antrean refund di panel admin, job `cleanup_media`, dan
+header CSP pada nota invoice, serta chat booking (migrasi `021`: REST riwayat/kirim,
+WebSocket per booking, fan-out `LISTEN/NOTIFY`).
 
 Yang masih terbuka (lihat [AGENTS.md § Batasan](../AGENTS.md#batasan-yang-diketahui)):
-provider WhatsApp/SMS, picker peta lokasi acara, UI check-in berbasis GPS,
-token admin HttpOnly, dan 2FA admin. Integrasi
+push notification, chat foto/lokasi dan penyaringan kontak (FR-135), picker peta lokasi
+acara, UI check-in berbasis GPS, token admin HttpOnly, dan 2FA admin. Provider WhatsApp/SMS
+tidak dipakai (ADR 0011). Integrasi
 charge + notifikasi + refund QRIS memakai Midtrans sandbox; endpoint check-in/no-show
 basic sudah ada. Payout vendor + rekening terenkripsi sudah ada; integrasi Iris
 tersedia di balik `PAYOUT_PROVIDER=iris`, tetapi pengujian live bergantung pada

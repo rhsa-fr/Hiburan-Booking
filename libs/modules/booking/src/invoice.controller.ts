@@ -25,6 +25,13 @@ export class InvoiceController {
 
     const html = this.invoiceService.renderHtml(invoiceData);
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    // Defense in depth for a self-contained printable document: no scripts, no
+    // network requests, no embedding.
+    res.setHeader(
+      'Content-Security-Policy',
+      "default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    );
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     return res.send(html);
   }
 }

@@ -43,12 +43,6 @@ export function clearToken(): void {
   }
 }
 
-export const DEFAULT_OPERATOR: OperatorSession = {
-  operator_name: 'Sari Wulandari',
-  role: 'Admin finance',
-  logged_in_at: '2026-10-21T09:15:00+07:00'
-};
-
 function isBrowser(): boolean {
   return typeof window !== 'undefined' && typeof window.sessionStorage !== 'undefined';
 }

@@ -1,7 +1,8 @@
 /**
  * Chart of accounts, frozen against TECH-DESIGN-v1.0 §6.2 and the seed in §11.3.
- * Codes, names, account types, normal balances and vendor scoping must not drift:
- * the SQL views (`account_balances`, `vendor_balances`) hard-code the same codes.
+ * Codes, names, account types, normal balances and vendor scoping must not drift.
+ * The SQL seeds in `db/migrations/001_core.sql`/`002_fixes.sql` may keep a superset
+ * of accounts, but this file only defines accounts the ledger actually posts to.
  */
 import { AppError } from '@tarlink/core/errors';
 
@@ -59,13 +60,6 @@ export const ACCOUNT = {
     normalBalance: 'credit',
     vendorScoped: true
   },
-  tax_payable: {
-    code: '2130',
-    name: 'tax_payable',
-    accountType: 'liability',
-    normalBalance: 'credit',
-    vendorScoped: false
-  },
   dispute_reserve: {
     code: '2140',
     name: 'dispute_reserve',
@@ -100,13 +94,6 @@ export const ACCOUNT = {
     accountType: 'expense',
     normalBalance: 'debit',
     vendorScoped: false
-  },
-  vendor_bad_debt_expense: {
-    code: '5200',
-    name: 'vendor_bad_debt_expense',
-    accountType: 'expense',
-    normalBalance: 'debit',
-    vendorScoped: true
   }
 } as const satisfies Record<string, AccountDefinition>;
 
@@ -120,13 +107,11 @@ export const CHART_OF_ACCOUNTS: readonly AccountDefinition[] = Object.freeze([
   ACCOUNT.escrow_liability_vendor,
   ACCOUNT.refund_payable,
   ACCOUNT.vendor_payable,
-  ACCOUNT.tax_payable,
   ACCOUNT.dispute_reserve,
   ACCOUNT.platform_revenue_commission,
   ACCOUNT.platform_revenue_service_fee,
   ACCOUNT.gateway_fee_expense,
-  ACCOUNT.gateway_fee_absorbed,
-  ACCOUNT.vendor_bad_debt_expense
+  ACCOUNT.gateway_fee_absorbed
 ]);
 
 const BY_CODE: ReadonlyMap<string, AccountDefinition> = new Map(

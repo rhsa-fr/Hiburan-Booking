@@ -12,14 +12,19 @@ import { createHash } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
-import { withTransaction } from '@tarlink/core/db';
+import { getPool, withTransaction } from '@tarlink/core/db';
 import { AppError } from '@tarlink/core/errors';
 import { postEntry } from '@tarlink/modules/ledger';
 import { PaymentService } from '@tarlink/modules/payment';
-import { IdempotencyService, PgIdempotencyStore } from '@tarlink/platform/idempotency';
+import {
+  IdempotencyService,
+  PgIdempotencyStore,
+  hashRequest
+} from '@tarlink/platform/idempotency';
 import { AdminRepository } from './admin.repository';
 import type {
   ActionQueueItem,
+  AdminRegion,
   AuditEvent,
   AuditLog,
   Booking,
@@ -64,6 +69,7 @@ import {
   mapDispute,
   mapJournalEntry,
   mapPayment,
+  mapRegion,
   mapVendor,
   toIsoRequired
 } from './mappers';
@@ -113,6 +119,27 @@ export interface SettleBookingResult {
   already_settled: boolean;
 }
 
+export interface SettleContext {
+  actor: SettleActor;
+  /** Required at the HTTP boundary; a retry must not settle twice. */
+  idempotencyKey: string;
+  requestId: string | null;
+}
+
+/**
+ * Shape persisted in `idempotency_keys.response_body` (JSONB). BIGINT does not
+ * survive JSON, so the amount travels as a decimal string and is rehydrated
+ * before it reaches the controller.
+ */
+interface StoredSettleBookingResult {
+  booking_id: string;
+  payment_id: string;
+  journal_entry_id: string;
+  payment_status: 'fully_paid';
+  outstanding_before_idr: string;
+  already_settled: boolean;
+}
+
 const SETTLE_MANUAL_BODY = z.object({
   amount_idr: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   method: z.enum(['transfer_manual', 'cash']),
@@ -141,6 +168,7 @@ export function parseSettleManualBody(body: unknown): SettleManualBody {
 }
 
 const RELEASE_SCOPE = 'POST /admin/release';
+const SETTLE_SCOPE = 'POST /admin/bookings/:id/settle';
 const QUEUE_LIMIT = 5;
 const AUDIT_LIMIT = 200;
 const AUDIT_ACTION_LIMIT = 50;
@@ -364,14 +392,59 @@ export class AdminService {
    * The journal, payment row, booking flip and audit row ride ONE transaction
    * inside `PaymentService.settleManual`: a failed audit insert rolls the money
    * back instead of leaving it committed without a trail.
+   *
+   * Like `release`, the route is protected by a mandatory `Idempotency-Key`,
+   * but the claim does NOT share the money transaction: it runs through a
+   * pool-backed store that autocommits the claim row before the business
+   * callback starts, so no pool connection is held across two transactions.
+   * A completed key replays the stored response. A crash mid-flight leaves the
+   * claim `in_progress`; once its lease expires a retry re-runs the business
+   * step, which is idempotent because the booking `FOR UPDATE` + `fully_paid`
+   * guard and the journal `source_event_key` prevent a second effect.
    */
   async settleBookingManual(
     bookingId: string,
     body: unknown,
-    actor: SettleActor,
-    requestId: string | null = null
+    context: SettleContext
   ): Promise<SettleBookingResult> {
     const input = parseSettleManualBody(body);
+    const requestHash = hashRequest({
+      booking_id: bookingId,
+      amount_idr: input.amount_idr,
+      method: input.method,
+      reference: input.reference ?? null,
+      note: input.note ?? null
+    });
+
+    const idempotency = new IdempotencyService(new PgIdempotencyStore(getPool()), {
+      actorId: context.actor.id
+    });
+
+    const stored = await idempotency.run(context.idempotencyKey, SETTLE_SCOPE, requestHash, () =>
+      this.executeSettleBooking(bookingId, input, context)
+    );
+
+    return {
+      booking_id: stored.booking_id,
+      payment_id: stored.payment_id,
+      journal_entry_id: stored.journal_entry_id,
+      payment_status: stored.payment_status,
+      outstanding_before_idr: toIdr(stored.outstanding_before_idr, 'outstanding_before_idr'),
+      already_settled: stored.already_settled
+    };
+  }
+
+  /**
+   * Business step behind one settle claim. It is NOT inside the idempotency
+   * transaction: it reads the booking through the pool and delegates the money
+   * write to `PaymentService.settleManual`, which owns its own transaction.
+   */
+  private async executeSettleBooking(
+    bookingId: string,
+    input: SettleManualBody,
+    context: SettleContext
+  ): Promise<StoredSettleBookingResult> {
+    const actor = context.actor;
     const before = await this.repository.findBooking(bookingId);
     if (!before) {
       throw new AppError('NOT_FOUND', 'Booking tidak ditemukan.');
@@ -389,6 +462,7 @@ export class AdminService {
     }
 
     // `audit_logs.request_id` is VARCHAR(40): never let a long header break a write.
+    const requestId = context.requestId;
     const auditRequestId = requestId ? requestId.slice(0, 40) : null;
 
     const settled = await this.payment.settleManual({
@@ -425,7 +499,7 @@ export class AdminService {
         payment_id: settled.paymentId,
         journal_entry_id: settled.journalEntryId,
         payment_status: 'fully_paid',
-        outstanding_before_idr: settled.outstandingBeforeIdr,
+        outstanding_before_idr: settled.outstandingBeforeIdr.toString(),
         already_settled: true
       };
     }
@@ -435,7 +509,7 @@ export class AdminService {
       payment_id: settled.paymentId,
       journal_entry_id: settled.journalEntryId,
       payment_status: 'fully_paid',
-      outstanding_before_idr: settled.outstandingBeforeIdr,
+      outstanding_before_idr: settled.outstandingBeforeIdr.toString(),
       already_settled: false
     };
   }
@@ -1099,6 +1173,59 @@ export class AdminService {
   async settings(): Promise<PlatformSettings> {
     const keys = Object.values(SETTING_KEYS);
     return settingsFromRows(await this.repository.settingsRows(keys));
+  }
+
+  /* --------------------------------------------------------------- regions */
+
+  /** FR-125: all regions with the number of active vendors, for the panel. */
+  async regions(): Promise<AdminRegion[]> {
+    return (await this.repository.listRegions()).map(mapRegion);
+  }
+
+  /**
+   * Activating/deactivating is a non-money admin write: one transaction, one
+   * audit row. Existing bookings are untouched; only new listings/onboarding
+   * are affected by the read filters.
+   */
+  async setRegionActive(
+    code: string,
+    isActive: boolean,
+    context: SettingsContext
+  ): Promise<AdminRegion> {
+    const normalized = code.trim();
+    if (normalized.length === 0) {
+      throw new AppError('VALIDATION_ERROR', 'Kode wilayah wajib diisi');
+    }
+
+    const before = await this.repository.findRegion(normalized);
+    if (!before) throw new AppError('NOT_FOUND', 'Wilayah tidak ditemukan');
+
+    await withTransaction(async (client) => {
+      const updated = await this.repository.setRegionActive(client, normalized, isActive);
+      if (!updated) throw new AppError('NOT_FOUND', 'Wilayah tidak ditemukan');
+      await this.repository.insertAudit(client, {
+        actorId: context.actorId,
+        actorRole: null,
+        action: isActive ? 'region.activate' : 'region.deactivate',
+        entityType: 'region',
+        entityId: normalized,
+        beforeState: {
+          code: before.code,
+          name: before.name,
+          is_active: before.is_active
+        },
+        afterState: {
+          code: before.code,
+          name: before.name,
+          is_active: isActive
+        },
+        requestId: context.requestId
+      });
+    });
+
+    const after = await this.repository.findRegion(normalized);
+    if (!after) throw new AppError('NOT_FOUND', 'Wilayah tidak ditemukan');
+    return mapRegion(after);
   }
 
   async saveSettings(input: unknown, context: SettingsContext): Promise<PlatformSettings> {

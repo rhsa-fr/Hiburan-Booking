@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/app.dart';
+import '../../app/routes.dart';
 import '../../core/api_exception.dart';
 import '../../core/format.dart';
 import '../booking/booking_support.dart';
@@ -149,43 +149,15 @@ class _VendorBookingDetailPageState extends State<VendorBookingDetailPage> {
     }
   }
 
-  Future<void> _openWhatsApp(String? rawPhone, String code) async {
-    final digits = whatsappDigits(rawPhone);
-    if (digits == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Nomor WhatsApp pelanggan tidak valid.')),
-      );
-      return;
-    }
-
-    final message =
-        'Halo, saya dari vendor untuk booking $code di Tarlink. '
-        'Apakah ada yang perlu dikoordinasikan?';
-    final appUri = Uri.parse(
-      'whatsapp://send?phone=$digits&text=${Uri.encodeComponent(message)}',
+  void _openChat(String customerName) {
+    Navigator.of(context).pushNamed(
+      Routes.bookingChat,
+      arguments: ChatArgs(
+        bookingId: widget.bookingId,
+        title: 'Chat pelanggan',
+        subtitle: customerName,
+      ),
     );
-    final webUri = Uri.parse(
-      'https://wa.me/$digits?text=${Uri.encodeComponent(message)}',
-    );
-
-    try {
-      final launched = await launchUrl(
-        appUri,
-        mode: LaunchMode.externalApplication,
-      );
-      if (!launched) {
-        await launchUrl(webUri, mode: LaunchMode.externalApplication);
-      }
-    } catch (_) {
-      try {
-        await launchUrl(webUri, mode: LaunchMode.externalApplication);
-      } catch (_) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Tidak dapat membuka WhatsApp.')),
-        );
-      }
-    }
   }
 
   @override
@@ -596,16 +568,14 @@ class _VendorBookingDetailPageState extends State<VendorBookingDetailPage> {
                   ],
                 ),
               ),
-              if (customerPhone != null && customerPhone.isNotEmpty) ...[
-                const SizedBox(width: VendorSp.sm),
-                VendorButton(
-                  label: 'Hubungi via WhatsApp',
-                  icon: Icons.chat_bubble_outline,
-                  kind: VendorButtonKind.secondary,
-                  small: true,
-                  onPressed: () => _openWhatsApp(customerPhone, code),
-                ),
-              ],
+              const SizedBox(width: VendorSp.sm),
+              VendorButton(
+                label: 'Chat pelanggan',
+                icon: Icons.forum_outlined,
+                kind: VendorButtonKind.secondary,
+                small: true,
+                onPressed: () => _openChat(customerName),
+              ),
             ],
           ),
         ),

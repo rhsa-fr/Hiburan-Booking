@@ -6,6 +6,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/app.dart';
+import '../../app/routes.dart';
 import '../../app/theme.dart';
 import '../../core/api_exception.dart';
 import '../../core/format.dart';
@@ -482,6 +483,17 @@ class _BookingStatusPageState extends State<BookingStatusPage>
     }
   }
 
+  void _openChat() {
+    Navigator.of(context).pushNamed(
+      Routes.bookingChat,
+      arguments: ChatArgs(
+        bookingId: widget.bookingId,
+        title: 'Chat vendor',
+        subtitle: _booking?.vendor.displayName,
+      ),
+    );
+  }
+
   Future<void> _openWhatsApp() async {
     final digits = whatsappDigits(_booking?.vendor.whatsapp);
     if (digits == null) return;
@@ -663,7 +675,6 @@ class _BookingStatusPageState extends State<BookingStatusPage>
   };
 
   List<Widget> _body(BookingView booking, TextTheme text) {
-    final digits = whatsappDigits(booking.vendor.whatsapp);
     return [
       Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -730,14 +741,6 @@ class _BookingStatusPageState extends State<BookingStatusPage>
       const SectionHeader(title: 'Detail acara'),
       const SizedBox(height: Sp.md),
       BookingPanel(child: _detail(booking, text)),
-      if (digits == null) ...[
-        const SizedBox(height: Sp.md),
-        const InfoStrip(
-          message: 'Nomor WhatsApp vendor belum tersedia.',
-          icon: Icons.chat_outlined,
-          tone: InfoTone.neutral,
-        ),
-      ],
       if (_cancelError != null) ...[
         const SizedBox(height: Sp.md),
         Semantics(
@@ -1421,10 +1424,26 @@ class _BookingStatusPageState extends State<BookingStatusPage>
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           PrimaryButton(
-            label: 'Hubungi vendor (WhatsApp)',
-            icon: Icons.chat_outlined,
-            onPressed: digits == null ? null : _openWhatsApp,
+            label: 'Chat dengan vendor',
+            icon: Icons.forum_outlined,
+            onPressed: _openChat,
           ),
+          if (digits != null) ...[
+            const SizedBox(height: Sp.sm),
+            OutlinedButton.icon(
+              onPressed: _openWhatsApp,
+              icon: const Icon(Icons.chat_outlined, size: 20),
+              label: const Text('WhatsApp (cadangan)'),
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size.fromHeight(48),
+                foregroundColor: AppColors.primary,
+                side: const BorderSide(color: AppColors.line),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(Radii.sm),
+                ),
+              ),
+            ),
+          ],
           if (_canCancel) ...[
             const SizedBox(height: Sp.sm),
             OutlinedButton.icon(

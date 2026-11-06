@@ -248,3 +248,12 @@ export type ReleasedRow = {
   settlement_status: SettlementStatus;
   released_at: Date | null;
 };
+
+export type RegionRow = {
+  code: string;
+  name: string;
+  level: string;
+  parent_code: string | null;
+  is_active: boolean;
+  vendor_count: number;
+};

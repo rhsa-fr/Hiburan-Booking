@@ -64,6 +64,11 @@ export type RefundStatus =
   | 'failed'
   | 'rejected';
 
+export interface RefundQueueRow extends RefundRecord {
+  readonly bookingCode: string;
+  readonly customerName: string | null;
+}
+
 export interface RefundRecord {
   readonly id: string;
   readonly bookingId: string;
@@ -249,6 +254,11 @@ export interface PaymentRepository {
     tx: JournalQueryClient,
     bookingId: string
   ): Promise<{ refund: RefundRecord; customerId: string } | null>;
+  /** Admin queue: refunds with booking code and customer name, oldest first. */
+  listRefunds(
+    tx: JournalQueryClient,
+    input: { status: RefundStatus | null; limit: number }
+  ): Promise<RefundQueueRow[]>;
 
   insertWebhookEvent(tx: JournalQueryClient, input: NewWebhookEvent): Promise<WebhookEventRecord | null>;
   findWebhookEvent(
@@ -464,6 +474,20 @@ JOIN bookings b ON b.id = r.booking_id
 WHERE r.booking_id = $1
 ORDER BY r.created_at DESC
 LIMIT 1
+`;
+
+const SELECT_REFUND_QUEUE_SQL = `
+SELECT r.id, r.booking_id, r.payment_id, r.amount_idr, r.fee_idr, r.status,
+       r.reason_code, r.reason_note, r.evidence_url, r.review_note,
+       r.requested_by, r.approved_by, r.approved_at, r.created_at,
+       b.code AS booking_code,
+       u.name AS customer_name
+FROM refunds r
+JOIN bookings b ON b.id = r.booking_id
+LEFT JOIN users u ON u.id = b.customer_id
+WHERE ($1::text IS NULL OR r.status::text = $1::text)
+ORDER BY r.created_at ASC, r.id
+LIMIT $2
 `;
 
 /**
@@ -814,6 +838,18 @@ export class PgPaymentRepository implements PaymentRepository {
     const row = rows[0];
     if (!row) return null;
     return { refund: mapRefund(row), customerId: String(row.customer_id) };
+  }
+
+  async listRefunds(
+    tx: JournalQueryClient,
+    input: { status: RefundStatus | null; limit: number }
+  ): Promise<RefundQueueRow[]> {
+    const { rows } = await tx.query(SELECT_REFUND_QUEUE_SQL, [input.status, input.limit]);
+    return rows.map((row) => ({
+      ...mapRefund(row),
+      bookingCode: String(row.booking_code),
+      customerName: row.customer_name === null ? null : String(row.customer_name)
+    }));
   }
 
   async insertWebhookEvent(

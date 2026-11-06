@@ -30,6 +30,10 @@ export type VendorRow = {
   banner_url?: string | null;
   photo_urls?: string[] | null;
   video_url?: string | null;
+  suspended_at?: Date | null;
+  suspended_by?: string | null;
+  suspension_reason?: string | null;
+  suspension_previous_status?: string | null;
 };
 
 export type VerifyRow = {

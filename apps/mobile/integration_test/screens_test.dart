@@ -122,10 +122,14 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
     await waitFor(tester, find.text('Beranda'), label: 'kembali');
 
-    // Tab Jelajah.
+    // Tab Jelajah. Panel filter tertutup secara default sejak UI dirombak;
+    // chip kategori baru dirender setelah panel dibuka.
     await tester.tap(find.text('Jelajah'));
     await tester.pump(const Duration(milliseconds: 600));
-    await waitFor(tester, find.byType(SelectChip), label: 'chip wilayah');
+    await waitFor(tester, find.text('Filter & Urutan'), label: 'tombol filter');
+    await tester.tap(find.text('Filter & Urutan'));
+    await tester.pump(const Duration(milliseconds: 300));
+    await waitFor(tester, find.byType(SelectChip), label: 'chip kategori');
     await shot(tester, 'ui-03-jelajah');
 
     // Tab Booking.
@@ -149,3 +153,4 @@ void main() {
     await shot(tester, 'ui-06-profil');
   });
 }
+

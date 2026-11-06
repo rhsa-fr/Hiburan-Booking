@@ -144,7 +144,7 @@ class WelcomePage extends StatelessWidget {
                                   icon: Icons.chat_bubble_outline,
                                   title: 'Langsung ke vendor',
                                   body:
-                                      'Tanya atau ubah rencana lewat WhatsApp, bukan chat aplikasi.',
+                                      'Tanya atau ubah rencana langsung lewat chat di aplikasi.',
                                 ),
                                 const Spacer(),
                                 SizedBox(

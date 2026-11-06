@@ -6,6 +6,8 @@
  *
  * Jalankan: npx vite-node scripts/smoke-settle.ts
  */
+import { randomUUID } from 'node:crypto';
+
 import { loadDotEnv } from '../apps/api/src/core/config';
 import { closePool, query } from '../apps/api/src/core/db';
 import { signAccessToken } from '@tarlink/platform/auth';
@@ -30,6 +32,11 @@ async function call(path: string, token: string, init: RequestInit = {}): Promis
       accept: 'application/json',
       authorization: `Bearer ${token}`,
       ...(init.body ? { 'content-type': 'application/json' } : {}),
+      // Settle is a money route: every attempt carries its own key, so a retry
+      // replays the stored response instead of settling twice.
+      ...(init.method === 'POST' && path.endsWith('/settle')
+        ? { 'idempotency-key': randomUUID() }
+        : {}),
       ...(init.headers ?? {})
     }
   });

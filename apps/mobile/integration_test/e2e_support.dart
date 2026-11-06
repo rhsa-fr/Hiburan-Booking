@@ -81,8 +81,6 @@ Future<void> login(WidgetTester tester) async {
   await waitFor(tester, find.text('Tarlink'), label: 'Login');
   await tester.enterText(find.byType(TextFormField).at(0), e2eEmail);
   await tester.enterText(find.byType(TextFormField).at(1), e2ePassword);
-  await tester.tap(find.byType(Checkbox));
-  await tester.pump(const Duration(milliseconds: 150));
   await tester.tap(find.text('Masuk ke Akun'));
   // Stop early on a visible API error so the failure is capturable.
   final deadline = DateTime.now().add(const Duration(seconds: 40));

@@ -74,12 +74,6 @@ http.Response _json(Object body, int status) => http.Response(
   headers: {'content-type': 'application/json'},
 );
 
-/// Consent is unchecked by default (opt-in, not opt-out).
-Future<void> _acceptConsent(WidgetTester tester) async {
-  await tester.tap(find.byType(Checkbox));
-  await tester.pump();
-}
-
 const _sessionPayload = {
   'data': {
     'access_token': 'token-123',
@@ -108,32 +102,11 @@ void main() {
       await tester.pumpWidget(
         _app(session: h.session, api: h.api, home: const LoginPage()),
       );
-      await _acceptConsent(tester);
       await tester.tap(find.widgetWithText(FilledButton, 'Masuk ke Akun'));
       await tester.pump();
 
       expect(find.text('Email wajib diisi.'), findsOneWidget);
       expect(find.text('Kata sandi wajib diisi.'), findsOneWidget);
-      expect(h.requests, isEmpty);
-    });
-
-    testWidgets('tanpa centang persetujuan: tidak memanggil API', (
-      tester,
-    ) async {
-      final h = _setup((_) async => _json(_sessionPayload, 200));
-
-      await tester.pumpWidget(
-        _app(session: h.session, api: h.api, home: const LoginPage()),
-      );
-      await tester.enterText(find.byType(TextFormField).at(0), 'budi@email.com');
-      await tester.enterText(find.byType(TextFormField).at(1), 'rahasia123');
-      await tester.tap(find.widgetWithText(FilledButton, 'Masuk ke Akun'));
-      await tester.pump();
-
-      expect(
-        find.text('Centang persetujuan Syarat & Ketentuan dulu.'),
-        findsOneWidget,
-      );
       expect(h.requests, isEmpty);
     });
 
@@ -157,7 +130,6 @@ void main() {
         find.byType(TextFormField).at(1),
         'kata-salah-123',
       );
-      await _acceptConsent(tester);
       await tester.tap(find.widgetWithText(FilledButton, 'Masuk ke Akun'));
       await tester.pumpAndSettle();
 
@@ -180,7 +152,6 @@ void main() {
         '  budi@email.com  ',
       );
       await tester.enterText(find.byType(TextFormField).at(1), 'rahasia123');
-      await _acceptConsent(tester);
       await tester.tap(find.widgetWithText(FilledButton, 'Masuk ke Akun'));
       // Push happens after the awaited signIn; let the route transition finish.
       await tester.pump();
@@ -215,6 +186,55 @@ void main() {
 
       expect(tester.takeException(), isNull);
       expect(find.text('Daftar akun'), findsOneWidget);
+    });
+
+    testWidgets('memuat versi kebijakan dan wajib centang persetujuan', (
+      tester,
+    ) async {
+      final h = _setup((request) async {
+        if (request.url.path.endsWith('/policies/tos')) {
+          return _json({
+            'id': 'tos-1',
+            'code': 'tos',
+            'version': 1,
+            'body': <String, dynamic>{},
+          }, 200);
+        }
+        if (request.url.path.endsWith('/policies/privacy')) {
+          return _json({
+            'id': 'privacy-1',
+            'code': 'privacy',
+            'version': 1,
+            'body': <String, dynamic>{},
+          }, 200);
+        }
+        return _json({}, 500);
+      });
+
+      await tester.pumpWidget(
+        _app(session: h.session, api: h.api, home: const RegisterPage()),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('S&K v1'), findsOneWidget);
+      await tester.enterText(find.byType(TextFormField).at(0), 'Budi');
+      await tester.enterText(
+        find.byType(TextFormField).at(1),
+        'budi@email.com',
+      );
+      await tester.enterText(find.byType(TextFormField).at(2), 'rahasia123');
+      await tester.enterText(find.byType(TextFormField).at(3), 'rahasia123');
+      final submit = find.widgetWithText(FilledButton, 'Buat akun');
+      await tester.ensureVisible(submit);
+      await tester.pumpAndSettle();
+      await tester.tap(submit);
+      await tester.pump();
+
+      expect(
+        find.text('Centang persetujuan Syarat & Ketentuan dulu.'),
+        findsOneWidget,
+      );
+      expect(h.requests.where((request) => request.method == 'POST'), isEmpty);
     });
   });
 

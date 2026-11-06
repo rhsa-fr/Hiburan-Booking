@@ -21,6 +21,7 @@ import type {
   NewOtpRequest,
   NewSession,
   NewUser,
+  NewUserConsent,
   OtpRequestRecord,
   SessionRefreshRecord
 } from './auth.repository';
@@ -39,10 +40,17 @@ import {
 const SECRET = 'test-jwt-secret-at-least-16-chars';
 const USER_ID = '11111111-1111-4111-8111-111111111111';
 const PHONE = '628123456789';
+const EMAIL = 'user@tarlink.id';
 const ADMIN_PHONE = '629111222333';
 const ADMIN_ID = '22222222-2222-4222-8222-222222222222';
 const ADMIN_EMAIL = 'admin@tarlink.id';
 const ADMIN_PASSWORD = 'rahasia-admin-2026';
+const TOS_VERSION_ID = '33333333-3333-4333-8333-333333333333';
+const PRIVACY_VERSION_ID = '44444444-4444-4444-8444-444444444444';
+const CONSENT = {
+  tos_version_id: TOS_VERSION_ID,
+  privacy_version_id: PRIVACY_VERSION_ID
+};
 
 interface StoredOtpRequest extends OtpRequestRecord {
   requesterIp: string | null;
@@ -66,10 +74,11 @@ class FakeAuthRepository implements AuthRepository {
   readonly loginAttempts: NewLoginAttempt[] = [];
   readonly passwordUpdatedAt = new Map<string, Date>();
   readonly deletionRequests: AccountDeletionRecord[] = [];
+  readonly consents: NewUserConsent[] = [];
   privateKeys: string[] = [];
 
-  async countRecentOtpRequests(phone: string, since: Date): Promise<number> {
-    return this.otpRequests.filter((row) => row.phone === phone && row.createdAt >= since).length;
+  async countRecentOtpRequests(email: string, since: Date): Promise<number> {
+    return this.otpRequests.filter((row) => row.email === email && row.createdAt >= since).length;
   }
 
   async countRecentOtpRequestsByIp(ip: string, since: Date): Promise<number> {
@@ -81,7 +90,7 @@ class FakeAuthRepository implements AuthRepository {
   async insertOtpRequest(input: NewOtpRequest): Promise<void> {
     this.otpRequests.push({
       id: input.id,
-      phone: input.phone,
+      email: input.email,
       codeHash: input.codeHash,
       attempts: 0,
       maxAttempts: input.maxAttempts,
@@ -92,11 +101,11 @@ class FakeAuthRepository implements AuthRepository {
     });
   }
 
-  async findActiveOtpRequest(phone: string, now: Date): Promise<OtpRequestRecord | null> {
+  async findActiveOtpRequest(email: string, now: Date): Promise<OtpRequestRecord | null> {
     for (let i = this.otpRequests.length - 1; i >= 0; i -= 1) {
       const row = this.otpRequests[i];
       if (!row) continue;
-      if (row.phone !== phone) continue;
+      if (row.email !== email) continue;
       if (row.consumedAt !== null) continue;
       if (row.expiresAt <= now) continue;
       return { ...row };
@@ -153,6 +162,14 @@ class FakeAuthRepository implements AuthRepository {
     return this.users.some((user) => user.phone === phone);
   }
 
+  async findActivePolicyVersion(
+    code: string
+  ): Promise<{ id: string; code: string; version: number } | null> {
+    if (code === 'tos') return { id: TOS_VERSION_ID, code, version: 1 };
+    if (code === 'privacy') return { id: PRIVACY_VERSION_ID, code, version: 1 };
+    return null;
+  }
+
   async createUser(input: NewUser): Promise<AuthUserRecord> {
     if ((await this.emailExists(input.email)) || (input.phone && (await this.phoneExists(input.phone)))) {
       throw new AppError('CONFLICT', 'Email atau nomor sudah terdaftar');
@@ -169,6 +186,7 @@ class FakeAuthRepository implements AuthRepository {
     };
     this.users.push(user);
     this.roles.push({ userId: user.id, role: 'customer' });
+    for (const consent of input.consents ?? []) this.consents.push(consent);
     return user;
   }
 
@@ -367,7 +385,7 @@ function addUser(
   repository.users.push({
     id,
     phone: options.phone === undefined ? PHONE : options.phone,
-    email: options.email ?? null,
+    email: options.email === undefined ? EMAIL : options.email,
     passwordHash: options.passwordHash ?? null,
     name: options.name ?? null,
     googleSub: options.googleSub ?? null,
@@ -388,47 +406,47 @@ class FakeGoogleVerifier implements GoogleTokenVerifier {
   }
 }
 
-async function requestCode(service: AuthService, phone = '0812-3456-789'): Promise<string> {
-  const result = await service.requestOtp({ phone, ip: '203.0.113.7' });
+async function requestCode(service: AuthService, email = EMAIL): Promise<string> {
+  const result = await service.requestOtp({ email, ip: '203.0.113.7' });
   if (!result.dev_code) throw new Error('expected dev_code outside production');
   return result.dev_code;
 }
 
 describe('AuthService.requestOtp', () => {
-  it('rejects the 4th request for one number within 10 minutes, across phone formats', async () => {
+  it('rejects the 4th request for one email within 10 minutes, across email formats', async () => {
     const { repository, service } = makeHarness();
 
-    await service.requestOtp({ phone: '0812-3456-789' });
-    await service.requestOtp({ phone: '+62 812 3456 789' });
-    await service.requestOtp({ phone: '628123456789' });
+    await service.requestOtp({ email: 'User@Tarlink.id' });
+    await service.requestOtp({ email: ' user@tarlink.id ' });
+    await service.requestOtp({ email: 'USER@TARLINK.ID' });
 
-    await expect(service.requestOtp({ phone: '08123456789' })).rejects.toMatchObject({
+    await expect(service.requestOtp({ email: EMAIL })).rejects.toMatchObject({
       code: 'RATE_LIMITED'
     });
     expect(repository.otpRequests).toHaveLength(3);
-    expect(repository.otpRequests.every((row) => row.phone === PHONE)).toBe(true);
+    expect(repository.otpRequests.every((row) => row.email === EMAIL)).toBe(true);
   });
 
   it('allows a new request once the 10 minute window has passed', async () => {
     const { service, advance } = makeHarness();
 
-    await service.requestOtp({ phone: '08123456789' });
-    await service.requestOtp({ phone: '08123456789' });
-    await service.requestOtp({ phone: '08123456789' });
+    await service.requestOtp({ email: EMAIL });
+    await service.requestOtp({ email: EMAIL });
+    await service.requestOtp({ email: EMAIL });
     advance(OTP_RATE_LIMIT_WINDOW_SECONDS + 1);
 
-    await expect(service.requestOtp({ phone: '08123456789' })).resolves.toMatchObject({
-      channel: 'whatsapp',
+    await expect(service.requestOtp({ email: EMAIL })).resolves.toMatchObject({
+      channel: 'email',
       expires_in: 300
     });
   });
 
-  it('stores only sha256(code:phone) and never the plaintext', async () => {
+  it('stores only sha256(code:email) and never the plaintext', async () => {
     const { repository, service } = makeHarness();
     const devCode = await requestCode(service);
 
     expect(devCode).toMatch(/^\d{6}$/);
-    expect(repository.otpRequests[0]?.codeHash).toBe(hashOtpCode(devCode, PHONE));
+    expect(repository.otpRequests[0]?.codeHash).toBe(hashOtpCode(devCode, EMAIL));
     expect(JSON.stringify(repository.otpRequests)).not.toContain(`"${devCode}"`);
   });
 });
@@ -440,7 +458,7 @@ describe('AuthService.verifyOtp', () => {
     const code = await requestCode(service);
     const wrong = code === '000000' ? '000001' : '000000';
 
-    await expect(service.verifyOtp({ phone: '08123456789', code: wrong })).rejects.toMatchObject({
+    await expect(service.verifyOtp({ email: EMAIL, code: wrong })).rejects.toMatchObject({
       code: 'VALIDATION_ERROR'
     });
 
@@ -456,7 +474,7 @@ describe('AuthService.verifyOtp', () => {
     const code = await requestCode(service);
     advance(5 * 60 + 1);
 
-    await expect(service.verifyOtp({ phone: '08123456789', code })).rejects.toMatchObject({
+    await expect(service.verifyOtp({ email: EMAIL, code })).rejects.toMatchObject({
       code: 'VALIDATION_ERROR'
     });
     expect(repository.otpRequests[0]?.attempts).toBe(0);
@@ -468,9 +486,9 @@ describe('AuthService.verifyOtp', () => {
     addUser(repository, ['customer']);
     const code = await requestCode(service);
 
-    const first = await service.verifyOtp({ phone: '08123456789', code });
+    const first = await service.verifyOtp({ email: EMAIL, code });
 
-    await expect(service.verifyOtp({ phone: '08123456789', code })).rejects.toMatchObject({
+    await expect(service.verifyOtp({ email: EMAIL, code })).rejects.toMatchObject({
       code: 'VALIDATION_ERROR'
     });
     expect(first.user.roles).toEqual(['customer']);
@@ -483,7 +501,7 @@ describe('AuthService.verifyOtp', () => {
     addUser(repository);
     const code = await requestCode(service);
 
-    const result = await service.verifyOtp({ phone: '08123456789', code });
+    const result = await service.verifyOtp({ email: EMAIL, code });
     const claims = verifyAccessToken(result.access_token, SECRET);
 
     expect(result.user.roles).toEqual([]);
@@ -493,11 +511,11 @@ describe('AuthService.verifyOtp', () => {
     expect(result.expires_in).toBe(900);
   });
 
-  it('fails with NOT_FOUND when the code is valid but no user owns the number', async () => {
+  it('fails with NOT_FOUND when the code is valid but no user owns the email', async () => {
     const { service } = makeHarness();
     const code = await requestCode(service);
 
-    await expect(service.verifyOtp({ phone: '08123456789', code })).rejects.toMatchObject({
+    await expect(service.verifyOtp({ email: EMAIL, code })).rejects.toMatchObject({
       code: 'NOT_FOUND'
     });
   });
@@ -506,14 +524,14 @@ describe('AuthService.verifyOtp', () => {
 describe('AuthService dev_code exposure', () => {
   it('includes dev_code outside production', async () => {
     const { service } = makeHarness({ nodeEnv: 'development' });
-    const result = await service.requestOtp({ phone: '08123456789' });
+    const result = await service.requestOtp({ email: EMAIL });
 
     expect(result.dev_code).toMatch(/^\d{6}$/);
   });
 
   it('omits dev_code in production', async () => {
     const { service } = makeHarness({ nodeEnv: 'production' });
-    const result = await service.requestOtp({ phone: '08123456789' });
+    const result = await service.requestOtp({ email: EMAIL });
 
     expect(result).not.toHaveProperty('dev_code');
   });
@@ -679,7 +697,10 @@ describe('AuthService.register', () => {
       email: 'New.Customer@Tarlink.id',
       password: NEW_PASSWORD,
       phone: '0812-3456-789',
-      full_name: 'Budi Santoso'
+      full_name: 'Budi Santoso',
+      consent: CONSENT,
+      ip: '203.0.113.1',
+      userAgent: 'vitest'
     });
     const claims = verifyAccessToken(result.access_token, SECRET);
 
@@ -702,6 +723,37 @@ describe('AuthService.register', () => {
     expect(JSON.stringify(result)).not.toContain(NEW_PASSWORD);
     expect(result.user).not.toHaveProperty('password');
     expect(repository.roles).toEqual([{ userId: stored?.id, role: 'customer' }]);
+    expect(repository.consents).toEqual([
+      {
+        policyCode: 'tos',
+        policyVersionId: TOS_VERSION_ID,
+        acceptedAt: expect.any(Date),
+        ip: '203.0.113.1',
+        userAgent: 'vitest'
+      },
+      {
+        policyCode: 'privacy',
+        policyVersionId: PRIVACY_VERSION_ID,
+        acceptedAt: expect.any(Date),
+        ip: '203.0.113.1',
+        userAgent: 'vitest'
+      }
+    ]);
+  });
+
+  it('rejects a stale policy version instead of recording it', async () => {
+    const { repository, service } = makeHarness();
+
+    await expect(
+      service.register({
+        email: 'stale@tarlink.id',
+        password: NEW_PASSWORD,
+        consent: { tos_version_id: PRIVACY_VERSION_ID, privacy_version_id: PRIVACY_VERSION_ID }
+      })
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+
+    expect(repository.users).toHaveLength(0);
+    expect(repository.consents).toHaveLength(0);
   });
 
   it('rejects a duplicate email with CONFLICT', async () => {
@@ -709,7 +761,12 @@ describe('AuthService.register', () => {
     addUser(repository, ['customer'], { email: NEW_EMAIL, phone: '629111000111' });
 
     await expect(
-      service.register({ email: 'NEW.CUSTOMER@tarlink.id', password: NEW_PASSWORD, phone: '081234567890' })
+      service.register({
+        email: 'NEW.CUSTOMER@tarlink.id',
+        password: NEW_PASSWORD,
+        phone: '081234567890',
+        consent: CONSENT
+      })
     ).rejects.toMatchObject({ code: 'CONFLICT' });
 
     expect(repository.users).toHaveLength(1);
@@ -721,7 +778,12 @@ describe('AuthService.register', () => {
     addUser(repository, ['customer'], { email: 'other@tarlink.id', phone: NEW_PHONE });
 
     await expect(
-      service.register({ email: NEW_EMAIL, password: NEW_PASSWORD, phone: '08123456789' })
+      service.register({
+        email: NEW_EMAIL,
+        password: NEW_PASSWORD,
+        phone: '08123456789',
+        consent: CONSENT
+      })
     ).rejects.toMatchObject({ code: 'CONFLICT' });
 
     expect(repository.users).toHaveLength(1);
@@ -733,7 +795,8 @@ describe('AuthService.register', () => {
     const result = await service.register({
       email: 'no.phone@tarlink.id',
       password: NEW_PASSWORD,
-      full_name: 'Tanpa Nomor'
+      full_name: 'Tanpa Nomor',
+      consent: CONSENT
     });
     const claims = verifyAccessToken(result.access_token, SECRET);
 
@@ -918,6 +981,7 @@ describe('AuthController.register', () => {
         email: 'user@tarlink.id',
         password: 'kata-sandi-2026',
         phone: '08123456789',
+        consent: CONSENT,
         role: 'vendor_owner'
       })
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
@@ -940,15 +1004,29 @@ describe('AuthController.register', () => {
     const controller = new AuthController(service);
 
     await controller.register(
-      { email: 'user@tarlink.id', password: 'kata-sandi-2026' },
+      { email: 'user@tarlink.id', password: 'kata-sandi-2026', consent: CONSENT },
       '203.0.113.1'
     );
     expect(capturedInput).toMatchObject({
       email: 'user@tarlink.id',
       password: 'kata-sandi-2026',
+      consent: CONSENT,
       ip: '203.0.113.1'
     });
     expect((capturedInput as { phone?: string }).phone).toBeUndefined();
+  });
+
+  it('rejects registration without policy consent before calling the service', async () => {
+    const service = {
+      register: async () => {
+        throw new Error('service must not be called');
+      }
+    } as unknown as AuthService;
+    const controller = new AuthController(service);
+
+    await expect(
+      controller.register({ email: 'user@tarlink.id', password: 'kata-sandi-2026' }, '203.0.113.1')
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
   });
 });
 
@@ -974,7 +1052,7 @@ describe('AuthService.getProfile', () => {
 
   it('keeps email and full_name null when the account has none', async () => {
     const { repository, service } = makeHarness();
-    addUser(repository, ['customer']);
+    addUser(repository, ['customer'], { email: null, phone: null });
 
     const result = await service.getProfile(USER_ID);
 
@@ -1391,17 +1469,17 @@ describe('AuthService refresh token + IP limits', () => {
 
   it('limits OTP requests from one IP', async () => {
     const { service } = makeHarness({ otpIpRateLimitMax: 2 });
-    const request = (phone: string) =>
-      service.requestOtp({ phone, ip: '203.0.113.10' });
+    const request = (email: string) =>
+      service.requestOtp({ email, ip: '203.0.113.10' });
 
-    await request('081200000001');
-    await request('081200000002');
-    await expect(request('081200000003')).rejects.toMatchObject({ code: 'RATE_LIMITED' });
+    await request('one@tarlink.id');
+    await request('two@tarlink.id');
+    await expect(request('three@tarlink.id')).rejects.toMatchObject({ code: 'RATE_LIMITED' });
   });
 
   it('omits dev_code when OTP_DEV_MODE is off', async () => {
     const { service } = makeHarness({ nodeEnv: 'development', otpDevMode: false });
-    const result = await service.requestOtp({ phone: '08123456789' });
+    const result = await service.requestOtp({ email: EMAIL });
     expect(result).not.toHaveProperty('dev_code');
   });
 });

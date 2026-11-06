@@ -187,7 +187,7 @@ void main() {
 
   group('VendorBookingDetailPage', () {
     testWidgets(
-      'renders sections, WhatsApp button, and financial breakdown',
+      'renders sections, chat button, and financial breakdown',
       (tester) async {
         final client = MockClient((request) async {
           if (request.url.path.endsWith('/vendor/bookings/b101')) {
@@ -229,7 +229,7 @@ void main() {
         expect(find.text('PELANGGAN'), findsOneWidget);
         expect(find.text('Haji Sulaeman'), findsOneWidget);
         expect(find.text('0819-8765-4321'), findsOneWidget);
-        expect(find.text('Hubungi via WhatsApp'), findsOneWidget);
+        expect(find.text('Chat pelanggan'), findsOneWidget);
         expect(find.text('RINCIAN BIAYA'), findsOneWidget);
         expect(find.text('Hak Vendor'), findsOneWidget);
         expect(find.text('Rp9.500.000'), findsOneWidget);

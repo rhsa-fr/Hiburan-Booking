@@ -277,6 +277,13 @@ export interface RefundResult {
   readonly journal_entry_id: string;
 }
 
+/** Queue row for the admin refund screen: refund plus booking context. */
+export interface AdminRefundItem extends RefundResult {
+  readonly booking_code: string;
+  readonly customer_name: string | null;
+  readonly created_at: string;
+}
+
 export interface RefundAdvanceResult {
   readonly id: string;
   readonly payment_id: string;
@@ -1700,6 +1707,27 @@ export class PaymentService {
       }
       const pendingApproval = ['requested', 'approved'].includes(found.refund.status);
       return { refund: this.toRefundResult(found.refund, '', pendingApproval) };
+    });
+  }
+
+  /** Admin queue, oldest first. No actor scoping: the controller gates roles. */
+  async listRefunds(
+    opts: { status?: RefundStatus | null; limit?: number } = {}
+  ): Promise<{ items: AdminRefundItem[] }> {
+    const limit = Math.min(Math.max(opts.limit ?? 50, 1), 100);
+    return this.repository.transaction(async (tx) => {
+      const rows = await this.repository.listRefunds(tx, {
+        status: opts.status ?? null,
+        limit
+      });
+      return {
+        items: rows.map((row) => ({
+          ...this.toRefundResult(row, '', row.status === 'requested'),
+          booking_code: row.bookingCode,
+          customer_name: row.customerName,
+          created_at: row.createdAt.toISOString()
+        }))
+      };
     });
   }
 

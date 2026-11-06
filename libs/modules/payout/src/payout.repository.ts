@@ -147,18 +147,23 @@ export class PayoutRepository {
 
   async findVendorByOwner(ownerUserId: string): Promise<VendorRef | null> {
     const result = await this.pool.query<VendorRef>(
-      `SELECT id, display_name, is_active
-         FROM vendors
-        WHERE owner_user_id = $1::uuid AND is_active = true
+      `SELECT v.id, v.display_name, v.is_active, v.verification_status::text AS verification_status
+         FROM vendors v
+        WHERE v.owner_user_id = $1::uuid AND v.is_active = true
         LIMIT 1`,
       [ownerUserId]
     );
     return result.rows[0] ?? null;
   }
 
-  async findVendorById(vendorId: string): Promise<VendorRef | null> {
-    const result = await this.pool.query<VendorRef>(
-      'SELECT id, display_name, is_active FROM vendors WHERE id = $1::uuid',
+  async findVendorById(
+    vendorId: string,
+    db: Pool | PoolClient = this.pool
+  ): Promise<VendorRef | null> {
+    const result = await db.query<VendorRef>(
+      `SELECT v.id, v.display_name, v.is_active, v.verification_status::text AS verification_status
+         FROM vendors v
+        WHERE v.id = $1::uuid`,
       [vendorId]
     );
     return result.rows[0] ?? null;
@@ -166,9 +171,9 @@ export class PayoutRepository {
 
   async lockVendor(client: PoolClient, vendorId: string): Promise<VendorRef | null> {
     const result = await client.query<VendorRef>(
-      `SELECT id, display_name, is_active
-         FROM vendors
-        WHERE id = $1::uuid
+      `SELECT v.id, v.display_name, v.is_active, v.verification_status::text AS verification_status
+         FROM vendors v
+        WHERE v.id = $1::uuid
         FOR UPDATE`,
       [vendorId]
     );

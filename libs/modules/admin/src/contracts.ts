@@ -39,7 +39,7 @@ export type SettlementStatus =
 
 export type StatusAxis = 'lifecycle' | 'payment' | 'settlement';
 
-export type VendorVerificationStatus = 'verified' | 'pending' | 'rejected';
+export type VendorVerificationStatus = 'verified' | 'pending' | 'rejected' | 'suspended';
 
 export type BankAccountStatus = 'verified' | 'pending' | 'rejected';
 
@@ -158,6 +158,9 @@ export interface Vendor {
   min_dp_bp: number;
   verification_note: string | null;
   verified_by: string | null;
+  suspended_at: string | null;
+  suspended_by: string | null;
+  suspension_reason: string | null;
 }
 
 export interface Payment {
@@ -455,4 +458,14 @@ export interface Operator {
   id: string;
   name: string;
   role: string;
+}
+
+/** FR-125: region admin toggle. `vendor_count` is active vendors only. */
+export interface AdminRegion {
+  code: string;
+  name: string;
+  level: string;
+  parent_code: string | null;
+  is_active: boolean;
+  vendor_count: number;
 }

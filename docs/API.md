@@ -48,11 +48,15 @@ Query: `page` (mulai 1, default 1), `page_size` (default 20, maks 100).
 **Uang** — selalu integer rupiah (`1500000`), tidak pernah string atau desimal.
 Format tampilan dilakukan klien.
 
-**Idempotensi** — `POST /bookings`, `POST /payments/dp`, dan `POST /payments/settlement` mewajibkan header
-`Idempotency-Key` (16–80 karakter). Request dengan key dan payload sama
-mengembalikan hasil yang sama; replay ditandai header `Idempotency-Replayed: true`.
-`POST /bookings` juga menerima `client_generated_id` (UUID) sebagai fallback dan
-sebagai guard unik per pelanggan.
+**Idempotensi** — `POST /bookings`, `POST /payments/dp`, `POST /payments/settlement`,
+`POST /admin/bookings/:id/settle`, `POST /admin/release`, `POST /admin/payouts`, dan
+`POST /admin/payouts/:id/approve` mewajibkan header `Idempotency-Key` (16–80 karakter).
+Request dengan key dan payload sama mengembalikan hasil yang sama; replay ditandai
+header `Idempotency-Replayed: true`. Key yang sama dengan payload berbeda dijawab
+`409 IDEMPOTENCY_MISMATCH` **setelah permintaan pertama berhasil** — selama permintaan
+pertama gagal, klaimnya ditandai `failed` dan key itu boleh dicoba ulang dengan payload
+yang sama. `POST /bookings` juga menerima `client_generated_id` (UUID) sebagai fallback
+dan sebagai guard unik per pelanggan.
 
 ---
 
@@ -68,10 +72,10 @@ sebagai guard unik per pelanggan.
 
 | Method | Path | Body | Keterangan |
 |---|---|---|---|
-| POST | `/auth/register` | `{ full_name, email, phone, password }` | Membuat akun pelanggan |
+| POST | `/auth/register` | `{ full_name, email, phone, password, consent: { tos_version_id, privacy_version_id } }` | Membuat akun pelanggan + mencatat consent |
 | POST | `/auth/login` | `{ email, password }` | **Email**, bukan nomor WA |
-| POST | `/auth/otp/request` | `{ phone }` | Kirim OTP (dev mengembalikan `dev_code` hanya bila `NODE_ENV !== production` **dan** `OTP_DEV_MODE=true`) |
-| POST | `/auth/otp/verify` | `{ phone, code }` | Verifikasi OTP |
+| POST | `/auth/otp/request` | `{ email }` | Kirim OTP ke email (dev mengembalikan `dev_code` hanya bila `NODE_ENV !== production` **dan** `OTP_DEV_MODE=true`) |
+| POST | `/auth/otp/verify` | `{ email, code }` | Verifikasi OTP |
 | POST | `/auth/google` | `{ id_token }` | Login Google (opsional, tidak dipakai mobile) |
 | POST | `/auth/refresh` | `{ refresh_token }` | Rotasi sesi; tanpa body memakai Bearer lama (legacy) |
 | POST | `/auth/logout` | `{ refresh_token? }` | Mencabut sesi; tanpa body memakai Bearer |
@@ -94,6 +98,12 @@ Respons login (dibungkus `data`):
 
 `GET /auth/me` mengembalikan `{ "data": { "user": { id, phone, email, full_name,
 roles, created_at } } }`. Peran diambil dari database, bukan dari isi token.
+
+Registrasi wajib menyertakan `consent` (FR-103) berisi `id` versi kebijakan yang
+sedang aktif dari `GET /policies/tos` dan `GET /policies/privacy`. API menolak
+`400 VALIDATION_ERROR` bila salah satu versi bukan versi aktif (mis. tab lama),
+lalu menulis dua baris `user_consents` dalam transaksi yang sama dengan pembuatan
+user. Consent tidak diminta ulang saat login.
 
 `DELETE /auth/me` adalah hapus akun mandiri (FR-101). Body wajib berisi
 `confirm: "HAPUS AKUN"`; tanpa itu `400 VALIDATION_ERROR`. Data pribadi dianonimkan
@@ -206,7 +216,9 @@ Sesi: `day`, `night`, `full`. Bila `stale` benar, UI **wajib** menampilkan perin
   "effective_from": "2026-01-01", "body": { "…": "…" } }
 ```
 
-Seed hanya berisi `cancellation`; kode lain bisa 404 — jangan mengarang teks hukum.
+Seed berisi `cancellation`, `tos`, dan `privacy` (versi 1). Body `tos`/`privacy`
+saat ini masih **placeholder** `{"status":"draft",...}` sampai teks hukum final
+disetujui; jangan mengarang pasal. Kode lain bisa 404.
 
 ### `GET /favorites`
 
@@ -425,6 +437,13 @@ Untuk Midtrans, refund QRIS dipanggil ke `POST /v2/{order_id}/refund` dengan
 jurnal `refund_disbursed` diposting. **Refund VA/Mandiri ditolak** karena Midtrans
 tidak mendukung refund bank transfer; catat transfer manual.
 
+### `GET /payments/refunds`
+
+Antrean admin (`admin_finance` / `admin_super`). Query: `status` opsional
+(`requested|approved|processing|succeeded|failed|rejected`), `limit` 1–100
+(default 50). Respons `{ data: { items } }`; setiap item berisi field refund plus
+`booking_code`, `customer_name`, dan `created_at` (waktu pengajuan).
+
 ### `POST /payments/refunds/:id/approve`
 
 Peran `admin_finance` / `admin_super`. Approver **wajib berbeda** dari pembuat
@@ -444,6 +463,78 @@ Pelanggan pemilik booking atau admin. Mengembalikan refund terbaru
 `404 NOT_FOUND` (FR-133: status refund terlihat pelanggan).
 
 ---
+
+## Notifikasi in-app
+
+Pengganti kanal WhatsApp/push sementara: worker `outbox` menulis satu baris
+`notifications` per penerima (unik per `outbox:<message_id>:<user_id>`), lalu
+mobile mem-poll endpoint ini dan menampilkan popup saat aplikasi terbuka.
+Tidak ada endpoint kirim manual — isi dibuat dari event `booking.*`.
+
+### `GET /notifications`
+
+Query: `unread_only=true|false` (default semua), `page` (mulai 1), `page_size`
+(maks 100, default 20). Selalu terbatas pada akun pemanggil.
+
+Respons: `{ data: { items, total, page, page_size } }`; item berisi
+`{ id, type, title, body, payload, read_at, created_at }`. Mobile memakai
+`payload.booking_id` untuk tombol "Lihat".
+
+### `GET /notifications/unread-count`
+
+Respons: `{ data: { unread } }`.
+
+### `POST /notifications/:id/read`
+
+Menandai satu notifikasi milik akun pemanggil. `404 NOT_FOUND` bila bukan miliknya.
+
+### `POST /notifications/read-all`
+
+Respons: `{ data: { updated } }` — jumlah baris yang baru ditandai.
+
+## Chat booking (FR-050)
+
+Satu percakapan per booking. Peserta ditentukan dari **relasi booking**, bukan dari
+peran di token: pelanggan pemilik booking → `customer`; pemilik atau anggota aktif
+vendor → `vendor`; admin (`admin_support`, `admin_finance`, `admin_super`) → `admin`.
+Akun lain mendapat `403 FORBIDDEN`. Pesan append-only, 1–2000 karakter setelah trim.
+
+### `GET /bookings/:bookingId/chat/messages`
+
+Query: `limit` (1–100, default 50), `before` (cursor `next_before` halaman sebelumnya).
+Respons: `{ data: { items, next_before } }`, `items` urut lama → baru. Cursor hanya
+berlaku untuk thread booking yang sama.
+
+### `POST /bookings/:bookingId/chat/messages`
+
+Body: `{ "body": "…" }`. Respons `201`:
+
+```json
+{ "data": { "id": "…", "booking_id": "…", "sender_id": "…", "sender_role": "customer", "body": "…", "created_at": "…" } }
+```
+
+Setiap insert memicu `NOTIFY tarlink_chat`; API yang sedang `LISTEN` meneruskannya ke
+socket pelanggan thread tersebut.
+
+### `WS /v1/chat/ws?token=<access_token>`
+
+WebSocket memakai query `token` karena browser tidak bisa mengirim header
+`Authorization` saat handshake. Origin dicek terhadap `CORS_ORIGINS`.
+
+Frame klien:
+
+```json
+{ "type": "subscribe", "booking_id": "…" }
+{ "type": "unsubscribe", "booking_id": "…" }
+{ "type": "message", "booking_id": "…", "body": "…" }
+{ "type": "ping" }
+```
+
+Frame server: `ready`, `subscribed` (berisi `role`), `unsubscribed`, `sent`
+(berisi `message`), `message` (siaran ke semua socket thread), `pong`, dan
+`error { code, message }`. Pengiriman lewat REST juga tersiar ke socket. Setelah
+reconnect, klien memuat ulang riwayat lewat REST. Chat hanya teks; foto/lokasi dan
+penyaringan kontak (FR-135) belum ada.
 
 ## Webhook Midtrans
 
@@ -766,11 +857,15 @@ Semua butuh peran `admin`/`operator`.
 | POST | `/admin/disputes/:id/resolve` | Putusan sengketa (lihat di bawah) |
 | GET | `/admin/audit` | Audit log |
 | GET | `/admin/operators` | Akun operator |
+| GET | `/admin/regions` | Daftar wilayah + jumlah vendor aktif (FR-125) |
+| PATCH | `/admin/regions/:code` | Aktif/nonaktif wilayah (`admin_super`, body `{ is_active }`) |
 | GET/PUT | `/admin/settings` | Pengaturan platform |
 | POST | `/admin/vendors` | Buat vendor |
 | PATCH | `/admin/vendors/:id` | Ubah vendor |
 | GET/PUT | `/admin/vendors/:id/categories` | Baca/ganti kategori vendor |
 | POST | `/admin/vendors/:id/verify` | Verifikasi vendor |
+| POST | `/admin/vendors/:id/suspend` | Tangguhkan vendor (`admin_super`, FR-132) |
+| POST | `/admin/vendors/:id/unsuspend` | Cabut penangguhan vendor (`admin_super`, FR-132) |
 | GET/POST | `/admin/vendors/:id/packages` | Daftar/buat paket |
 | PATCH/DELETE | `/admin/vendors/:id/packages/:packageId` | Ubah/hapus paket |
 | GET/PUT | `/admin/vendors/:id/calendar` | Baca/tulis kalender |
@@ -788,6 +883,18 @@ Semua butuh peran `admin`/`operator`.
 `PATCH /admin/vendors/:id` juga menerima `avatar_url`, `banner_url`,
 `photo_urls`, `video_url`. `POST/PATCH .../packages` menerima
 `personnel_count`, `inclusions[]`, dan `photo_url` (sama seperti portal vendor).
+
+### Wilayah (FR-125)
+
+`GET /admin/regions` mengembalikan array
+`{ code, name, level, parent_code, is_active, vendor_count }`; `vendor_count`
+hanya menghitung vendor aktif. `PATCH /admin/regions/:code` menerima
+`{ "is_active": false }` (peran `admin_super`) dan menulis `audit_logs`
+(`region.deactivate` / `region.activate`).
+
+Wilayah nonaktif hilang dari `GET /regions`, vendor di wilayah itu hilang dari
+katalog publik dan favorit, dan wilayahnya tidak bisa dipilih pada pendaftaran
+vendor baru. Booking lama dan vendor yang sudah ada tidak diubah.
 
 ### Moderasi media
 
@@ -831,6 +938,46 @@ hanya bila paket itu milik vendor yang sama.
 
 `POST /admin/media/:id/reject` wajib menyertakan `note` (minimal 5 karakter).
 Media yang sudah diproses tidak bisa diproses ulang (`CONFLICT`).
+
+### `POST /admin/bookings/:id/settle`
+
+Pelunasan manual (transfer bank atau tunai) untuk booking `dp_paid`. Peran
+`admin_finance`/`admin_super`; header `Idempotency-Key` (16–80 karakter)
+**wajib** — tanpa header itu permintaan ditolak `400 VALIDATION_ERROR` sebelum
+menyentuh data.
+
+```json
+{
+  "amount_idr": 3550000,
+  "method": "transfer_manual",
+  "reference": "BCA 21/10/2026",
+  "note": "Transfer telat"
+}
+```
+
+`amount_idr` harus persis sisa tagihan (`total_customer_idr - dp_amount_idr`)
+versi server; selisih sekecil apa pun dijawab `409`. Respons:
+
+```json
+{
+  "booking_id": "uuid",
+  "payment_id": "uuid",
+  "journal_entry_id": "uuid",
+  "payment_status": "fully_paid",
+  "outstanding_before_idr": 3550000,
+  "already_settled": false
+}
+```
+
+Retry aman: key yang sama dengan payload yang sama mengembalikan respons
+pertama (tidak ada jurnal atau perubahan booking kedua), sedangkan key yang
+sama dengan payload berbeda dijawab `409 IDEMPOTENCY_MISMATCH` **setelah
+permintaan pertama berhasil**. Klaim key disimpan di luar transaksi uang dan
+sudah ter-commit sebelum langkah bisnis mulai; bila proses mati setelah uang
+ter-commit tetapi sebelum klaim ditandai selesai, retry menjalankan ulang
+langkah bisnis dan tidak menggandakan efek karena booking dikunci `FOR UPDATE`,
+status `fully_paid` dicek ulang, dan jurnal memakai `source_event_key`. Key baru
+diperlukan bila operator memang ingin mencatat pelunasan lain.
 
 ### Payout vendor
 
@@ -934,6 +1081,58 @@ Respons (urutan: primer lebih dulu, lalu `sort_order`):
 Slug tidak dikenal atau kategori nonaktif → `400 VALIDATION_ERROR`; tidak ada
 baris yang diubah. Hanya kategori primer yang aktif yang tampil di
 `GET /vendors`, jadi tanpa assignment ini chip kategori di aplikasi kosong.
+
+### Vendor: filter, detail, dan penangguhan (FR-132)
+
+`GET /admin/vendors` mendukung query param `verification`:
+- `verified` — vendor dengan `verification_status = 'approved'`
+- `pending` — vendor dengan `verification_status = 'pending'`
+- `rejected` — vendor dengan `verification_status = 'rejected'`
+- `suspended` — vendor dengan `verification_status = 'suspended'`
+
+Daftar vendor (`GET /admin/vendors`) dan detail vendor (`GET /admin/vendors/:id`) memuat status verifikasi dan field penangguhan:
+- `verification_status`: `'verified' | 'pending' | 'rejected' | 'suspended'`
+- `suspended_at`: ISO timestamp string saat penangguhan, atau `null` jika tidak ditangguhkan
+- `suspended_by`: UUID pengguna admin penangguh, atau `null`
+- `suspension_reason`: teks alasan penangguhan, atau `null`
+
+#### `POST /v1/admin/vendors/:id/suspend`
+Peran: `admin_super`. Menangguhkan vendor bermasalah (FR-132), menyembunyikan vendor dari katalog publik, dan membekukan pencairan baru. Vendor tetap aktif (`is_active = true`) agar pesanan berjalan dapat diselesaikan.
+
+Body:
+```json
+{
+  "reason": "Alasan penangguhan 10-500 karakter",
+  "note": "Catatan internal opsional"
+}
+```
+
+Respons (`200 OK`):
+```json
+{
+  "id": "uuid",
+  "verification_status": "suspended",
+  "suspended_at": "2026-11-06T07:00:00.000Z",
+  "suspension_reason": "Alasan penangguhan 10-500 karakter",
+  "suspended_by": "uuid"
+}
+```
+
+#### `POST /v1/admin/vendors/:id/unsuspend`
+Peran: `admin_super`. Mencabut penangguhan dan memulihkan status verifikasi sebelumnya (`suspension_previous_status`).
+
+Body: `{}`
+
+Respons (`200 OK`):
+```json
+{
+  "id": "uuid",
+  "verification_status": "approved",
+  "suspended_at": null,
+  "suspension_reason": null,
+  "suspended_by": null
+}
+```
 
 ---
 
