@@ -8,6 +8,7 @@ import {
   FileCheck2,
   Image as ImageIcon,
   LayoutDashboard,
+  MapPin,
   Menu,
   ScrollText,
   Settings2,
@@ -33,7 +34,8 @@ import type { NotificationItem, SidebarNavGroupModel } from '@/components/ui';
 import { RegionProvider, useRegion } from '@/components/workspace/region-context';
 import type { RegionId } from '@/components/workspace/region-context';
 import { getDashboard, getOperators } from '@/lib/api';
-import { clearSession, DEFAULT_OPERATOR, readSession } from '@/lib/session';
+import { clearSession, readSession, readToken } from '@/lib/session';
+import type { OperatorSession } from '@/lib/session';
 
 function initialsOf(name: string): string {
   return (
@@ -88,6 +90,7 @@ const NAV_GROUPS: SidebarNavGroupModel[] = [
     label: 'PENGATURAN',
     items: [
       { id: 'settings', label: 'Platform', href: '/settings', icon: <Settings2 className="h-[18px] w-[18px]" /> },
+      { id: 'regions', label: 'Wilayah', href: '/regions', icon: <MapPin className="h-[18px] w-[18px]" /> },
       { id: 'audit', label: 'Audit', href: '/audit', icon: <ScrollText className="h-[18px] w-[18px]" /> }
     ]
   }
@@ -102,6 +105,7 @@ const SECTION_LABELS: Array<[string, string]> = [
   ['/disputes', 'Transaksi'],
   ['/payouts', 'Keuangan'],
   ['/settings', 'Pengaturan'],
+  ['/regions', 'Pengaturan'],
   ['/audit', 'Pengaturan']
 ];
 
@@ -120,17 +124,33 @@ function Shell({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [search, setSearch] = useState('');
-  const [operator, setOperator] = useState(DEFAULT_OPERATOR);
+  // Temporary client-side guard that will be replaced by /auth/me + HttpOnly cookie later.
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+  const [operator, setOperator] = useState<OperatorSession | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const { region, setRegion, options } = useRegion();
 
-  const operatorsQuery = useQuery({ queryKey: ['operators'], queryFn: getOperators });
-  const dashboardQuery = useQuery({ queryKey: ['dashboard'], queryFn: getDashboard });
+  const operatorsQuery = useQuery({
+    queryKey: ['operators'],
+    queryFn: getOperators,
+    enabled: Boolean(isAuthenticated)
+  });
+  const dashboardQuery = useQuery({
+    queryKey: ['dashboard'],
+    queryFn: getDashboard,
+    enabled: Boolean(isAuthenticated)
+  });
 
   useEffect(() => {
+    const token = readToken();
+    if (!token) {
+      router.replace('/login');
+      return;
+    }
+    setIsAuthenticated(true);
     const session = readSession();
     if (session) setOperator(session);
-  }, []);
+  }, [router]);
 
   useEffect(() => {
     setMobileOpen(false);
@@ -198,7 +218,7 @@ function Shell({ children }: { children: ReactNode }) {
       <div className={collapsed ? 'flex justify-center' : 'space-y-3'}>
         {collapsed ? (
           <AvatarStack
-            people={[{ name: operator.operator_name, tone: 'dark' }]}
+            people={[{ name: operator?.operator_name ?? '-', tone: 'dark' }]}
             max={1}
           />
         ) : (
@@ -208,13 +228,13 @@ function Shell({ children }: { children: ReactNode }) {
                 aria-hidden
                 className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-textMain text-[11px] font-bold text-white"
               >
-                {initialsOf(operator.operator_name)}
+                {operator ? initialsOf(operator.operator_name) : '-'}
               </span>
               <span className="min-w-0 leading-tight">
                 <span className="block truncate text-[13px] font-semibold text-textMain">
-                  {operator.operator_name}
+                  {operator?.operator_name ?? '-'}
                 </span>
-                <span className="block truncate text-[11.5px] text-textMuted">{operator.role}</span>
+                <span className="block truncate text-[11.5px] text-textMuted">{operator?.role ?? '-'}</span>
               </span>
             </div>
             <Button
@@ -234,6 +254,17 @@ function Shell({ children }: { children: ReactNode }) {
       </div>
     )
   };
+
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-page flex items-center justify-center p-6">
+        <div className="w-full max-w-md space-y-4 animate-pulse">
+          <div className="h-8 w-48 rounded bg-border" />
+          <div className="h-32 rounded-lg bg-surface border border-border" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-page">
@@ -300,8 +331,8 @@ function Shell({ children }: { children: ReactNode }) {
                   />
                 </div>
                 <UserProfile
-                  name={operator.operator_name}
-                  role={operator.role}
+                  name={operator?.operator_name ?? '-'}
+                  role={operator?.role ?? '-'}
                   onLogout={logout}
                 />
               </>

@@ -16,8 +16,8 @@ import {
   StatusBadge
 } from '@/components/ui';
 import type { ActivityItemData } from '@/components/ui';
-import { formatPercentFromBp, relativeFrom } from '@/lib/format';
-import { MOCK_NOW } from '@/lib/mock';
+import { nowIso, relativeFrom } from '@/lib/clock';
+import { formatPercentFromBp } from '@/lib/format';
 import type { ActionQueueItem, OperationHealth } from '@/lib/types';
 
 const QUEUE_ICONS: Record<ActionQueueItem['kind'], typeof Wallet> = {
@@ -44,7 +44,7 @@ export function ActionQueueCard({ items }: { items: ActionQueueItem[] }) {
     return {
       id: item.id,
       title: item.title,
-      description: `${item.code} · ${item.detail} · ${relativeFrom(MOCK_NOW, item.due_at)}`,
+      description: `${item.code} · ${item.detail} · ${relativeFrom(nowIso(), item.due_at)}`,
       icon: <Icon className="h-4 w-4" />,
       tone: item.severity === 'danger' ? 'danger' : item.severity === 'attention' ? 'soft' : 'default',
       href: item.href,

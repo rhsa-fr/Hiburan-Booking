@@ -24,8 +24,8 @@ import {
   TitleBlock
 } from '@/components/ui';
 import { getDisputes, resolveDispute } from '@/lib/api';
-import { formatDateTimeID, formatIDR, relativeFrom } from '@/lib/format';
-import { MOCK_NOW } from '@/lib/mock';
+import { nowIso, relativeFrom } from '@/lib/clock';
+import { formatDateTimeID, formatIDR } from '@/lib/format';
 import type { DisputeRecord, ResolveDisputeInput } from '@/lib/types';
 
 const DISPUTE_STATUS_LABELS: Record<string, string> = {
@@ -215,7 +215,7 @@ export default function DisputesPage() {
                           }`}
                         >
                           {dispute.status === 'open'
-                            ? relativeFrom(MOCK_NOW, dispute.sla_due_at)
+                            ? relativeFrom(nowIso(), dispute.sla_due_at)
                             : 'Selesai'}
                         </span>
                       </TableCell>

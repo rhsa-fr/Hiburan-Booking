@@ -17,15 +17,16 @@ import {
   mockGetVendors,
   mockPreviewRelease,
   mockRejectMedia,
-  mockRequestOtp,
   mockSaveSettings,
   mockSubmitRelease,
-  mockVerifyOtp
+  mockSuspendVendor,
+  mockUnsuspendVendor
 } from './mock';
 import type {
   AdminMediaItem,
   AdminMediaQueue,
   AdminMediaStatus,
+  AdminRegion,
   AuditLog,
   BookingFilters,
   BookingDetail,
@@ -46,6 +47,8 @@ import type {
   ResolveDisputeResult,
   SettleBookingInput,
   SettleBookingResult,
+  SuspendVendorInput,
+  SuspendVendorResult,
   Vendor,
   VendorCalendarBulkInput,
   VendorCalendarBulkResult,
@@ -135,6 +138,10 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   return mockRoute(path, init) as T;
 }
 
+function idempotencyHeaders(): Record<string, string> {
+  return { 'Idempotency-Key': crypto.randomUUID() };
+}
+
 /* -------------------------------------------------------------------------- */
 /* Auth                                                                        */
 /* -------------------------------------------------------------------------- */
@@ -209,6 +216,13 @@ function readNumber(body: Record<string, unknown>, key: string): number {
   return typeof value === 'number' && Number.isFinite(value) ? Math.trunc(value) : 0;
 }
 
+/** Mock wilayah untuk `NEXT_PUBLIC_USE_MOCK=true` (FR-125). */
+let mockRegionState: AdminRegion[] = [
+  { code: '3212', name: 'Indramayu', level: 'regency', parent_code: '32', is_active: true, vendor_count: 2 },
+  { code: '3213', name: 'Cirebon', level: 'regency', parent_code: '32', is_active: true, vendor_count: 1 },
+  { code: '3274', name: 'Kota Cirebon', level: 'city', parent_code: '32', is_active: true, vendor_count: 0 }
+];
+
 function mockRoute(path: string, init?: RequestInit): unknown {
   const url = new URL(path, 'https://mock.tarlink.local');
   const method = (init?.method ?? 'GET').toUpperCase();
@@ -243,6 +257,18 @@ function mockRoute(path: string, init?: RequestInit): unknown {
   const vendorMatch = pathname.match(/^\/admin\/vendors\/([^/]+)$/);
   if (method === 'GET' && vendorMatch) {
     return mockGetVendor(decodeURIComponent(vendorMatch[1]));
+  }
+  const suspendVendorMatch = pathname.match(/^\/admin\/vendors\/([^/]+)\/suspend$/);
+  if (method === 'POST' && suspendVendorMatch) {
+    const id = decodeURIComponent(suspendVendorMatch[1]);
+    const reason = readString(body, 'reason');
+    const note = readString(body, 'note') || undefined;
+    return mockSuspendVendor(id, { reason, note });
+  }
+  const unsuspendVendorMatch = pathname.match(/^\/admin\/vendors\/([^/]+)\/unsuspend$/);
+  if (method === 'POST' && unsuspendVendorMatch) {
+    const id = decodeURIComponent(unsuspendVendorMatch[1]);
+    return mockUnsuspendVendor(id);
   }
   if (method === 'GET' && pathname === '/admin/release/queue') {
     return mockGetReleaseQueue();
@@ -296,14 +322,22 @@ function mockRoute(path: string, init?: RequestInit): unknown {
       approval_threshold_idr: readNumber(body, 'approval_threshold_idr')
     });
   }
+  if (method === 'GET' && pathname === '/admin/regions') {
+    return mockRegionState;
+  }
+  const regionMatch = pathname.match(/^\/admin\/regions\/([^/]+)$/);
+  if (method === 'PATCH' && regionMatch) {
+    const code = decodeURIComponent(regionMatch[1]);
+    const index = mockRegionState.findIndex((region) => region.code === code);
+    if (index < 0) throw new ApiError('Wilayah tidak ditemukan', 404);
+    const next = mockRegionState.map((region, position) =>
+      position === index ? { ...region, is_active: body.is_active === true } : region
+    );
+    mockRegionState = next;
+    return next[index];
+  }
   if (method === 'GET' && pathname === '/admin/operators') {
     return mockGetOperators();
-  }
-  if (method === 'POST' && pathname === '/auth/admin/otp/request') {
-    return mockRequestOtp(readString(body, 'phone'));
-  }
-  if (method === 'POST' && pathname === '/auth/admin/otp/verify') {
-    return mockVerifyOtp(readString(body, 'phone'), readString(body, 'code'));
   }
   if (method === 'GET' && (pathname === '/admin/media' || pathname === '/v1/admin/media')) {
     const status = (url.searchParams.get('status') ?? undefined) as AdminMediaStatus | undefined;
@@ -430,6 +464,30 @@ export function verifyVendor(
   );
 }
 
+export function suspendVendor(
+  id: string,
+  input: SuspendVendorInput
+): Promise<SuspendVendorResult> {
+  return apiFetch<SuspendVendorResult>(
+    `/api/v1/admin/vendors/${encodeURIComponent(id)}/suspend`,
+    {
+      method: 'POST',
+      body: JSON.stringify(input)
+    }
+  );
+}
+
+export function unsuspendVendor(
+  id: string
+): Promise<SuspendVendorResult> {
+  return apiFetch<SuspendVendorResult>(
+    `/api/v1/admin/vendors/${encodeURIComponent(id)}/unsuspend`,
+    {
+      method: 'POST'
+    }
+  );
+}
+
 export function getVendorPackages(id: string): Promise<{ items: PackageRow[] }> {
   return apiFetch<{ items: PackageRow[] }>(
     `/api/v1/admin/vendors/${encodeURIComponent(id)}/packages`
@@ -506,6 +564,7 @@ export function previewRelease(input: ReleaseInput): Promise<ReleasePreview> {
 export function submitRelease(input: ReleaseInput): Promise<ReleaseResult> {
   return apiFetch<ReleaseResult>('/api/v1/admin/release', {
     method: 'POST',
+    headers: idempotencyHeaders(), // Idempotency-Key
     body: JSON.stringify(input)
   });
 }
@@ -530,7 +589,7 @@ export function resolveDispute(
     `/api/v1/admin/disputes/${encodeURIComponent(disputeId)}/resolve`,
     {
       method: 'POST',
-      headers: { 'Idempotency-Key': crypto.randomUUID() },
+      headers: idempotencyHeaders(), // Idempotency-Key
       body: JSON.stringify(input)
     }
   );
@@ -555,29 +614,17 @@ export function getOperators(): Promise<Operator[]> {
   return apiFetch<Operator[]>('/api/v1/admin/operators');
 }
 
-export function requestOtp(
-  phone: string
-): Promise<{ ok: boolean; demo_code: string | null }> {
-  return apiFetch<{ ok: boolean; demo_code: string | null }>(
-    '/api/v1/auth/admin/otp/request',
-    {
-      method: 'POST',
-      body: JSON.stringify({ phone })
-    }
-  );
+/** FR-125: daftar wilayah + jumlah vendor aktif. */
+export function getRegions(): Promise<AdminRegion[]> {
+  return apiFetch<AdminRegion[]>('/api/v1/admin/regions');
 }
 
-export function verifyOtp(
-  phone: string,
-  code: string
-): Promise<{ operator_name: string; role: string }> {
-  return apiFetch<{ operator_name: string; role: string }>(
-    '/api/v1/auth/admin/otp/verify',
-    {
-      method: 'POST',
-      body: JSON.stringify({ phone, code })
-    }
-  );
+/** FR-125: aktif/nonaktif wilayah. Hanya `admin_super` yang diizinkan API. */
+export function setRegionActive(code: string, isActive: boolean): Promise<AdminRegion> {
+  return apiFetch<AdminRegion>(`/api/v1/admin/regions/${encodeURIComponent(code)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ is_active: isActive })
+  });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -612,7 +659,7 @@ export function getPayoutEligible(vendorId: string): Promise<EligiblePayout> {
 export function createPayout(input: CreatePayoutInput): Promise<PayoutDetail> {
   return apiFetch<PayoutDetail>('/api/v1/admin/payouts', {
     method: 'POST',
-    headers: { 'Idempotency-Key': crypto.randomUUID() },
+    headers: idempotencyHeaders(), // Idempotency-Key
     body: JSON.stringify(input)
   });
 }
@@ -622,7 +669,7 @@ export function approvePayout(id: string, note?: string): Promise<PayoutDetail> 
     `/api/v1/admin/payouts/${encodeURIComponent(id)}/approve`,
     {
       method: 'POST',
-      headers: { 'Idempotency-Key': crypto.randomUUID() },
+      headers: idempotencyHeaders(), // Idempotency-Key
       body: JSON.stringify(note ? { note } : {})
     }
   );

@@ -34,7 +34,7 @@ import { AddVendorModal } from '@/components/vendors/add-vendor-modal';
 import { useRegion } from '@/components/workspace/region-context';
 import { getVendors } from '@/lib/api';
 import { formatDateID, formatPercentFromBp } from '@/lib/format';
-import { MOCK_NOW } from '@/lib/mock';
+import { nowIso } from '@/lib/clock';
 import type { AlertTone } from '@/components/ui';
 import { hasAnyRole, useRoles, VENDOR_WRITE_ROLES } from '@/lib/use-roles';
 import { calendarFreshness } from '@/lib/vendor-freshness';
@@ -142,6 +142,7 @@ export default function VendorsPage() {
             <option value="verified">Terverifikasi</option>
             <option value="pending">Menunggu verifikasi</option>
             <option value="rejected">Ditolak</option>
+            <option value="suspended">Ditangguhkan</option>
           </Select>
 
           <div className="flex items-end">
@@ -234,7 +235,7 @@ export default function VendorsPage() {
               </TableHead>
               <TableBody>
                 {data.items.map((vendor) => {
-                  const freshness = calendarFreshness(vendor.calendar_updated_at, MOCK_NOW);
+                  const freshness = calendarFreshness(vendor.calendar_updated_at, nowIso());
                   const href = `/vendors/${vendor.id}`;
                   return (
                     <TableRow key={vendor.id} onClick={() => router.push(href)}>

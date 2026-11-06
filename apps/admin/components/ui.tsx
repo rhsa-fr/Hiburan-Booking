@@ -432,6 +432,7 @@ export function toneForVerification(status: string): BadgeTone {
   if (status === 'verified') return 'ok';
   if (status === 'pending') return 'soft';
   if (status === 'rejected') return 'danger';
+  if (status === 'suspended') return 'danger';
   return 'muted';
 }
 
@@ -439,6 +440,7 @@ export function verificationLabel(status: string): string {
   if (status === 'verified') return 'Terverifikasi';
   if (status === 'pending') return 'Menunggu verifikasi';
   if (status === 'rejected') return 'Ditolak';
+  if (status === 'suspended') return 'Ditangguhkan';
   return status;
 }
 

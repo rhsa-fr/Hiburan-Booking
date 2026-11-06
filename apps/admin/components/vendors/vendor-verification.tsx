@@ -65,6 +65,7 @@ export function VendorVerification({
   const noteValid = note.trim().length >= 10;
   const busy = verify.isPending;
   const isVerified = vendor.verification_status === 'verified';
+  const isSuspended = vendor.verification_status === 'suspended';
 
   const actions = (() => {
     if (!rolesReady) {
@@ -92,6 +93,16 @@ export function VendorVerification({
           Keputusan akhir sudah tercatat. Perubahan status berikutnya hanya lewat alur audit admin
           super.
         </Alert>
+      );
+    }
+
+    if (isSuspended) {
+      return (
+        <DisabledAction
+          label="Setujui atau tolak"
+          reason="Vendor sedang ditangguhkan. Batalkan penangguhan terlebih dahulu sebelum memutuskan verifikasi."
+          icon={ShieldCheck}
+        />
       );
     }
 

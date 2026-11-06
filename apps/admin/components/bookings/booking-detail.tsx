@@ -18,10 +18,9 @@ import {
   formatDateID,
   formatDateTimeID,
   formatIDR,
-  formatPercentFromBp,
-  relativeFrom
+  formatPercentFromBp
 } from '@/lib/format';
-import { MOCK_NOW } from '@/lib/mock';
+import { nowIso, relativeFrom } from '@/lib/clock';
 import type { Booking, Dispute, Payment, StatusAxis } from '@/lib/types';
 
 const AXES: StatusAxis[] = ['lifecycle', 'payment', 'settlement'];
@@ -205,7 +204,7 @@ export function BookingDetail({
                             {formatDateTimeID(booking.respond_deadline)}
                           </span>
                           <span className="text-sm text-textSecondary">
-                            {relativeFrom(MOCK_NOW, booking.respond_deadline)}
+                            {relativeFrom(nowIso(), booking.respond_deadline)}
                           </span>
                         </>
                       )
@@ -224,12 +223,12 @@ export function BookingDetail({
                           <span
                             className={
                               new Date(booking.payment_deadline).getTime() <
-                              new Date(MOCK_NOW).getTime()
+                              new Date(nowIso()).getTime()
                                 ? 'text-sm font-semibold text-danger'
                                 : 'text-sm text-textSecondary'
                             }
                           >
-                            {relativeFrom(MOCK_NOW, booking.payment_deadline)}
+                            {relativeFrom(nowIso(), booking.payment_deadline)}
                           </span>
                         </>
                       )
@@ -246,7 +245,7 @@ export function BookingDetail({
                             {formatDateID(booking.dispute_window_ends_at)}
                           </span>
                           <span className="text-sm text-textSecondary">
-                            {relativeFrom(MOCK_NOW, booking.dispute_window_ends_at)}
+                            {relativeFrom(nowIso(), booking.dispute_window_ends_at)}
                           </span>
                         </>
                       )

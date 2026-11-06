@@ -16,8 +16,8 @@ import {
   StatSkeleton
 } from '@/components/ui';
 import { getDashboard } from '@/lib/api';
-import { formatIDR, relativeFrom } from '@/lib/format';
-import { MOCK_NOW } from '@/lib/mock';
+import { nowIso, relativeFrom } from '@/lib/clock';
+import { formatIDR } from '@/lib/format';
 
 export default function DashboardPage() {
   const [range, setRange] = useState<'7d' | '30d'>('7d');
@@ -52,7 +52,7 @@ export default function DashboardPage() {
         <div className="space-y-4">
           <PageHeader
             title="Ringkasan operasi"
-            description="Rabu, 21 Oktober 2026 · ringkasan booking masuk, pencairan, dan kesehatan operasi Tarlink."
+            description={`${new Intl.DateTimeFormat('id-ID', { dateStyle: 'full' }).format(new Date())} · ringkasan booking masuk, pencairan, dan kesehatan operasi Tarlink.`}
           />
           <StatGrid>
             <KpiCard
@@ -85,7 +85,7 @@ export default function DashboardPage() {
               value={String(data.kpis.open_disputes)}
               note={
                 data.kpis.oldest_dispute_due_at
-                  ? `SLA ${relativeFrom(MOCK_NOW, data.kpis.oldest_dispute_due_at)}`
+                  ? `SLA ${relativeFrom(nowIso(), data.kpis.oldest_dispute_due_at)}`
                   : 'Tidak ada sengketa aktif'
               }
               icon={<ShieldAlert className="h-5 w-5" />}
