@@ -6,6 +6,7 @@
 import { AppError } from '@tarlink/core/errors';
 import type {
   Account,
+  AdminRegion,
   AuditAction,
   BankAccountStatus,
   Booking,
@@ -33,9 +34,23 @@ import type {
   JournalEntryRow,
   JournalLineRow,
   PaymentRow,
+  RegionRow,
   StatusHistoryRow,
   VendorRow
 } from './rows';
+
+/* ------------------------------------------------------------------ region */
+
+export function mapRegion(row: RegionRow): AdminRegion {
+  return {
+    code: row.code,
+    name: row.name,
+    level: row.level,
+    parent_code: row.parent_code,
+    is_active: row.is_active,
+    vendor_count: row.vendor_count
+  };
+}
 
 export function toIso(value: Date | string | null): string | null {
   if (value === null) return null;
@@ -242,16 +257,16 @@ export function mapDispute(row: DisputeRow): DisputeRecord {
 
 /* ----------------------------------------------------------------- vendors */
 
-function mapVerificationStatus(value: string): VendorVerificationStatus {
+export function mapVerificationStatus(value: string): VendorVerificationStatus {
   switch (value) {
     case 'approved':
       return 'verified';
     case 'pending':
       return 'pending';
-    // The panel has no `suspended` state; a suspended vendor is not verified.
     case 'rejected':
-    case 'suspended':
       return 'rejected';
+    case 'suspended':
+      return 'suspended';
     default:
       throw new AppError('INTERNAL_ERROR', `unknown vendor verification status ${value}`);
   }
@@ -268,7 +283,13 @@ function mapBankStatus(value: string | null): BankAccountStatus {
   }
 }
 
-export function mapVendor(row: VendorRow): Vendor {
+export type VendorRowInput = VendorRow & {
+  suspended_at?: Date | string | null;
+  suspended_by?: string | null;
+  suspension_reason?: string | null;
+};
+
+export function mapVendor(row: VendorRowInput): Vendor {
   // The panel type requires a bank_account object; vendors without a registered
   // account get a neutral, clearly empty placeholder rather than invented data.
   const bank = row.bank_id
@@ -321,7 +342,10 @@ export function mapVendor(row: VendorRow): Vendor {
     ),
     min_dp_bp: row.min_dp_bp,
     verification_note: row.verification_note,
-    verified_by: row.verified_by
+    verified_by: row.verified_by,
+    suspended_at: toIso(row.suspended_at ?? null),
+    suspended_by: row.suspended_by ?? null,
+    suspension_reason: row.suspension_reason ?? null
   };
 }
 

@@ -15,6 +15,7 @@ import {
   Headers,
   HttpCode,
   Param,
+  Patch,
   Post,
   Put,
   Query,
@@ -26,6 +27,7 @@ import { AppError } from '@tarlink/core/errors';
 import { AuthGuard, Roles, RolesGuard, type AuthenticatedRequest } from '@tarlink/platform/auth';
 import { AdminService } from './admin.service';
 import type {
+  AdminRegion,
   AuditLog,
   BookingDetail,
   BookingFilters,
@@ -71,6 +73,13 @@ const VENDOR_QUERY = z
     verification: z.string().optional()
   })
   .passthrough();
+
+/** FR-125: the only field the panel may change on a region. */
+const REGION_BODY = z
+  .object({
+    is_active: z.boolean()
+  })
+  .strict();
 
 const RELEASE_BODY = z
   .object({
@@ -259,6 +268,29 @@ export class AdminController {
   @Get('operators')
   async operators(): Promise<Operator[]> {
     return this.admin.operators();
+  }
+
+  @Get('regions')
+  async regions(): Promise<AdminRegion[]> {
+    return this.admin.regions();
+  }
+
+  @Patch('regions/:code')
+  @Roles('admin_super')
+  async setRegionActive(
+    @Param('code') code: string,
+    @Body() body: unknown,
+    @Headers('x-request-id') requestId: string | undefined,
+    @Req() request: AuthenticatedRequest
+  ): Promise<AdminRegion> {
+    const parsed = REGION_BODY.safeParse(body);
+    if (!parsed.success) {
+      throw new AppError('VALIDATION_ERROR', 'Perubahan wilayah tidak valid', parsed.error.issues);
+    }
+    return this.admin.setRegionActive(code, parsed.data.is_active, {
+      actorId: requireActor(request),
+      requestId: requestId ?? null
+    });
   }
 
   @Get('settings')

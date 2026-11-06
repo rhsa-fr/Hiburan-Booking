@@ -49,6 +49,11 @@ export class FavoriteService {
         WHERE f.user_id = $1::uuid
           AND v.verification_status = 'approved'
           AND v.is_active
+          AND EXISTS (
+                SELECT 1 FROM regions vr
+                 WHERE vr.code = v.region_code
+                   AND vr.is_active
+              )
         ORDER BY f.created_at DESC, v.id ASC
         LIMIT $2 OFFSET $3`,
       [userId, safePageSize, offset]
@@ -60,7 +65,12 @@ export class FavoriteService {
          JOIN vendors v ON v.id = f.vendor_id
         WHERE f.user_id = $1::uuid
           AND v.verification_status = 'approved'
-          AND v.is_active`,
+          AND v.is_active
+          AND EXISTS (
+                SELECT 1 FROM regions vr
+                 WHERE vr.code = v.region_code
+                   AND vr.is_active
+              )`,
       [userId]
     );
 

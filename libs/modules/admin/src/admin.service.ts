@@ -20,6 +20,7 @@ import { IdempotencyService, PgIdempotencyStore } from '@tarlink/platform/idempo
 import { AdminRepository } from './admin.repository';
 import type {
   ActionQueueItem,
+  AdminRegion,
   AuditEvent,
   AuditLog,
   Booking,
@@ -64,6 +65,7 @@ import {
   mapDispute,
   mapJournalEntry,
   mapPayment,
+  mapRegion,
   mapVendor,
   toIsoRequired
 } from './mappers';
@@ -1099,6 +1101,59 @@ export class AdminService {
   async settings(): Promise<PlatformSettings> {
     const keys = Object.values(SETTING_KEYS);
     return settingsFromRows(await this.repository.settingsRows(keys));
+  }
+
+  /* --------------------------------------------------------------- regions */
+
+  /** FR-125: all regions with the number of active vendors, for the panel. */
+  async regions(): Promise<AdminRegion[]> {
+    return (await this.repository.listRegions()).map(mapRegion);
+  }
+
+  /**
+   * Activating/deactivating is a non-money admin write: one transaction, one
+   * audit row. Existing bookings are untouched; only new listings/onboarding
+   * are affected by the read filters.
+   */
+  async setRegionActive(
+    code: string,
+    isActive: boolean,
+    context: SettingsContext
+  ): Promise<AdminRegion> {
+    const normalized = code.trim();
+    if (normalized.length === 0) {
+      throw new AppError('VALIDATION_ERROR', 'Kode wilayah wajib diisi');
+    }
+
+    const before = await this.repository.findRegion(normalized);
+    if (!before) throw new AppError('NOT_FOUND', 'Wilayah tidak ditemukan');
+
+    await withTransaction(async (client) => {
+      const updated = await this.repository.setRegionActive(client, normalized, isActive);
+      if (!updated) throw new AppError('NOT_FOUND', 'Wilayah tidak ditemukan');
+      await this.repository.insertAudit(client, {
+        actorId: context.actorId,
+        actorRole: null,
+        action: isActive ? 'region.activate' : 'region.deactivate',
+        entityType: 'region',
+        entityId: normalized,
+        beforeState: {
+          code: before.code,
+          name: before.name,
+          is_active: before.is_active
+        },
+        afterState: {
+          code: before.code,
+          name: before.name,
+          is_active: isActive
+        },
+        requestId: context.requestId
+      });
+    });
+
+    const after = await this.repository.findRegion(normalized);
+    if (!after) throw new AppError('NOT_FOUND', 'Wilayah tidak ditemukan');
+    return mapRegion(after);
   }
 
   async saveSettings(input: unknown, context: SettingsContext): Promise<PlatformSettings> {

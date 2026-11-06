@@ -116,13 +116,14 @@ export class VendorOnboardingRepository {
       `SELECT code, name, level
          FROM regions
         WHERE level IN ('regency','city')
+          AND is_active
         ORDER BY sort_order, name`
     );
   }
 
   async regionExists(regionCode: string): Promise<boolean> {
     const rows = await query<{ exists: boolean }>(
-      'SELECT EXISTS (SELECT 1 FROM regions WHERE code = $1) AS exists',
+      'SELECT EXISTS (SELECT 1 FROM regions WHERE code = $1 AND is_active) AS exists',
       [regionCode]
     );
     return rows[0]?.exists ?? false;
