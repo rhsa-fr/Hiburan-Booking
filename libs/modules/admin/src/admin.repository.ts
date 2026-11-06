@@ -326,6 +326,17 @@ UPDATE disputes
 RETURNING id
 `;
 
+/**
+ * One outcome notification per dispute. The dedupe key is the dispute id, not
+ * the booking, so a retried resolution can never duplicate the message.
+ */
+const ENQUEUE_DISPUTE_RESOLVED_SQL = `
+INSERT INTO outbox_messages
+  (aggregate_type, aggregate_id, aggregate_version, event_type, payload, dedupe_key)
+VALUES ('booking', $1::uuid, 1, 'booking.dispute_resolved', $2::jsonb, $3)
+ON CONFLICT (dedupe_key) DO NOTHING
+`;
+
 const SET_BOOKING_SETTLEMENT_SQL = `
 UPDATE bookings
    SET settlement_status = $2::booking_settlement_status,
@@ -774,6 +785,33 @@ export class AdminRepository {
     if (result.rows.length === 0) {
       throw new AppError('CONFLICT', 'Sengketa sudah diputuskan atau tidak lagi terbuka.');
     }
+  }
+
+  /**
+   * FR-056: both parties learn the outcome. Written on the caller's client so
+   * the message commits with the decision it describes.
+   */
+  async enqueueDisputeResolved(
+    client: PoolClient,
+    input: {
+      disputeId: string;
+      bookingId: string;
+      bookingCode: string;
+      status: 'rejected' | 'resolved';
+      resolution: 'refund_full' | 'refund_partial' | 'release_to_vendor' | 'reject' | 'no_action';
+    }
+  ): Promise<void> {
+    await client.query(ENQUEUE_DISPUTE_RESOLVED_SQL, [
+      input.bookingId,
+      JSON.stringify({
+        booking_id: input.bookingId,
+        code: input.bookingCode,
+        dispute_id: input.disputeId,
+        status: input.status,
+        resolution: input.resolution
+      }),
+      `booking.dispute_resolved:${input.disputeId}`
+    ]);
   }
 
   async setBookingSettlement(

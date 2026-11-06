@@ -1,12 +1,28 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@tarlink/core/db', () => ({
-  withTransaction: async <T>(fn: (client: unknown) => Promise<T>): Promise<T> => fn({})
+  withTransaction: async <T>(fn: (client: unknown) => Promise<T>): Promise<T> => fn({}),
+  query: vi.fn()
 }));
 
+// The release path posts a ledger entry on the transaction client. Keep the real
+// journal builders, but never touch the database from a unit test.
+vi.mock('@tarlink/modules/ledger', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@tarlink/modules/ledger')>();
+  return {
+    ...actual,
+    postEntry: vi.fn(async () => ({
+      id: 'journal-release',
+      entryNo: 'JE-RELEASE-1',
+      inserted: true
+    }))
+  };
+});
+
+import type { PoolClient } from 'pg';
 import { AppError } from '@tarlink/core/errors';
 import type { PaymentService } from '@tarlink/modules/payment';
-import type { AdminRepository } from './admin.repository';
+import { AdminRepository } from './admin.repository';
 import { AdminService } from './admin.service';
 import type { BookingRow, DisputeRow, PaymentRow } from './rows';
 
@@ -36,6 +52,7 @@ const dispute: DisputeRow = {
 const booking = {
   id: BOOKING_ID,
   code: 'BK-261103-ABCD',
+  vendor_id: '55555555-5555-4555-8555-555555555555',
   lifecycle_status: 'completed',
   payment_status: 'fully_paid',
   settlement_status: 'disputed',
@@ -72,6 +89,10 @@ function harness() {
     setBookingRefundStatus: vi.fn(async () => undefined),
     markDisputeResolved: vi.fn(async () => undefined),
     markDisputeRejected: vi.fn(async () => undefined),
+    markReleased: vi.fn(async () => [
+      { id: BOOKING_ID, code: booking.code, settlement_status: 'released', released_at: new Date() }
+    ]),
+    enqueueDisputeResolved: vi.fn(async () => undefined),
     insertStatusHistory: vi.fn(async () => undefined),
     insertAudit: vi.fn(async () => undefined)
   };
@@ -127,6 +148,14 @@ describe('AdminService.resolveDispute', () => {
       expect.anything(),
       expect.objectContaining({ disputeId: DISPUTE_ID, resolvedBy: ACTOR })
     );
+    expect(repository.enqueueDisputeResolved).toHaveBeenCalledTimes(1);
+    expect(repository.enqueueDisputeResolved).toHaveBeenCalledWith(expect.anything(), {
+      disputeId: DISPUTE_ID,
+      bookingId: BOOKING_ID,
+      bookingCode: 'BK-261103-ABCD',
+      status: 'rejected',
+      resolution: 'reject'
+    });
     expect(result).toMatchObject({
       status: 'rejected',
       resolution: 'no_action',
@@ -150,5 +179,75 @@ describe('AdminService.resolveDispute', () => {
 
     expect(repository.markDisputeResolved).not.toHaveBeenCalled();
     expect(repository.setBookingRefundStatus).not.toHaveBeenCalled();
+    expect(repository.enqueueDisputeResolved).not.toHaveBeenCalled();
+  });
+
+  it('enqueues one dispute_resolved notification when the money goes to the vendor', async () => {
+    const { service, repository } = harness();
+
+    await service.resolveDispute(
+      DISPUTE_ID,
+      { resolution: 'release_to_vendor', note: 'Bukti vendor kuat, dana dilepas.' },
+      { actorId: ACTOR, actorRole: 'admin_super', requestId: null }
+    );
+
+    expect(repository.enqueueDisputeResolved).toHaveBeenCalledTimes(1);
+    expect(repository.enqueueDisputeResolved).toHaveBeenCalledWith(expect.anything(), {
+      disputeId: DISPUTE_ID,
+      bookingId: BOOKING_ID,
+      bookingCode: 'BK-261103-ABCD',
+      status: 'resolved',
+      resolution: 'release_to_vendor'
+    });
+  });
+
+  it('enqueues one dispute_resolved notification after a full refund', async () => {
+    const { service, repository } = harness();
+
+    await service.resolveDispute(
+      DISPUTE_ID,
+      { resolution: 'refund_full', note: 'Refund penuh sesuai putusan sengketa.' },
+      { actorId: ACTOR, actorRole: 'admin_super', requestId: null }
+    );
+
+    expect(repository.markDisputeResolved).toHaveBeenCalledTimes(1);
+    expect(repository.enqueueDisputeResolved).toHaveBeenCalledTimes(1);
+    expect(repository.enqueueDisputeResolved).toHaveBeenCalledWith(expect.anything(), {
+      disputeId: DISPUTE_ID,
+      bookingId: BOOKING_ID,
+      bookingCode: 'BK-261103-ABCD',
+      status: 'resolved',
+      resolution: 'refund_full'
+    });
+  });
+});
+
+describe('AdminRepository.enqueueDisputeResolved', () => {
+  it('writes one dispute-keyed outbox row on the caller transaction', async () => {
+    const client = { query: vi.fn(async () => ({ rows: [] })) };
+
+    await new AdminRepository().enqueueDisputeResolved(client as unknown as PoolClient, {
+      disputeId: DISPUTE_ID,
+      bookingId: BOOKING_ID,
+      bookingCode: 'BK-261103-ABCD',
+      status: 'resolved',
+      resolution: 'release_to_vendor'
+    });
+
+    expect(client.query).toHaveBeenCalledTimes(1);
+    const [sql, params] = client.query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain("'booking.dispute_resolved'");
+    expect(sql).toContain('ON CONFLICT (dedupe_key) DO NOTHING');
+    expect(params).toEqual([
+      BOOKING_ID,
+      JSON.stringify({
+        booking_id: BOOKING_ID,
+        code: 'BK-261103-ABCD',
+        dispute_id: DISPUTE_ID,
+        status: 'resolved',
+        resolution: 'release_to_vendor'
+      }),
+      `booking.dispute_resolved:${DISPUTE_ID}`
+    ]);
   });
 });
