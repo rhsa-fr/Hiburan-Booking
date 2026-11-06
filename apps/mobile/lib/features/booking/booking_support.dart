@@ -60,14 +60,18 @@ PillTone bookingPillTone(String status) => switch (status.toLowerCase()) {
   'dp_paid' ||
   'fully_paid' ||
   'available' ||
-  'settled' => PillTone.success,
+  'settled' ||
+  'resolved' => PillTone.success,
   'unconfirmed' ||
   'pending' ||
   'requested' ||
   'in_progress' ||
   'countered' ||
   'awaiting_payment' ||
-  'waiting_payment' => PillTone.warning,
+  'waiting_payment' ||
+  'open' ||
+  'investigating' ||
+  'awaiting_evidence' => PillTone.warning,
   'cancelled' ||
   'canceled' ||
   'rejected' ||
@@ -75,6 +79,27 @@ PillTone bookingPillTone(String status) => switch (status.toLowerCase()) {
   'expired' => PillTone.danger,
   'booked' || 'accepted' => PillTone.brand,
   _ => PillTone.neutral,
+};
+
+/// FR-056 dispute lifecycle labels (`disputes.status` in PostgreSQL).
+String disputeStatusText(String status) => switch (status.toLowerCase()) {
+  'open' => 'Terbuka',
+  'investigating' => 'Ditinjau',
+  'awaiting_evidence' => 'Menunggu bukti',
+  'resolved' => 'Selesai',
+  'rejected' => 'Ditolak',
+  _ => _humanize(status),
+};
+
+/// The six reason codes the API accepts on `POST /bookings/:id/disputes`.
+String disputeReasonText(String code) => switch (code.toLowerCase()) {
+  'not_as_described' => 'Tidak sesuai deskripsi',
+  'late_arrival' => 'Vendor terlambat',
+  'fraud' => 'Dugaan penipuan',
+  'quality' => 'Kualitas tidak sesuai',
+  'cancellation_abuse' => 'Pembatalan sepihak',
+  'other' => 'Alasan lain',
+  _ => _humanize(code),
 };
 
 String _humanize(String value) {

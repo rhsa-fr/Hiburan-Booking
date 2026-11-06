@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../app/app.dart';
 import '../../app/routes.dart';
 import '../../app/theme.dart';
+import '../../core/api_client.dart';
 import '../../core/api_exception.dart';
 import '../../core/format.dart';
 import '../../core/models.dart';
@@ -66,6 +67,11 @@ class _BookingStatusPageState extends State<BookingStatusPage>
   bool _noShowBusy = false;
   String? _noShowError;
 
+  List<DisputeSummary> _disputes = const [];
+  bool _disputesLoaded = false;
+  bool _disputesFetching = false;
+  String? _disputesError;
+
   Timer? _pollTimer;
   Timer? _tickTimer;
 
@@ -123,6 +129,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
           _payment = null;
         }
       });
+      await _fetchDisputes();
       if (!silent && (_canPay || _canPaySettlement)) {
         await _restoreInstruction();
       }
@@ -237,6 +244,39 @@ class _BookingStatusPageState extends State<BookingStatusPage>
 
   Future<void> _refresh() => _fetch(silent: true);
 
+  /// Disputes load beside the booking: a failure here never blanks the page.
+  Future<void> _fetchDisputes() async {
+    if (_disputesFetching || !mounted) return;
+    _disputesFetching = true;
+    final api = AppScope.of(context).api;
+    try {
+      final raw = await api.get('/bookings/${widget.bookingId}/disputes');
+      final items = parseDisputeList(raw);
+      if (!mounted) return;
+      setState(() {
+        _disputes = items;
+        _disputesError = null;
+        _disputesLoaded = true;
+      });
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _disputesError = apiMessage(error);
+        _disputesLoaded = true;
+      });
+    } finally {
+      _disputesFetching = false;
+    }
+  }
+
+  void _retryDisputes() {
+    setState(() {
+      _disputesLoaded = false;
+      _disputesError = null;
+    });
+    _fetchDisputes();
+  }
+
   bool get _canPay {
     final booking = _booking;
     return booking != null &&
@@ -283,6 +323,28 @@ class _BookingStatusPageState extends State<BookingStatusPage>
     final hour = session == 'night' ? 19 : 8;
     final eventStart = DateTime(parsed.year, parsed.month, parsed.day, hour);
     return DateTime.now().isAfter(eventStart.add(const Duration(hours: 2)));
+  }
+
+  bool get _isCustomer {
+    final roles = AppScope.of(context).session.user?.roles;
+    // This app ships as the customer client; an unknown role is a customer.
+    if (roles == null || roles.isEmpty) return true;
+    return roles.contains('customer');
+  }
+
+  bool get _hasOpenDispute => _disputes.any((dispute) => dispute.isOpen);
+
+  /// Mirrors state machine S-04/S-08: `held` is open to both parties, a
+  /// post-release claim (`released`) is the customer's alone.
+  bool get _canOpenDispute {
+    final booking = _booking;
+    if (booking == null) return false;
+    const lifecycles = {'confirmed', 'in_progress', 'completed', 'no_show'};
+    if (!lifecycles.contains(booking.lifecycleStatus)) return false;
+    final settlement = booking.settlementStatus;
+    final settlementOpen =
+        settlement == 'held' || (settlement == 'released' && _isCustomer);
+    return settlementOpen && !_hasOpenDispute;
   }
 
   Future<void> _pay() async {
@@ -481,6 +543,28 @@ class _BookingStatusPageState extends State<BookingStatusPage>
         _noShowError = error.message;
       });
     }
+  }
+
+  Future<void> _openDispute() async {
+    final booking = _booking;
+    if (booking == null) return;
+    final api = AppScope.of(context).api;
+    final created = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.card,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(Radii.lg)),
+      ),
+      builder: (_) => _DisputeSheet(booking: booking, api: api),
+    );
+    if (created != true || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Sengketa dikirim. Tim Tarlink akan meninjaunya.'),
+      ),
+    );
+    await _fetch();
   }
 
   void _openChat() {
@@ -741,6 +825,14 @@ class _BookingStatusPageState extends State<BookingStatusPage>
       const SectionHeader(title: 'Detail acara'),
       const SizedBox(height: Sp.md),
       BookingPanel(child: _detail(booking, text)),
+      const SizedBox(height: Sp.xl),
+      SectionHeader(
+        title: 'Sengketa',
+        actionLabel: _canOpenDispute ? 'Ajukan sengketa' : null,
+        onAction: _openDispute,
+      ),
+      const SizedBox(height: Sp.md),
+      _disputeSection(text),
       if (_cancelError != null) ...[
         const SizedBox(height: Sp.md),
         Semantics(
@@ -1416,6 +1508,92 @@ class _BookingStatusPageState extends State<BookingStatusPage>
     );
   }
 
+  Widget _disputeSection(TextTheme text) {
+    if (!_disputesLoaded) {
+      return const BookingPanel(
+        child: AppLoading(rows: 2, label: 'Memuat sengketa'),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (_disputesError != null) ...[
+          InfoStrip(
+            message: _disputesError!,
+            icon: Icons.error_outline,
+            tone: InfoTone.warning,
+            actionLabel: 'Muat ulang',
+            onAction: _retryDisputes,
+          ),
+          const SizedBox(height: Sp.md),
+        ],
+        BookingPanel(
+          child: _disputes.isEmpty
+              ? Text(
+                  // A failed request must not claim there is no dispute.
+                  _disputesError == null
+                      ? 'Belum ada sengketa. Dana diteruskan ke vendor setelah '
+                            'jendela sengketa.'
+                      : 'Daftar sengketa belum bisa dimuat.',
+                  style: text.bodyMedium,
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (var index = 0; index < _disputes.length; index++) ...[
+                      if (index > 0)
+                        const Divider(
+                          height: Sp.xl,
+                          color: AppColors.line,
+                          thickness: 1,
+                        ),
+                      _disputeTile(_disputes[index], text),
+                    ],
+                  ],
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _disputeTile(DisputeSummary dispute, TextTheme text) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Text(
+                disputeReasonText(dispute.reasonCode),
+                style: text.titleMedium,
+              ),
+            ),
+            const SizedBox(width: Sp.sm),
+            StatusPill(
+              label: disputeStatusText(dispute.status),
+              tone: bookingPillTone(dispute.status),
+            ),
+          ],
+        ),
+        const SizedBox(height: 2),
+        Text('Dibuka ${formatDateIso(dispute.openedAt)}', style: text.bodySmall),
+        if (dispute.description.trim().isNotEmpty) ...[
+          const SizedBox(height: Sp.sm),
+          Text(dispute.description, style: text.bodyMedium),
+        ],
+        if (dispute.resolutionNote != null) ...[
+          const SizedBox(height: Sp.sm),
+          InfoStrip(
+            message: 'Catatan penyelesaian: ${dispute.resolutionNote}',
+            icon: Icons.verified_outlined,
+            tone: InfoTone.neutral,
+          ),
+        ],
+      ],
+    );
+  }
+
   Widget _actionBar(BookingView booking, TextTheme text) {
     final digits = whatsappDigits(booking.vendor.whatsapp);
     return StickyActionBar(
@@ -1736,6 +1914,153 @@ class _CancelSheetState extends State<_CancelSheet> {
                       minimumSize: const Size.fromHeight(48),
                     ),
                     child: const Text('Batalkan booking'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DisputeSheet extends StatefulWidget {
+  const _DisputeSheet({required this.booking, required this.api});
+
+  final BookingView booking;
+  final ApiClient api;
+
+  @override
+  State<_DisputeSheet> createState() => _DisputeSheetState();
+}
+
+/// The six codes `POST /bookings/:id/disputes` accepts, in server order.
+const _disputeReasonCodes = <String>[
+  'not_as_described',
+  'late_arrival',
+  'fraud',
+  'quality',
+  'cancellation_abuse',
+  'other',
+];
+
+class _DisputeSheetState extends State<_DisputeSheet> {
+  final _description = TextEditingController();
+  String _reason = _disputeReasonCodes.first;
+  String? _error;
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _description.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final value = _description.text.trim();
+    if (value.length < 10) {
+      setState(() => _error = 'Ceritakan masalahnya minimal 10 karakter.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await widget.api.post(
+        '/bookings/${widget.booking.id}/disputes',
+        body: {'reason_code': _reason, 'description': value},
+      );
+      if (!mounted) return;
+      Navigator.pop(context, true);
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = apiMessage(error);
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(Sp.xl, Sp.xl, Sp.xl, Sp.xl + bottomInset),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('Ajukan sengketa', style: text.titleLarge),
+            const SizedBox(height: Sp.xs),
+            Text(
+              '${widget.booking.code} · ${widget.booking.vendor.displayName}',
+              style: text.bodySmall,
+            ),
+            const SizedBox(height: Sp.lg),
+            const InfoStrip(
+              message:
+                  'Dana booking ditahan sampai sengketa diputuskan. Jelaskan '
+                  'masalahnya apa adanya; tim Tarlink meninjau bukti kedua pihak.',
+              icon: Icons.shield_outlined,
+              tone: InfoTone.warning,
+            ),
+            const SizedBox(height: Sp.lg),
+            Text(
+              'Alasan',
+              style: text.labelSmall?.copyWith(color: AppColors.inkMuted),
+            ),
+            const SizedBox(height: Sp.sm),
+            for (final code in _disputeReasonCodes) ...[
+              _MethodOption(
+                label: disputeReasonText(code),
+                selected: _reason == code,
+                onTap: _busy ? null : () => setState(() => _reason = code),
+              ),
+              const SizedBox(height: Sp.sm),
+            ],
+            const SizedBox(height: Sp.xs),
+            TextField(
+              controller: _description,
+              minLines: 3,
+              maxLines: 6,
+              maxLength: 1000,
+              decoration: InputDecoration(
+                labelText: 'Ceritakan masalahnya',
+                hintText: 'Minimal 10 karakter',
+                errorText: _error,
+                counterText: '',
+              ),
+              onChanged: (_) {
+                if (_error != null) setState(() => _error = null);
+              },
+            ),
+            const SizedBox(height: Sp.sm),
+            Row(
+              children: [
+                Expanded(
+                  child: TextButton(
+                    onPressed: _busy ? null : () => Navigator.pop(context),
+                    style: TextButton.styleFrom(
+                      minimumSize: const Size.fromHeight(48),
+                    ),
+                    child: const Text('Kembali'),
+                  ),
+                ),
+                const SizedBox(width: Sp.sm),
+                Expanded(
+                  flex: 2,
+                  child: FilledButton(
+                    onPressed: _busy ? null : _submit,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: AppColors.onPrimary,
+                      minimumSize: const Size.fromHeight(48),
+                    ),
+                    child: Text(_busy ? 'Mengirim…' : 'Kirim sengketa'),
                   ),
                 ),
               ],
