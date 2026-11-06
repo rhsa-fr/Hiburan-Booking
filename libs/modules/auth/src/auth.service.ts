@@ -712,6 +712,12 @@ export class AuthService {
     const attempts = await this.claimAttempt(challenge, now);
     const state = await this.requireTwoFactorState(challenge.userId);
 
+    // The window budget is spent: no code may be evaluated any more, including
+    // a correct one, so an already-issued ticket cannot extend the oracle.
+    if (await this.totpFailureCapReached(state.email, input.ip ?? null, now)) {
+      throw new AppError('RATE_LIMITED', TOTP_RATE_LIMITED_MESSAGE);
+    }
+
     if (!state.twoFactorEnabled || !state.totpSecretEncrypted) {
       // `two_factor_enabled` without a secret is corrupt data: fail closed
       // instead of letting the account log in as if 2FA were off.
@@ -742,6 +748,12 @@ export class AuthService {
     const challenge = await this.loadChallenge(input.challenge_token, 'verify', now);
     const attempts = await this.claimAttempt(challenge, now);
     const state = await this.requireTwoFactorState(challenge.userId);
+
+    // Same gate as the TOTP path: spending the window budget also closes the
+    // backup-code route until it resets, so neither path is a cheaper oracle.
+    if (await this.totpFailureCapReached(state.email, input.ip ?? null, now)) {
+      throw new AppError('RATE_LIMITED', TOTP_RATE_LIMITED_MESSAGE);
+    }
 
     const claimed = await this.repository.markBackupCodeUsed(
       state.id,
@@ -1079,9 +1091,9 @@ export class AuthService {
 
     const token = generateChallengeToken();
 
-    // One live ticket per user: an earlier unconsumed challenge must not stay
-    // usable side by side with the one just issued.
-    await this.repository.deleteOpenChallenges(user.id);
+    // Exactly one live ticket per user: the repository upserts on the partial
+    // unique index, so issuing a new ticket rotates (and resets) the open one
+    // instead of leaving a second usable challenge beside it.
     await this.repository.insertAdminChallenge({
       id: this.newId(),
       userId: user.id,

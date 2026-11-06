@@ -420,8 +420,12 @@ class FakeAuthRepository implements AuthRepository {
     };
   }
 
+  /**
+   * Mirrors the SQL upsert: at most one open challenge per user, and a second
+   * issuance replaces it (new id/token/expiry) with `attempts` reset to zero.
+   */
   async insertAdminChallenge(input: NewAdminChallenge): Promise<void> {
-    this.challenges.push({
+    const next: StoredChallenge = {
       id: input.id,
       userId: input.userId,
       kind: input.kind,
@@ -433,19 +437,15 @@ class FakeAuthRepository implements AuthRepository {
       requesterIp: input.requesterIp,
       userAgent: input.userAgent,
       createdAt: input.createdAt
-    });
-  }
-
-  async deleteOpenChallenges(userId: string): Promise<number> {
-    let removed = 0;
-    for (let index = this.challenges.length - 1; index >= 0; index -= 1) {
-      const row = this.challenges[index];
-      if (row && row.userId === userId && row.consumedAt === null) {
-        this.challenges.splice(index, 1);
-        removed += 1;
-      }
+    };
+    const openIndex = this.challenges.findIndex(
+      (row) => row.userId === input.userId && row.consumedAt === null
+    );
+    if (openIndex >= 0) {
+      this.challenges[openIndex] = next;
+      return;
     }
-    return removed;
+    this.challenges.push(next);
   }
 
   async findChallengeByTokenHash(tokenHash: string): Promise<AdminChallengeRecord | null> {
@@ -1280,6 +1280,79 @@ describe('AuthService admin 2FA (FR-128)', () => {
       message: expect.stringContaining('Mulai ulang proses login')
     });
     expect(repository.challenges[0]?.attempts).toBe(TOTP_CHALLENGE_MAX_ATTEMPTS);
+  });
+
+  it('rejects a correct code on an already-issued ticket once the window budget is spent', async () => {
+    const harness = makeHarness();
+    const { repository, service } = harness;
+    await addAdminUser(repository);
+    enableTwoFactor(repository, ADMIN_ID);
+
+    const valid = generateTotpCode(TEST_TOTP_SECRET, harness.now());
+    const wrong = valid === '000000' ? '000001' : '000000';
+
+    // Six failures spend the first ticket's own cap...
+    const first = await openChallenge(harness);
+    for (let attempt = 1; attempt <= TOTP_CHALLENGE_MAX_ATTEMPTS; attempt += 1) {
+      expect(await wrongCodeResult(service, first, wrong)).toBe(
+        attempt === TOTP_CHALLENGE_MAX_ATTEMPTS ? 'RATE_LIMITED' : 'UNAUTHENTICATED'
+      );
+    }
+
+    // ...and four on the replacement ticket spend the 10-failure window budget.
+    const second = await openChallenge(harness);
+    const remaining = TOTP_FAILURE_MAX - TOTP_CHALLENGE_MAX_ATTEMPTS;
+    for (let attempt = 1; attempt <= remaining; attempt += 1) {
+      expect(await wrongCodeResult(service, second, wrong)).toBe(
+        attempt === remaining ? 'RATE_LIMITED' : 'UNAUTHENTICATED'
+      );
+    }
+
+    // The ticket still has guesses left under its own cap, but the window is
+    // spent: even the correct code must be refused, and no session minted.
+    expect(repository.challenges).toHaveLength(1);
+    expect(repository.challenges[0]?.attempts).toBeLessThan(TOTP_CHALLENGE_MAX_ATTEMPTS);
+    await expect(
+      service.verifyTwoFactorCode({ challenge_token: second, code: valid })
+    ).rejects.toMatchObject({
+      code: 'RATE_LIMITED',
+      message: expect.stringContaining('Coba lagi nanti')
+    });
+    expect(repository.challenges[0]?.consumedAt).toBeNull();
+    expect(repository.sessions).toHaveLength(0);
+  });
+
+  it('keeps exactly one open challenge across two consecutive password logins', async () => {
+    const harness = makeHarness();
+    const { repository, service } = harness;
+    await addAdminUser(repository);
+    enableTwoFactor(repository, ADMIN_ID);
+
+    const first = await openChallenge(harness);
+    const second = await openChallenge(harness);
+
+    expect(second).not.toBe(first);
+    const open = repository.challenges.filter(
+      (challenge) => challenge.userId === ADMIN_ID && challenge.consumedAt === null
+    );
+    expect(open).toHaveLength(1);
+    expect(repository.challenges).toHaveLength(1);
+    expect(open[0]?.attempts).toBe(0);
+
+    // The replaced ticket is gone: only the newest one can be redeemed.
+    await expect(
+      service.verifyTwoFactorCode({
+        challenge_token: first,
+        code: generateTotpCode(TEST_TOTP_SECRET, harness.now())
+      })
+    ).rejects.toMatchObject({ code: 'UNAUTHENTICATED' });
+
+    const session = await service.verifyTwoFactorCode({
+      challenge_token: second,
+      code: generateTotpCode(TEST_TOTP_SECRET, harness.now())
+    });
+    expect(session.user.roles).toEqual(['admin_super']);
+    expect(repository.sessions).toHaveLength(1);
   });
 
   it('AC5.3 accepts a backup code once and rejects the second use', async () => {

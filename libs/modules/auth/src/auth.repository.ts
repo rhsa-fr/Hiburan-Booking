@@ -252,9 +252,12 @@ export interface AuthRepository {
   /* ------------------------------------------------------------------ 2FA */
   /** 2FA state of an active user; null when the account does not exist. */
   findTwoFactorState(userId: string): Promise<TwoFactorState | null>;
+  /**
+   * Issues the single live challenge of a user, atomically: the partial unique
+   * index on `(user_id) WHERE consumed_at IS NULL` turns a second issuance into
+   * an update of the open row, so two parallel logins cannot leave two tickets.
+   */
   insertAdminChallenge(input: NewAdminChallenge): Promise<void>;
-  /** Drops the user's previous unconsumed challenges; returns the row count. */
-  deleteOpenChallenges(userId: string): Promise<number>;
   /** Challenge lookup by sha256(token); the plaintext token is never stored. */
   findChallengeByTokenHash(tokenHash: string): Promise<AdminChallengeRecord | null>;
   /**
@@ -954,10 +957,24 @@ export class PgAuthRepository implements AuthRepository {
   }
 
   async insertAdminChallenge(input: NewAdminChallenge): Promise<void> {
+    // One open ticket per user: on a concurrent or repeated issuance the
+    // partial unique index makes this an update of the live row, so the
+    // replacement is atomic and `attempts` restarts at zero.
     await query(
       `INSERT INTO admin_2fa_challenges
          (id, user_id, kind, token_hash, max_attempts, expires_at, requester_ip, user_agent, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::inet, $8, $9)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7::inet, $8, $9)
+       ON CONFLICT (user_id) WHERE consumed_at IS NULL
+       DO UPDATE SET
+         id = EXCLUDED.id,
+         kind = EXCLUDED.kind,
+         token_hash = EXCLUDED.token_hash,
+         max_attempts = EXCLUDED.max_attempts,
+         expires_at = EXCLUDED.expires_at,
+         requester_ip = EXCLUDED.requester_ip,
+         user_agent = EXCLUDED.user_agent,
+         created_at = EXCLUDED.created_at,
+         attempts = 0`,
       [
         input.id,
         input.userId,
@@ -970,16 +987,6 @@ export class PgAuthRepository implements AuthRepository {
         input.createdAt
       ]
     );
-  }
-
-  async deleteOpenChallenges(userId: string): Promise<number> {
-    const rows = await query<{ id: string }>(
-      `DELETE FROM admin_2fa_challenges
-        WHERE user_id = $1 AND consumed_at IS NULL
-        RETURNING id`,
-      [userId]
-    );
-    return rows.length;
   }
 
   async findChallengeByTokenHash(tokenHash: string): Promise<AdminChallengeRecord | null> {
