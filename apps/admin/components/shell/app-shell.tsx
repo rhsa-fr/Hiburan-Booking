@@ -80,7 +80,8 @@ const NAV_GROUPS: SidebarNavGroupModel[] = [
           { id: 'ledger', label: 'Ledger', href: '/ledger' },
           { id: 'payments', label: 'Pembayaran', href: '/payments' },
           { id: 'refunds', label: 'Refund', href: '/refunds' },
-          { id: 'disputes', label: 'Sengketa', href: '/disputes' }
+          { id: 'disputes', label: 'Sengketa', href: '/disputes' },
+          { id: 'reconciliation', label: 'Rekonsiliasi', href: '/reconciliation' }
         ]
       }
     ]
@@ -103,6 +104,7 @@ const SECTION_LABELS: Array<[string, string]> = [
   ['/payments', 'Transaksi'],
   ['/refunds', 'Transaksi'],
   ['/disputes', 'Transaksi'],
+  ['/reconciliation', 'Transaksi'],
   ['/payouts', 'Keuangan'],
   ['/settings', 'Pengaturan'],
   ['/regions', 'Pengaturan'],

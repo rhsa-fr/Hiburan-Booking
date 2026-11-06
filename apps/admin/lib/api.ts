@@ -925,3 +925,98 @@ export async function rejectMedia(id: string, note: string): Promise<AdminMediaI
   return response.data.media;
 }
 
+/* -------------------------------------------------------------------------- */
+/* Rekonsiliasi harian gateway <-> ledger (FR-131 fase 1)                     */
+/* -------------------------------------------------------------------------- */
+
+export type ReconciliationProvider = 'midtrans' | 'pjp';
+
+/** `reconciliation_runs.status`; `running`/`failed` are reserved by the schema. */
+export type ReconciliationRunStatus = 'running' | 'balanced' | 'discrepancy' | 'failed';
+
+export type ReconciliationClassification =
+  | 'matched'
+  | 'duplicate'
+  | 'missing_in_ledger'
+  | 'missing_at_gateway'
+  | 'amount_mismatch'
+  | 'fee_mismatch'
+  | 'unverified';
+
+export type ReconciliationSeverity = 'info' | 'warning' | 'critical';
+
+/** `POST/GET /v1/admin/reconciliation/runs` — money is an integer rupiah number. */
+export interface ReconciliationRunSummary {
+  run_id: string;
+  provider: string;
+  report_date: string;
+  status: ReconciliationRunStatus;
+  report_source: string;
+  trigger_source: string;
+  checked_count: number;
+  matched_count: number;
+  diff_count: number;
+  gateway_total_idr: number;
+  ledger_total_idr: number;
+  diff_idr: number;
+  started_at: string;
+  finished_at: string | null;
+}
+
+export interface ReconciliationDiff {
+  id: string;
+  classification: ReconciliationClassification;
+  severity: ReconciliationSeverity;
+  external_id: string | null;
+  gateway_amount_idr: number | null;
+  ledger_amount_idr: number | null;
+  delta_idr: number | null;
+  detail: Record<string, unknown>;
+  due_at: string | null;
+  resolved_at: string | null;
+}
+
+export interface ReconciliationRunDetail extends ReconciliationRunSummary {
+  diffs: ReconciliationDiff[];
+}
+
+export interface ReconciliationRunPage {
+  items: ReconciliationRunSummary[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface RunReconciliationInput {
+  provider: ReconciliationProvider;
+  report_date: string;
+}
+
+export function listReconciliationRuns(
+  params: { page?: number; page_size?: number } = {}
+): Promise<ReconciliationRunPage> {
+  const search = new URLSearchParams();
+  if (params.page) search.set('page', String(params.page));
+  if (params.page_size) search.set('page_size', String(params.page_size));
+  const suffix = search.toString() ? `?${search.toString()}` : '';
+  return apiFetch<ReconciliationRunPage>(`/v1/admin/reconciliation/runs${suffix}`);
+}
+
+export function getReconciliationRun(id: string): Promise<ReconciliationRunDetail> {
+  return apiFetch<ReconciliationRunDetail>(
+    `/v1/admin/reconciliation/runs/${encodeURIComponent(id)}`
+  );
+}
+
+/**
+ * Idempoten lewat `UNIQUE (provider, scope, report_date)` di server, jadi
+ * `Idempotency-Key` tidak dikirim: panggilan ulang mengembalikan run yang sama.
+ */
+export function runReconciliation(
+  input: RunReconciliationInput
+): Promise<ReconciliationRunSummary> {
+  return apiFetch<ReconciliationRunSummary>('/v1/admin/reconciliation/runs', {
+    method: 'POST',
+    body: JSON.stringify(input)
+  });
+}
