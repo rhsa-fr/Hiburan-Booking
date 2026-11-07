@@ -22,10 +22,19 @@ Dengan flag itu server mengirim `Set-Cookie:
 tarlink_rt=<refresh_token>; Path=/v1/auth; HttpOnly; SameSite=Strict`
 (`Secure` bila `NODE_ENV=production`) dan **menghilangkan** `refresh_token` dari body,
 sehingga JavaScript panel tidak pernah bisa membacanya. `POST /auth/refresh` tanpa
-body lalu memakai cookie tersebut dan merotasinya; bila rotasi gagal, cookie ikut
-dihapus. `POST /auth/logout` selalu menghapus cookie **dan** mencabut sesi yang
-diwakilinya, termasuk saat access token sudah kedaluwarsa. Klien Flutter tidak memakai
-flag ini: `refresh_token` tetap dikembalikan di body seperti sebelumnya.
+body lalu memakai cookie tersebut dan merotasinya; bila kredensialnya **ditolak**
+(`UNAUTHENTICATED`), cookie ikut dihapus. Kegagalan `429` (throttle) atau `5xx`
+tidak menghapus cookie karena kredensialnya belum tentu salah. `POST /auth/logout`
+selalu menghapus cookie **dan** mencabut sesi yang diwakilinya, termasuk saat access
+token sudah kedaluwarsa. Klien Flutter tidak memakai flag ini: `refresh_token` tetap
+dikembalikan di body seperti sebelumnya.
+
+Kegagalan `POST /auth/refresh` dihitung per IP: setelah 30 kegagalan dalam 5 menit,
+percobaan berikutnya dari IP yang sama dijawab `429 RATE_LIMITED`. Hitungan ini
+in-memory per proses API (bukan tabel), jadi beberapa instance memegang hitungan
+terpisah. Cookie `tarlink_rt` yang hadir tetapi tidak bisa didekode tetap dihapus
+lewat `Set-Cookie` pada `/auth/refresh` dan `/auth/logout`, sehingga browser tidak
+mengirim sampah yang sama terus-menerus.
 
 Mode cookie mengandsikan panel dan API **same-site** (beda port/subdomain masih
 same-site). Memindahkan panel ke domain lain mematikan `SameSite=Strict`, sehingga

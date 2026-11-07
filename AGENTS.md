@@ -88,6 +88,14 @@ npm test                   # seluruh suite hijau (kecuali skip yang terdokumenta
 npm run verify:db          # invarian DB
 ```
 
+Panel:
+
+```bash
+npm run typecheck:admin    # 0 error
+npm run test:admin         # unit test panel (vitest)
+npm run build:admin        # build produksi
+```
+
 Mobile:
 
 ```bash
@@ -158,6 +166,9 @@ Sudah diperbaiki (jangan dikembalikan tanpa keputusan tertulis):
 - Pencarian vendor memakai index trigram (`pg_trgm`).
 - `dev_code` OTP butuh `OTP_DEV_MODE=true` dan `NODE_ENV != production`.
 - Refresh token panjang (30 hari) + rotasi + deteksi reuse; job `cleanup-auth`.
+- Panel admin mengirim CSP enforced + `X-Frame-Options: DENY`; `/auth/refresh`
+  membatasi kegagalan per IP (in-memory per proses) dan cookie `tarlink_rt` yang
+  rusak dihapus pada refresh/logout.
 - E-wallet ditolak eksplisit (400), bukan menghasilkan VA palsu.
 - Payout vendor: `payouts`/`payout_items`, rekening terenkripsi AES-256-GCM, maker-checker
   dua endpoint, jurnal `payout_requested`/`payout_settled` + reversal saat provider gagal,

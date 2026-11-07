@@ -128,6 +128,12 @@ vendor unggah → vendor_media (status=pending) → admin approve → kolom publ
   yang dicabut langsung ditolak. 2FA admin (FR-128) dan mode cookie HttpOnly untuk
   panel sudah ada: `refresh_token` panel hidup di cookie `tarlink_rt`
   (`HttpOnly`, `SameSite=Strict`, `Path=/v1/auth`), bukan di storage JavaScript.
+- Panel mengirim CSP enforced (`default-src 'self'`, allowlist origin API, origin
+  media dari `MEDIA_PUBLIC_BASE_URL`, dan Google Identity Services,
+  `frame-ancestors 'none'`) plus `X-Frame-Options: DENY`; `'unsafe-eval'` dan `ws:`
+  hanya ada di mode dev. `script-src` masih memakai `'unsafe-inline'` karena Next
+  belum memakai nonce lewat middleware — ini utang teknis yang harus ditutup
+  sebelum panel dianggap tahan XSS.
 
 ### 3.3 Chat booking (FR-050)
 
@@ -247,7 +253,10 @@ untuk nilai ≥ Rp10 juta, 48 jam.
    dibuat dalam `family_id` yang sama (`parent_id` menunjuk `sessions.id`, bukan `jti`).
    Refresh token lama → 401; memakainya lagi dianggap reuse dan mencabut seluruh family.
    Path Bearer lama masih diterima untuk kompatibilitas, tetapi panel admin tidak
-   memakainya lagi.
+   memakainya lagi. Kegagalan refresh dihitung per IP di memori proses (sliding
+   window 5 menit, maks 30); percobaan ke-31 dijawab `429`. Hitungan ini bukan
+   pengganti rotasi dan tidak dibagi antar-instance. Cookie `tarlink_rt` yang tidak
+   bisa didekode dihapus pada refresh/logout.
 4. `POST /auth/logout` mencabut sesi berdasarkan refresh token (body atau cookie
    `tarlink_rt`) atau `jti`, lalu menghapus cookie.
 5. Klien (`ApiClient` Flutter) menyimpan access + refresh token di
