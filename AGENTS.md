@@ -198,9 +198,13 @@ Masih terbuka:
 - Tidak ada emulator Android/HP fisik; bukti APK hanya build sukses.
 - Detail vendor sempat kosong pada screenshot E2E otomatis — assertion ukuran body
   sudah ditambahkan; cek manual screenshot sebelum menyatakan selesai.
-- 2FA admin belum ada.
+- 2FA admin sudah ada (FR-128, migrasi `025`+`026`): TOTP terenkripsi, backup code,
+  reset `admin_super`. Panel memakai cookie `tarlink_rt` HttpOnly untuk refresh token;
+  access token tetap 15 menit dan disegarkan otomatis. `TOTP_ENCRYPTION_KEY` wajib di
+  production, tanpa itu 2FA gagal tertutup.
 - Teks `tos`/`privacy` di `policy_versions` masih placeholder `{"status":"draft"}`;
-  jangan mengarang pasal. Registrasi lewat Google belum mencatat consent.
+  jangan mengarang pasal. Registrasi email **dan** sign-up Google pertama kali sudah
+  mencatat consent; akun Google lama tidak diminta ulang.
 - Provider WhatsApp/SMS tidak dipakai (diganti chat real-time in-app, ADR 0011);
   push notification belum ada: notifikasi saat ini in-app (worker `outbox` → tabel
   `notifications`, popup di mobile). Chat teks in-app sudah ada (migrasi `021`,

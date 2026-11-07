@@ -15,6 +15,22 @@ Access token berlaku 15 menit. `POST /auth/refresh` menerima `refresh_token`
 refresh token lama menjadi 401. Memakai ulang token yang sudah dirotasi mencabut
 seluruh family sesi tersebut.
 
+**Mode cookie (panel admin).** Hanya endpoint ini yang menerima `cookie: true` di body:
+`POST /auth/login`, `POST /auth/google`, `POST /auth/2fa/verify`, `POST /auth/2fa/backup-code`,
+dan `POST /auth/2fa/enroll/verify` (bukan `/auth/register` atau `/auth/otp/verify`).
+Dengan flag itu server mengirim `Set-Cookie:
+tarlink_rt=<refresh_token>; Path=/v1/auth; HttpOnly; SameSite=Strict`
+(`Secure` bila `NODE_ENV=production`) dan **menghilangkan** `refresh_token` dari body,
+sehingga JavaScript panel tidak pernah bisa membacanya. `POST /auth/refresh` tanpa
+body lalu memakai cookie tersebut dan merotasinya; bila rotasi gagal, cookie ikut
+dihapus. `POST /auth/logout` selalu menghapus cookie **dan** mencabut sesi yang
+diwakilinya, termasuk saat access token sudah kedaluwarsa. Klien Flutter tidak memakai
+flag ini: `refresh_token` tetap dikembalikan di body seperti sebelumnya.
+
+Mode cookie mengandsikan panel dan API **same-site** (beda port/subdomain masih
+same-site). Memindahkan panel ke domain lain mematikan `SameSite=Strict`, sehingga
+silent refresh tidak jalan dan operator harus login tiap 15 menit.
+
 **Bentuk respons**
 
 Sebagian besar endpoint menulis payload di dalam `data`:
@@ -77,14 +93,14 @@ dan sebagai guard unik per pelanggan.
 | POST | `/auth/login` | `{ email, password }` | **Email**, bukan nomor WA; akun `admin_*` menerima challenge 2FA, bukan sesi |
 | POST | `/auth/otp/request` | `{ email }` | Kirim OTP ke email (dev mengembalikan `dev_code` hanya bila `NODE_ENV !== production` **dan** `OTP_DEV_MODE=true`) |
 | POST | `/auth/otp/verify` | `{ email, code }` | Verifikasi OTP; akun `admin_*` juga melewati gerbang 2FA |
-| POST | `/auth/google` | `{ id_token }` | Login Google (opsional, tidak dipakai mobile); akun `admin_*` juga melewati gerbang 2FA |
+| POST | `/auth/google` | `{ id_token, consent?: { tos_version_id, privacy_version_id } }` | Login Google (opsional, tidak dipakai mobile); `consent` **wajib** bila akun belum ada (FR-103), diabaikan untuk akun lama; akun `admin_*` juga melewati gerbang 2FA |
 | POST | `/auth/2fa/verify` | `{ challenge_token, code }` | Langkah 2 login admin: tukar ticket + TOTP 6 digit jadi sesi |
 | POST | `/auth/2fa/backup-code` | `{ challenge_token, code }` | Sama, memakai satu backup code (`XXXX-XXXX`, sekali pakai) |
 | POST | `/auth/2fa/enroll` | `{ enroll_token }` | Langkah 1 enrollment: `secret` + `otpauth_uri` (entri manual, tanpa QR) |
 | POST | `/auth/2fa/enroll/verify` | `{ enroll_token, code }` | Langkah 2 enrollment: aktifkan TOTP, sesi + `backup_codes` (tampil sekali) |
 | POST | `/auth/2fa/reset` | `{ user_id }` | `admin_super` menghapus 2FA admin lain dan mencabut semua sesinya |
-| POST | `/auth/refresh` | `{ refresh_token }` | Rotasi sesi; tanpa body memakai Bearer lama (legacy) |
-| POST | `/auth/logout` | `{ refresh_token? }` | Mencabut sesi; tanpa body memakai Bearer |
+| POST | `/auth/refresh` | `{ refresh_token?, cookie? }` | Rotasi sesi; tanpa body memakai cookie `tarlink_rt` (panel) atau Bearer lama (legacy) |
+| POST | `/auth/logout` | `{ refresh_token? }` | Mencabut sesi dari refresh token body, cookie `tarlink_rt`, atau `jti`; selalu menghapus cookie |
 | GET | `/auth/me` | — | Profil + peran pengguna |
 | DELETE | `/auth/me` | `{ confirm: "HAPUS AKUN", reason? }` | Hapus akun mandiri (anonimisasi, FR-101) |
 | GET | `/auth/account-deletion` | — | Status permintaan hapus akun terbaru |
@@ -453,10 +469,12 @@ booking tersebut. `403 FORBIDDEN` bila pemanggil bukan peserta booking.
 ### `GET /bookings/:id/disputes`
 
 Daftar sengketa booking, urut `opened_at` terbaru. Boleh diakses pelanggan pemilik
-booking, vendor terkait (`vendor_owner` atau `vendor_member` aktif dengan
-`can_respond`), dan admin (`admin_support` / `admin_finance` / `admin_super`).
+booking, vendor terkait (`vendor_owner` atau anggota `vendor_members` aktif — tanpa
+syarat `can_respond`, sama dengan akses `GET /bookings/:id`), dan admin
+(`admin_support` / `admin_finance` / `admin_super`).
 Pemanggil lain → `404 NOT_FOUND`, sama seperti `GET /bookings/:id`, agar keberadaan
-booking tidak bocor.
+booking tidak bocor. Jalur tulis (`POST /bookings/:id/disputes`) tetap lebih sempit:
+hanya pelanggan pemilik booking atau `vendor_owner`, dan `403 FORBIDDEN` untuk pihak lain.
 
 ```json
 {

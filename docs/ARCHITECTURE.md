@@ -125,7 +125,9 @@ vendor unggah → vendor_media (status=pending) → admin approve → kolom publ
 - Kolom `nik` di `users` dienkripsi AES-256-GCM (`nik_ciphertext`, migrasi `019`);
   baris lama di-backfill saat dibaca.
 - Setiap request yang membawa `jti` dicek ke `sessions` (§6), jadi token dari sesi
-  yang dicabut langsung ditolak. Yang belum ada: 2FA admin dan token admin HttpOnly.
+  yang dicabut langsung ditolak. 2FA admin (FR-128) dan mode cookie HttpOnly untuk
+  panel sudah ada: `refresh_token` panel hidup di cookie `tarlink_rt`
+  (`HttpOnly`, `SameSite=Strict`, `Path=/v1/auth`), bukan di storage JavaScript.
 
 ### 3.3 Chat booking (FR-050)
 
@@ -151,8 +153,9 @@ vendor unggah → vendor_media (status=pending) → admin approve → kolom publ
   membandingkannya dengan versi aktif dan menolak versi basi.
 - body `tos`/`privacy` v1 masih placeholder bertanda `draft`; penggantian teks
   final harus lewat migrasi baru.
-- Jalur Google belum mencatat consent karena tidak ada layar persetujuan; gap ini
-  dicatat, bukan ditutupi.
+- Sign-up Google pertama kali kini wajib mengirim `consent` (`tos_version_id`,
+  `privacy_version_id`) dan menulis dua baris `user_consents` yang sama seperti
+  registrasi email. Akun Google yang sudah ada tidak diminta consent ulang.
 
 ## 4. Ledger (bagian paling sensitif)
 
@@ -241,12 +244,20 @@ untuk nilai ≥ Rp10 juta, 48 jam.
    sebagai `refresh_token_hash`). Respons login berisi `access_token` (15 menit) dan
    `refresh_token` (30 hari, `REFRESH_TTL_DAYS`).
 3. `POST /auth/refresh` **merotasi**: baris lama dicabut (`rotated_at`), baris baru
-   dibuat dalam `family_id` yang sama. Refresh token lama → 401; memakainya lagi
-   dianggap reuse dan mencabut seluruh family. Path Bearer lama tetap ada untuk admin.
-4. `POST /auth/logout` mencabut sesi berdasarkan refresh token atau `jti`.
+   dibuat dalam `family_id` yang sama (`parent_id` menunjuk `sessions.id`, bukan `jti`).
+   Refresh token lama → 401; memakainya lagi dianggap reuse dan mencabut seluruh family.
+   Path Bearer lama masih diterima untuk kompatibilitas, tetapi panel admin tidak
+   memakainya lagi.
+4. `POST /auth/logout` mencabut sesi berdasarkan refresh token (body atau cookie
+   `tarlink_rt`) atau `jti`, lalu menghapus cookie.
 5. Klien (`ApiClient` Flutter) menyimpan access + refresh token di
    `flutter_secure_storage`; cold start memakai refresh token walau access token
    sudah kedaluwarsa, lalu refresh-on-401 untuk request lain.
+   Panel admin berbeda: refresh token hanya di cookie `tarlink_rt` (HttpOnly),
+   access token di `localStorage` agar seluruh tab berbagi satu salinan. Refresh
+   diserialisasi lintas tab dengan `navigator.locks`; tab yang kalah cepat memakai
+   token hasil tab lain tanpa memanggil `/auth/refresh` lagi, sehingga rotasi tidak
+   saling membunuh sesi. Konsekuensi: panel dan API harus same-site.
 6. Kuota login/OTP dicek per email **dan** per IP (`login_attempts`,
    `otp_requests.requester_ip`); `TRUST_PROXY=true` diperlukan di belakang proxy.
    OTP `dev_code` hanya keluar bila `NODE_ENV != production` dan `OTP_DEV_MODE=true`.
