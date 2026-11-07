@@ -11,8 +11,9 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.api.json --noEmit",
     "typecheck:admin": "tsc -p apps/admin/tsconfig.json --noEmit",
-    "test": "vitest run && npm run test:worker",
+    "test": "vitest run && npm run test:worker && npm run test:admin",
     "test:worker": "vitest run --config apps/worker/vitest.config.ts",
+    "test:admin": "vitest run --config apps/admin/vitest.config.ts",
     "verify:db": "vite-node scripts/verify-db.ts",
     "migrate": "vite-node scripts/migrate-cli.ts",
     "migrate:dry": "vite-node scripts/migrate-cli.ts --dry-run",
