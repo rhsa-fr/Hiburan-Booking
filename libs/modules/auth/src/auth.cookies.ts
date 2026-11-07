@@ -49,6 +49,25 @@ export function clearRefreshCookie(options: { secure: boolean }): string {
 }
 
 /**
+ * Whether the raw `Cookie` header names `name` at all.
+ *
+ * `readCookie` cannot tell "absent" from "present but unusable", which is why
+ * this predicate exists: a corrupt cookie must still be cleared instead of
+ * being resent on every request. Values (empty, undecodable or otherwise) and
+ * the `=` separator are deliberately irrelevant here.
+ */
+export function hasCookie(header: string | undefined, name: string): boolean {
+  if (typeof header !== 'string' || header.length === 0) return false;
+
+  for (const part of header.split(';')) {
+    const separator = part.indexOf('=');
+    const rawName = separator === -1 ? part : part.slice(0, separator);
+    if (rawName.trim() === name) return true;
+  }
+  return false;
+}
+
+/**
  * First `name=value` pair from a raw `Cookie` header. Returns null for a
  * missing header, an empty value or undecodable percent-encoding, so a
  * malformed cookie can never turn into a 500.

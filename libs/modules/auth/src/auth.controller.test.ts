@@ -8,6 +8,7 @@ import { loadConfig } from '@tarlink/core/config';
 import { AppError } from '@tarlink/core/errors';
 import { signAccessToken, type Role } from '@tarlink/platform/auth';
 import { AuthController } from './auth.controller';
+import { RefreshRateLimiter } from './refresh-rate-limit';
 import type { AuthService, LogoutResult, VerifyOtpResult } from './auth.service';
 
 // `bearerClaims` verifies with `loadConfig().JWT_SECRET`, so this file signs with
@@ -20,6 +21,7 @@ const JWT_SECRET = loadConfig().JWT_SECRET;
 
 const USER_ID = '11111111-1111-4111-8111-111111111111';
 const COOKIE_VALUE = 'cookie-refresh-token';
+const IP = '203.0.113.9';
 
 const SESSION: VerifyOtpResult = {
   access_token: 'access-token',
@@ -145,6 +147,7 @@ describe('AuthController refresh cookie contract', () => {
       {},
       undefined,
       `tarlink_rt=${COOKIE_VALUE}`,
+      IP,
       res
     );
 
@@ -164,7 +167,7 @@ describe('AuthController refresh cookie contract', () => {
     const controller = new AuthController(stubAuth({ refreshWithToken }));
 
     await expect(
-      controller.refresh({}, undefined, `tarlink_rt=${COOKIE_VALUE}`, res)
+      controller.refresh({}, undefined, `tarlink_rt=${COOKIE_VALUE}`, IP, res)
     ).rejects.toBe(failure);
 
     const cookie = setCookie(headers);
@@ -211,6 +214,7 @@ describe('AuthController refresh cookie contract', () => {
       { refresh_token: 'body-refresh-token' },
       undefined,
       undefined,
+      IP,
       res
     );
 
@@ -229,7 +233,7 @@ describe('AuthController refresh cookie contract', () => {
     const controller = new AuthController(stubAuth({ refreshWithToken }));
 
     await expect(
-      controller.refresh({ refresh_token: 'replayed-token' }, undefined, undefined, res)
+      controller.refresh({ refresh_token: 'replayed-token' }, undefined, undefined, IP, res)
     ).rejects.toBe(failure);
 
     // The clearing Set-Cookie is reserved for the cookie-backed path.
@@ -313,6 +317,7 @@ describe('AuthController refresh cookie contract', () => {
       { cookie: true },
       bearer(USER_ID, 'session-jti-6'),
       undefined,
+      IP,
       res
     );
 
@@ -321,5 +326,185 @@ describe('AuthController refresh cookie contract', () => {
     expect(setCookie(headers)).toContain(
       `tarlink_rt=${encodeURIComponent(SESSION.refresh_token)}`
     );
+  });
+});
+
+describe('AuthController refresh hardening', () => {
+  const UNDECODABLE = 'tarlink_rt=%E0%A4%A';
+  const AUTH_FAILURE = (): AppError =>
+    new AppError('UNAUTHENTICATED', 'Sesi sudah berakhir. Silakan masuk lagi.');
+
+  it('clears an undecodable cookie and answers UNAUTHENTICATED', async () => {
+    const { res, headers } = fakeRes();
+    const controller = new AuthController(stubAuth());
+
+    await expect(
+      controller.refresh({}, undefined, UNDECODABLE, IP, res)
+    ).rejects.toMatchObject({ code: 'UNAUTHENTICATED' });
+
+    const cookie = setCookie(headers);
+    expect(cookie).toContain('tarlink_rt=;');
+    expect(cookie).toContain('Max-Age=0');
+  });
+
+  it('falls back to a valid Bearer and still drops the undecodable cookie', async () => {
+    const refresh = vi.fn(async (_userId: string, _jti?: string | null) => SESSION);
+    const { res, headers } = fakeRes();
+    const controller = new AuthController(stubAuth({ refresh }));
+
+    const response = await controller.refresh(
+      {},
+      bearer(USER_ID, 'session-jti-7'),
+      UNDECODABLE,
+      IP,
+      res
+    );
+
+    expect(refresh).toHaveBeenCalledWith(USER_ID, 'session-jti-7');
+    expect(response.data).toMatchObject({ refresh_token: SESSION.refresh_token });
+    expect(setCookie(headers)).toContain('tarlink_rt=;');
+    expect(setCookie(headers)).toContain('Max-Age=0');
+  });
+
+  it('logout drops an undecodable cookie even when it answers 401', async () => {
+    const { res, headers } = fakeRes();
+    const controller = new AuthController(stubAuth());
+
+    await expect(
+      controller.logout({}, undefined, UNDECODABLE, res)
+    ).rejects.toMatchObject({ code: 'UNAUTHENTICATED' });
+
+    expect(setCookie(headers)).toContain('tarlink_rt=;');
+    expect(setCookie(headers)).toContain('Max-Age=0');
+  });
+
+  it('throttles once failed refreshes from one IP exceed the limit', async () => {
+    const refreshWithToken = vi.fn(async (_token: string): Promise<VerifyOtpResult> => {
+      throw AUTH_FAILURE();
+    });
+    const { res } = fakeRes();
+    const controller = new AuthController(
+      stubAuth({ refreshWithToken }),
+      new RefreshRateLimiter({ max: 2, windowMs: 60_000 })
+    );
+
+    await expect(
+      controller.refresh({ refresh_token: 'bad-1' }, undefined, undefined, IP, res)
+    ).rejects.toMatchObject({ code: 'UNAUTHENTICATED' });
+    await expect(
+      controller.refresh({ refresh_token: 'bad-2' }, undefined, undefined, IP, res)
+    ).rejects.toMatchObject({ code: 'UNAUTHENTICATED' });
+    await expect(
+      controller.refresh({ refresh_token: 'bad-3' }, undefined, undefined, IP, res)
+    ).rejects.toMatchObject({ code: 'RATE_LIMITED' });
+  });
+
+  it('does not charge the quota for a successful refresh', async () => {
+    const refreshWithToken = vi.fn(async (token: string): Promise<VerifyOtpResult> => {
+      if (token === 'good-token') return SESSION;
+      throw AUTH_FAILURE();
+    });
+    const { res } = fakeRes();
+    const controller = new AuthController(
+      stubAuth({ refreshWithToken }),
+      new RefreshRateLimiter({ max: 2, windowMs: 60_000 })
+    );
+
+    await expect(
+      controller.refresh({ refresh_token: 'good-token' }, undefined, undefined, IP, res)
+    ).resolves.toMatchObject({ data: SESSION });
+    await expect(
+      controller.refresh({ refresh_token: 'bad-1' }, undefined, undefined, IP, res)
+    ).rejects.toMatchObject({ code: 'UNAUTHENTICATED' });
+    await expect(
+      controller.refresh({ refresh_token: 'bad-2' }, undefined, undefined, IP, res)
+    ).rejects.toMatchObject({ code: 'UNAUTHENTICATED' });
+    await expect(
+      controller.refresh({ refresh_token: 'bad-3' }, undefined, undefined, IP, res)
+    ).rejects.toMatchObject({ code: 'RATE_LIMITED' });
+  });
+
+  it('counts each IP independently', async () => {
+    const refreshWithToken = vi.fn(async (_token: string): Promise<VerifyOtpResult> => {
+      throw AUTH_FAILURE();
+    });
+    const { res } = fakeRes();
+    const controller = new AuthController(
+      stubAuth({ refreshWithToken }),
+      new RefreshRateLimiter({ max: 1, windowMs: 60_000 })
+    );
+
+    await expect(
+      controller.refresh({ refresh_token: 'bad' }, undefined, undefined, '203.0.113.1', res)
+    ).rejects.toMatchObject({ code: 'UNAUTHENTICATED' });
+    await expect(
+      controller.refresh({ refresh_token: 'bad' }, undefined, undefined, '203.0.113.1', res)
+    ).rejects.toMatchObject({ code: 'RATE_LIMITED' });
+    // A different network still gets its first failure counted, not blocked.
+    await expect(
+      controller.refresh({ refresh_token: 'bad' }, undefined, undefined, '203.0.113.2', res)
+    ).rejects.toMatchObject({ code: 'UNAUTHENTICATED' });
+  });
+
+  it('does not count operational errors toward the quota', async () => {
+    let mode: 'internal' | 'auth' = 'internal';
+    const refreshWithToken = vi.fn(async (_token: string): Promise<VerifyOtpResult> => {
+      if (mode === 'internal') throw new AppError('INTERNAL_ERROR', 'database unavailable');
+      throw AUTH_FAILURE();
+    });
+    const { res } = fakeRes();
+    const controller = new AuthController(
+      stubAuth({ refreshWithToken }),
+      new RefreshRateLimiter({ max: 1, windowMs: 60_000 })
+    );
+
+    await expect(
+      controller.refresh({ refresh_token: 'x' }, undefined, undefined, IP, res)
+    ).rejects.toMatchObject({ code: 'INTERNAL_ERROR' });
+    await expect(
+      controller.refresh({ refresh_token: 'x' }, undefined, undefined, IP, res)
+    ).rejects.toMatchObject({ code: 'INTERNAL_ERROR' });
+
+    // Two 500s consumed nothing: the first real auth failure is still 1 of 1.
+    mode = 'auth';
+    await expect(
+      controller.refresh({ refresh_token: 'x' }, undefined, undefined, IP, res)
+    ).rejects.toMatchObject({ code: 'UNAUTHENTICATED' });
+    await expect(
+      controller.refresh({ refresh_token: 'x' }, undefined, undefined, IP, res)
+    ).rejects.toMatchObject({ code: 'RATE_LIMITED' });
+  });
+
+  it('keeps the refresh cookie when the failure is not a credential rejection', async () => {
+    const refreshWithToken = vi.fn(async (): Promise<VerifyOtpResult> => {
+      throw new AppError('INTERNAL_ERROR', 'database unavailable');
+    });
+    const { res, headers } = fakeRes();
+    const controller = new AuthController(stubAuth({ refreshWithToken }));
+
+    await expect(
+      controller.refresh({}, undefined, `tarlink_rt=${COOKIE_VALUE}`, IP, res)
+    ).rejects.toMatchObject({ code: 'INTERNAL_ERROR' });
+
+    // A 5xx says nothing about the cookie; dropping it would force a re-login.
+    expect(headers).toEqual([]);
+  });
+
+  it('does not clear the cookie when the request is throttled', async () => {
+    const refreshWithToken = vi.fn(async (): Promise<VerifyOtpResult> => {
+      throw AUTH_FAILURE();
+    });
+    const { res, headers } = fakeRes();
+    const controller = new AuthController(
+      stubAuth({ refreshWithToken }),
+      new RefreshRateLimiter({ max: 0, windowMs: 60_000 })
+    );
+
+    await expect(
+      controller.refresh({}, undefined, `tarlink_rt=${COOKIE_VALUE}`, IP, res)
+    ).rejects.toMatchObject({ code: 'RATE_LIMITED' });
+
+    // The credential was never judged invalid, so it must survive the 429.
+    expect(headers).toEqual([]);
   });
 });

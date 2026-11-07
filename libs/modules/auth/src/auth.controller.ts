@@ -58,9 +58,11 @@ import {
 import {
   REFRESH_COOKIE_NAME,
   clearRefreshCookie,
+  hasCookie,
   readCookie,
   serializeRefreshCookie
 } from './auth.cookies';
+import { RefreshRateLimiter } from './refresh-rate-limit';
 
 /**
  * Minimal response surface used with `@Res({ passthrough: true })`. Typing it
@@ -246,7 +248,14 @@ function bearerClaims(authorization: string | undefined): { sub: string; jti?: s
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  /**
+   * The limiter default keeps direct `new AuthController(service)` call sites
+   * (tests, scripts) working; Nest injects the module-registered instance.
+   */
+  constructor(
+    private readonly auth: AuthService,
+    private readonly refreshLimiter: RefreshRateLimiter = new RefreshRateLimiter()
+  ) {}
 
   @Post('otp/request')
   @HttpCode(200)
@@ -460,10 +469,17 @@ export class AuthController {
     }
 
     const bodyToken = parsed.data.refresh_token;
+    const cookiePresent = hasCookie(cookieHeader, REFRESH_COOKIE_NAME);
     const cookieToken = readCookie(cookieHeader, REFRESH_COOKIE_NAME);
     // The panel's access token lives 15 minutes, so an expired Bearer must not
     // block a logout that still carries a refresh credential.
     const claims = bearerClaims(authorization);
+
+    // Clear before the "no usable credential" 401: a cookie present in the
+    // header is dropped even when its value is empty or undecodable.
+    if (res && cookiePresent) {
+      res.setHeader('Set-Cookie', clearedRefreshCookie());
+    }
 
     if (!bodyToken && cookieToken === null && !claims) {
       throw new AppError('UNAUTHENTICATED', 'Authentication is required');
@@ -471,7 +487,7 @@ export class AuthController {
 
     // The cookie is cleared on every successful logout, including the Bearer
     // path: a stale cookie must not be able to refresh the session we just ended.
-    if (res) {
+    if (res && !cookiePresent) {
       res.setHeader('Set-Cookie', clearedRefreshCookie());
     }
 
@@ -541,6 +557,32 @@ export class AuthController {
   }
 
   /**
+   * Runs one credential check and counts only genuine authentication failures.
+   * Operational errors (internal, upstream) are rethrown untouched and must not
+   * consume the caller's quota. `ip` falls back to an empty string for direct
+   * callers; Nest always supplies a value.
+   */
+  private async attemptRefresh<T>(ip: string, attempt: () => Promise<T>): Promise<T> {
+    try {
+      return await attempt();
+    } catch (error) {
+      if (
+        error instanceof AppError &&
+        error.code === 'UNAUTHENTICATED' &&
+        typeof ip === 'string' &&
+        ip.length > 0 &&
+        this.refreshLimiter.recordFailure(ip)
+      ) {
+        throw new AppError(
+          'RATE_LIMITED',
+          'Too many refresh attempts from this network. Try again later.'
+        );
+      }
+      throw error;
+    }
+  }
+
+  /**
    * Rotates the session and returns a new access + refresh pair.
    * A `refresh_token` body is the primary path for mobile (works after the
    * access token expired). The browser sends the `tarlink_rt` cookie instead and
@@ -553,6 +595,7 @@ export class AuthController {
     @Body() body: unknown,
     @Headers('authorization') authorization?: string,
     @Headers('cookie') cookieHeader?: string,
+    @Ip() ip: string = '',
     @Res({ passthrough: true }) res?: CookieResponse
   ): Promise<{ data: PasswordLoginResult | LoginResponse }> {
     const parsed = RefreshBody.safeParse(body ?? {});
@@ -560,10 +603,18 @@ export class AuthController {
       throw new AppError('VALIDATION_ERROR', 'invalid refresh request', parsed.error.issues);
     }
 
+    const bodyToken = parsed.data.refresh_token;
+    const cookiePresent = hasCookie(cookieHeader, REFRESH_COOKIE_NAME);
     const cookieToken = readCookie(cookieHeader, REFRESH_COOKIE_NAME);
 
-    if (parsed.data.refresh_token) {
-      const result = await this.auth.refreshWithToken(parsed.data.refresh_token);
+    if (bodyToken) {
+      const result = await this.attemptRefresh(ip, () => this.auth.refreshWithToken(bodyToken));
+
+      // A corrupt cookie must not survive a body-token refresh either; a mobile
+      // client has no cookie header, so this stays a no-op for the app flow.
+      if (cookiePresent && cookieToken === null && res) {
+        res.setHeader('Set-Cookie', clearedRefreshCookie());
+      }
 
       // The cookie is only touched on the explicit opt-in: a client that sent a
       // body token (mobile) must not receive a session cookie as a side effect.
@@ -572,23 +623,30 @@ export class AuthController {
 
     if (cookieToken !== null) {
       try {
-        const result = await this.auth.refreshWithToken(cookieToken);
+        const result = await this.attemptRefresh(ip, () => this.auth.refreshWithToken(cookieToken));
         return { data: loginResponse(res, result, true) };
       } catch (error) {
-        // The credential the browser keeps sending is already rejected (expired,
-        // revoked or replayed); drop it so it is not resent forever.
-        if (res) {
+        // Clear only a credential the server actually rejected. A 429 from the
+        // throttle or a 5xx from the database says nothing about the cookie;
+        // dropping it would turn a transient outage into a forced re-login.
+        if (res && error instanceof AppError && error.code === 'UNAUTHENTICATED') {
           res.setHeader('Set-Cookie', clearedRefreshCookie());
         }
         throw error;
       }
     }
 
+    // A cookie that is present but undecodable cannot be used, yet it must not
+    // survive: drop it before falling through to the Bearer path or the 401.
+    if (cookiePresent && res) {
+      res.setHeader('Set-Cookie', clearedRefreshCookie());
+    }
+
     const claims = bearerClaims(authorization);
     if (!claims) {
       throw new AppError('UNAUTHENTICATED', 'Authentication is required');
     }
-    const result = await this.auth.refresh(claims.sub, claims.jti);
+    const result = await this.attemptRefresh(ip, () => this.auth.refresh(claims.sub, claims.jti));
     return { data: loginResponse(res, result, parsed.data.cookie === true) };
   }
 }

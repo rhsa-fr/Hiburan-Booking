@@ -8,6 +8,7 @@ import { PgAuthRepository } from './auth.repository';
 import { AuthService } from './auth.service';
 import { GoogleTokenInfoVerifier } from './google-verifier';
 import { createMailer } from './mailer';
+import { RefreshRateLimiter } from './refresh-rate-limit';
 
 /**
  * `AppModule` is lead-owned and does not import this module yet; register
@@ -28,6 +29,9 @@ import { createMailer } from './mailer';
     { provide: JWT_SECRET, useValue: loadConfig().JWT_SECRET },
     { provide: AuthGuard, useClass: AuthGuard },
     RolesGuard,
+    // Process-wide refresh throttle; the controller also has a default instance
+    // so direct (non-DI) construction keeps compiling.
+    RefreshRateLimiter,
     {
       provide: AuthService,
       useFactory: (): AuthService => {
