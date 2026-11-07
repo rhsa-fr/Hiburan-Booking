@@ -133,7 +133,11 @@ vendor unggah → vendor_media (status=pending) → admin approve → kolom publ
   `frame-ancestors 'none'`) plus `X-Frame-Options: DENY`; `'unsafe-eval'` dan `ws:`
   hanya ada di mode dev. `script-src` masih memakai `'unsafe-inline'` karena Next
   belum memakai nonce lewat middleware — ini utang teknis yang harus ditutup
-  sebelum panel dianggap tahan XSS.
+  sebelum panel dianggap tahan XSS. Nonce belum dipasang karena CSP saat ini
+  statis di `headers()`: CSP ber-nonce harus dibuat per-request di `middleware.ts`,
+  dan Next hanya menyuntikkan nonce ke rute yang dirender dinamis. Mengaktifkannya
+  berarti memaksa seluruh rute panel dinamis (kehilangan prerender); keputusan itu
+  belum diambil.
 
 ### 3.3 Chat booking (FR-050)
 
@@ -264,7 +268,9 @@ untuk nilai ≥ Rp10 juta, 48 jam.
    sudah kedaluwarsa, lalu refresh-on-401 untuk request lain.
    Panel admin berbeda: refresh token hanya di cookie `tarlink_rt` (HttpOnly),
    access token di `localStorage` agar seluruh tab berbagi satu salinan. Refresh
-   diserialisasi lintas tab dengan `navigator.locks`; tab yang kalah cepat memakai
+   diserialisasi lintas tab dengan `navigator.locks`; origin tanpa Web Locks
+   memakai lease `localStorage` (TTL 15 dtk, menunggu maks 10 dtk) sebagai
+   fallback. Tab yang kalah cepat memakai
    token hasil tab lain tanpa memanggil `/auth/refresh` lagi, sehingga rotasi tidak
    saling membunuh sesi. Konsekuensi: panel dan API harus same-site.
 6. Kuota login/OTP dicek per email **dan** per IP (`login_attempts`,
@@ -318,6 +324,22 @@ sengketa, audit, pengaturan, wilayah (`regions`, FR-125), pengajuan vendor
 (`refunds`).
 
 Aturan: panel tidak menghitung uang sendiri; semua angka dari `GET /admin/*`.
+
+Lane verifikasi panel:
+
+- `npm run typecheck:admin` — kode produksi saja; `apps/admin/tsconfig.json`
+  mengecualikan `**/*.test.ts` dan `test/**` supaya build tidak pernah menarik
+  import test.
+- `npm run typecheck:admin:test` — lane terpisah (`apps/admin/tsconfig.test.json`)
+  untuk file test; `npm run test:admin` menjalankannya sebelum Vitest.
+- `npm run test:admin` — Vitest Node (tanpa jsdom) untuk `**/*.test.ts` dan
+  `**/*.test.tsx` di panel; `npm -w apps/admin test` menjalankan Vitest yang sama
+  dari workspace (mengandalkan `vitest` yang di-hoist dari root), sedangkan lane
+  typecheck test hanya ada di `npm run test:admin`.
+- `npm run verify:admin` — header CSP + keamanan dan hidrasi `/login` lewat Chrome
+  headless (CDP, tanpa dependency); panel harus berjalan lebih dulu. Alur login +
+  2FA, viewer KTP blob, refresh dan logout lintas tab diuji manual di Chrome
+  headless pada 2026-11-07.
 
 ## 9. Aplikasi Flutter (pelanggan + portal vendor)
 
@@ -418,7 +440,7 @@ WebSocket per booking, fan-out `LISTEN/NOTIFY`).
 
 Yang masih terbuka (lihat [AGENTS.md § Batasan](../AGENTS.md#batasan-yang-diketahui)):
 push notification, chat foto/lokasi dan penyaringan kontak (FR-135), picker peta lokasi
-acara, UI check-in berbasis GPS, token admin HttpOnly, dan 2FA admin. Provider WhatsApp/SMS
+acara, UI check-in berbasis GPS. Provider WhatsApp/SMS
 tidak dipakai (ADR 0011). Integrasi
 charge + notifikasi + refund QRIS memakai Midtrans sandbox; endpoint check-in/no-show
 basic sudah ada. Payout vendor + rekening terenkripsi sudah ada; integrasi Iris

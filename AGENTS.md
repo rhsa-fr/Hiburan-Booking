@@ -91,9 +91,11 @@ npm run verify:db          # invarian DB
 Panel:
 
 ```bash
-npm run typecheck:admin    # 0 error
-npm run test:admin         # unit test panel (vitest)
-npm run build:admin        # build produksi
+npm run typecheck:admin      # 0 error (kode produksi)
+npm run typecheck:admin:test # 0 error (file test; juga dijalankan test:admin)
+npm run test:admin           # unit test panel (vitest)
+npm run verify:admin         # header CSP + hidrasi /login (panel harus berjalan)
+npm run build:admin          # build produksi
 ```
 
 Mobile:
