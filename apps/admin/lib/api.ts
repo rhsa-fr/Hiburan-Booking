@@ -1,5 +1,5 @@
 import { ApiError } from './errors';
-import { readToken } from './session';
+import { clearSession, readSession, readToken, saveToken } from './session';
 import {
   mockApproveMedia,
   mockGetAuditLog,
@@ -106,23 +106,318 @@ async function readErrorMessage(response: Response): Promise<string> {
   return `Permintaan gagal (${response.status}). Coba lagi.`;
 }
 
+function apiUrl(path: string): string {
+  return `${BASE_URL}${path}`;
+}
+
+/** Endpoint auth tidak boleh memicu refresh: 401 di sini berarti kredensial salah. */
+const AUTH_PATH_PREFIXES = ['/v1/auth/login', '/v1/auth/google', '/v1/auth/refresh'];
+
+function isAuthPath(pathname: string): boolean {
+  if (AUTH_PATH_PREFIXES.includes(pathname)) return true;
+  return /^\/v1\/auth\/(?:2fa|otp)\//.test(pathname);
+}
+
+/**
+ * Satu-satunya jalur fetch ke API. `credentials: 'include'` wajib: refresh token
+ * hidup di cookie HttpOnly ber-Path `/v1/auth`, bukan di storage browser.
+ */
+function sendRequest(
+  path: string,
+  init: RequestInit | undefined,
+  token: string | null
+): Promise<Response> {
+  const headers = new Headers(init?.headers);
+  headers.set('Accept', 'application/json');
+  if (init?.body) {
+    headers.set('Content-Type', 'application/json');
+  }
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  return fetch(apiUrl(path), { ...init, headers, credentials: 'include' });
+}
+
+let refreshInFlight: Promise<string | null> | null = null;
+
+/**
+ * Nomor generasi refresh. Naik saat sesi lokal diakhiri, sehingga hasil refresh
+ * yang masih berjalan tidak boleh menulis token baru setelah operator menekan
+ * "Keluar" (sesi hidup kembali tanpa sepengetahuan operator).
+ */
+let refreshGeneration = 0;
+
+function invalidateRefresh(): void {
+  refreshGeneration += 1;
+  refreshInFlight = null;
+}
+
+/** Nama lock browser: satu refresh cookie untuk seluruh tab. */
+const REFRESH_LOCK_NAME = 'tarlink.admin.refresh';
+
+/** Batas waktu satu request refresh; tab beku tidak boleh menahan tab lain. */
+const REFRESH_TIMEOUT_MS = 10_000;
+
+/** Batas menunggu lock antar-tab sebelum dianggap gagal (bukan deadlock). */
+const LOCK_WAIT_MS = 15_000;
+
+/* Fallback lock untuk origin tanpa `navigator.locks` (lihat acquireLease). */
+const LEASE_KEY = 'tarlink.admin.refresh.lock';
+const LEASE_TTL_MS = 15_000;
+const LEASE_RETRY_MS = 75;
+const LEASE_WAIT_MS = 10_000;
+
+interface LeaseRecord {
+  owner: string;
+  expiresAt: number;
+}
+
+/**
+ * `navigator.locks` menyerialisasi refresh antar-tab. Dibiarkan opsional supaya
+ * browser lama / origin tidak aman tetap memakai lease localStorage.
+ */
+function refreshLockManager(): LockManager | null {
+  if (typeof navigator === 'undefined') return null;
+  if (!('locks' in navigator)) return null;
+  const { locks } = navigator;
+  if (typeof locks?.request !== 'function') return null;
+  return locks;
+}
+
+/** Identifier pemilik lease. `crypto.randomUUID` juga butuh secure context. */
+function leaseOwnerId(): string {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+  } catch {
+    // Lanjut ke fallback: origin tanpa secure context tetap butuh pemilik unik.
+  }
+  return `lease-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+/**
+ * Baca lease dari localStorage. Nilai yang rusak/tidak bisa di-parse dianggap
+ * kedaluwarsa supaya tab tidak terkunci selamanya karena sisa data lama.
+ */
+function readLease(): LeaseRecord | null {
+  try {
+    const raw = window.localStorage.getItem(LEASE_KEY);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
+    const record = parsed as Record<string, unknown>;
+    if (typeof record.owner !== 'string' || record.owner.length === 0) return null;
+    if (typeof record.expiresAt !== 'number' || !Number.isFinite(record.expiresAt)) return null;
+    return { owner: record.owner, expiresAt: record.expiresAt };
+  } catch {
+    return null;
+  }
+}
+
+/** Tulis lease lalu baca ulang: hanya penulis terakhir yang boleh menganggap dirinya pemilik. */
+function tryTakeLease(owner: string): boolean {
+  const now = Date.now();
+  const existing = readLease();
+  if (existing && existing.owner !== owner && existing.expiresAt > now) return false;
+  try {
+    const lease: LeaseRecord = { owner, expiresAt: now + LEASE_TTL_MS };
+    window.localStorage.setItem(LEASE_KEY, JSON.stringify(lease));
+  } catch {
+    // Penyimpanan diblokir: tab lain di browser yang sama juga tidak bisa
+    // memegang lease, jadi lanjut tanpa lock lebih baik daripada menunggu.
+    return true;
+  }
+  const confirmed = readLease();
+  return confirmed !== null && confirmed.owner === owner;
+}
+
+async function acquireLease(owner: string): Promise<boolean> {
+  if (typeof window === 'undefined') return false;
+  const deadline = Date.now() + LEASE_WAIT_MS;
+  for (;;) {
+    if (tryTakeLease(owner)) return true;
+    if (Date.now() >= deadline) return false;
+    await sleep(LEASE_RETRY_MS);
+  }
+}
+
+function releaseLease(owner: string): void {
+  const current = readLease();
+  if (!current || current.owner !== owner) return;
+  try {
+    window.localStorage.removeItem(LEASE_KEY);
+  } catch {
+    // Tidak ada yang bisa dibersihkan; lease akan kedaluwarsa sendiri.
+  }
+}
+
+/** Batasi penantian lock: `null` berarti lock tidak didapat, bukan error. */
+function withTimeout<T>(work: Promise<T>, ms: number): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), ms);
+  });
+  return Promise.race([work, deadline])
+    .catch(() => null)
+    .finally(() => {
+      if (timer !== undefined) clearTimeout(timer);
+    });
+}
+
+/**
+ * Jalankan pekerjaan di bawah lock antar-tab yang sama dengan refresh. `null`
+ * berarti lock tidak didapat sampai batas waktu: pemanggil memutuskan apakah
+ * pekerjaan tetap jalan tanpa lock (best effort).
+ */
+async function runUnderRefreshLock<T>(work: () => Promise<T>): Promise<T | null> {
+  const locks = refreshLockManager();
+  if (locks) {
+    return withTimeout(locks.request(REFRESH_LOCK_NAME, work) as Promise<T>, LOCK_WAIT_MS);
+  }
+  const owner = leaseOwnerId();
+  const held = await acquireLease(owner);
+  try {
+    return await work();
+  } finally {
+    if (held) releaseLease(owner);
+  }
+}
+
+/** Berakhirnya sesi harus terlihat oleh semua tab, bukan hanya tab ini. */
+function endSession(): void {
+  clearSession();
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('tarlink:session-ended'));
+  }
+}
+
+/** Batas waktu fetch refresh; browser lama tanpa `AbortSignal.timeout` tetap jalan. */
+function refreshSignal(): AbortSignal | undefined {
+  if (typeof AbortSignal === 'undefined') return undefined;
+  if (typeof AbortSignal.timeout !== 'function') return undefined;
+  return AbortSignal.timeout(REFRESH_TIMEOUT_MS);
+}
+
+/** `data.user.id` dari respons refresh; null bila bentuknya tidak dikenal. */
+function readPayloadUserId(data: Record<string, unknown> | null): string | null {
+  if (!data) return null;
+  const user = data.user;
+  if (typeof user !== 'object' || user === null || Array.isArray(user)) return null;
+  const id = (user as Record<string, unknown>).id;
+  return typeof id === 'string' && id.length > 0 ? id : null;
+}
+
+/**
+ * Tukar cookie refresh jadi access token. Dipanggil hanya di dalam lock.
+ *
+ * Cookie refresh berotasi setiap dipakai: memakai cookie yang sudah dipakai tab
+ * lain dianggap reuse dan mencabut seluruh keluarga sesi. Karena itu token
+ * dibaca ulang dulu — kalau tab lain sudah memperbarui, tidak ada jaringan.
+ *
+ * Generasi refresh dicek setelah fetch: hasil yang datang terlambat tidak boleh
+ * menulis token untuk sesi yang sudah ditutup operator.
+ */
+async function exchangeRefreshCookie(staleToken: string | null): Promise<string | null> {
+  const current = readToken();
+  if (current && current !== staleToken) {
+    return current;
+  }
+
+  const generation = refreshGeneration;
+  try {
+    const response = await fetch(apiUrl('/v1/auth/refresh'), {
+      method: 'POST',
+      credentials: 'include',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: '{}',
+      signal: refreshSignal()
+    });
+    if (generation !== refreshGeneration) return null;
+    if (!response.ok) {
+      endSession();
+      return null;
+    }
+    const payload: unknown = await response.json();
+    if (generation !== refreshGeneration) return null;
+    const data = isRecord(payload) && isRecord(payload.data) ? payload.data : null;
+    const token = data && typeof data.access_token === 'string' ? data.access_token : null;
+    if (!token) {
+      endSession();
+      return null;
+    }
+    // Token tanpa pemilik tidak boleh disimpan: di workstation bersama itu
+    // berarti tab lain bisa memakainya dengan profil operator yang berbeda.
+    const userId = readPayloadUserId(data) ?? readSession()?.user_id ?? null;
+    if (!userId) {
+      endSession();
+      return null;
+    }
+    saveToken(token, userId);
+    return token;
+  } catch {
+    if (generation !== refreshGeneration) return null;
+    endSession();
+    return null;
+  }
+}
+
+/**
+ * Single-flight refresh. `staleToken` adalah token yang baru saja ditolak 401
+ * (wajib: tanpa token lama tidak ada yang bisa dibandingkan, jadi pemanggil
+ * harus mengirim null secara eksplisit). Dua pemanggil di tab yang sama berbagi
+ * satu promise; antar-tab diserialisasi lewat `navigator.locks` atau lease
+ * localStorage, dan tab yang kalah cepat cukup memakai token baru.
+ */
+export async function refreshAccessToken(staleToken: string | null): Promise<string | null> {
+  if (refreshInFlight) return refreshInFlight;
+
+  // Lock bisa diberikan setelah batas waktu: refresh kedua di tab ini akan
+  // memakai cookie yang sudah dirotasi dan memicu deteksi reuse.
+  let abandoned = false;
+
+  const pending = (async (): Promise<string | null> => {
+    try {
+      return await runUnderRefreshLock(() => {
+        if (abandoned) return Promise.resolve(null);
+        return exchangeRefreshCookie(staleToken);
+      });
+    } finally {
+      abandoned = true;
+      refreshInFlight = null;
+    }
+  })();
+
+  refreshInFlight = pending;
+  return pending;
+}
+
 /**
  * Single entry point for both data paths. Signatures never change when the
  * mock flag flips: only the transport does.
  */
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   if (!isMockMode()) {
-    const headers = new Headers(init?.headers);
-    headers.set('Accept', 'application/json');
-    if (init?.body) {
-      headers.set('Content-Type', 'application/json');
-    }
     // API memakai prefix global `/v1`; panel historically memanggil `/api/v1`.
     // Dinormalisasi di satu tempat supaya semua pemanggil konsisten.
     const normalised = path.replace(/^\/api\/v1/, '/v1');
-    const token = readToken();
-    if (token) headers.set('Authorization', `Bearer ${token}`);
-    const response = await fetch(`${BASE_URL}${normalised}`, { ...init, headers });
+    const pathname = normalised.split('?')[0] ?? normalised;
+    const previousToken = readToken();
+    let response = await sendRequest(normalised, init, previousToken);
+
+    // Access token hanya 15 menit. Pada 401 pertama untuk request biasa, tukar
+    // cookie refresh jadi token baru lalu ulangi tepat satu kali. Tanpa token
+    // sebelumnya artinya tab ini basi (logout/token dicabut tab lain): akhiri
+    // sesi supaya dialihkan ke /login, bukan berputar di state error.
+    if (response.status === 401 && !isAuthPath(pathname)) {
+      if (previousToken) {
+        const refreshed = await refreshAccessToken(previousToken);
+        if (refreshed) {
+          response = await sendRequest(normalised, init, refreshed);
+        }
+      } else {
+        endSession();
+      }
+    }
+
     if (!response.ok) {
       throw new ApiError(await readErrorMessage(response), response.status);
     }
@@ -153,11 +448,126 @@ export interface AuthUser {
   roles: string[];
 }
 
-export interface AuthResult {
+/** Full session: satu-satunya bentuk yang boleh disimpan sebagai sesi operator. */
+export interface SessionResult {
   access_token: string;
   token_type: string;
   expires_in: number;
   user: AuthUser;
+}
+
+/** FR-128: kata sandi benar, kode TOTP masih diminta. Belum ada sesi. */
+export interface MfaRequiredResult {
+  mfa_required: true;
+  challenge_token: string;
+  expires_in: number;
+}
+
+/** FR-128: akun admin ini belum punya TOTP; enrollment harus selesai dulu. */
+export interface MfaSetupRequiredResult {
+  mfa_setup_required: true;
+  enroll_token: string;
+  expires_in: number;
+}
+
+/** Semua jawaban `POST /auth/login` dan `POST /auth/google`. */
+export type LoginResult = SessionResult | MfaRequiredResult | MfaSetupRequiredResult;
+
+/** @deprecated Alias lama; login sekarang menjawab `LoginResult`. */
+export type AuthResult = SessionResult;
+
+/** `POST /auth/2fa/enroll`: rahasia hanya ditampilkan sekali. */
+export interface TwoFactorEnrollment {
+  secret: string;
+  otpauth_uri: string;
+  expires_in: number;
+}
+
+/** `POST /auth/2fa/enroll/verify`: sesi penuh plus salinan kode cadangan. */
+export interface TwoFactorEnrolledSession extends SessionResult {
+  backup_codes: string[];
+}
+
+function invalidAuthPayload(): ApiError {
+  return new ApiError('Respons autentikasi tidak dikenali.', 502);
+}
+
+function readAuthUser(value: unknown): AuthUser | null {
+  if (!isRecord(value)) return null;
+  if (typeof value.id !== 'string' || !Array.isArray(value.roles)) return null;
+  const roles = value.roles.filter((role): role is string => typeof role === 'string');
+  if (roles.length !== value.roles.length) return null;
+  if (value.phone !== null && typeof value.phone !== 'string') return null;
+  if (value.email !== undefined && typeof value.email !== 'string') return null;
+  return {
+    id: value.id,
+    phone: value.phone,
+    roles,
+    ...(value.email !== undefined ? { email: value.email } : {})
+  };
+}
+
+function readSessionResult(value: unknown): SessionResult | null {
+  if (!isRecord(value)) return null;
+  if (typeof value.access_token !== 'string' || typeof value.token_type !== 'string') return null;
+  if (typeof value.expires_in !== 'number') return null;
+  const user = readAuthUser(value.user);
+  if (!user) return null;
+  return {
+    access_token: value.access_token,
+    token_type: value.token_type,
+    expires_in: value.expires_in,
+    user
+  };
+}
+
+function requireSessionResult(value: unknown): SessionResult {
+  const session = readSessionResult(value);
+  if (!session) throw invalidAuthPayload();
+  return session;
+}
+
+/** Boundary validation: a 200 with an unknown shape must not become a session. */
+function readLoginResult(value: unknown): LoginResult {
+  if (isRecord(value)) {
+    if (value.mfa_required === true) {
+      if (typeof value.challenge_token !== 'string' || typeof value.expires_in !== 'number') {
+        throw invalidAuthPayload();
+      }
+      return {
+        mfa_required: true,
+        challenge_token: value.challenge_token,
+        expires_in: value.expires_in
+      };
+    }
+    if (value.mfa_setup_required === true) {
+      if (typeof value.enroll_token !== 'string' || typeof value.expires_in !== 'number') {
+        throw invalidAuthPayload();
+      }
+      return {
+        mfa_setup_required: true,
+        enroll_token: value.enroll_token,
+        expires_in: value.expires_in
+      };
+    }
+  }
+  return requireSessionResult(value);
+}
+
+function readEnrollmentResult(value: unknown): TwoFactorEnrollment {
+  if (
+    !isRecord(value) ||
+    typeof value.secret !== 'string' ||
+    typeof value.otpauth_uri !== 'string' ||
+    typeof value.expires_in !== 'number'
+  ) {
+    throw new ApiError('Respons pendaftaran 2FA tidak dikenali.', 502);
+  }
+  return {
+    secret: value.secret,
+    otpauth_uri: value.otpauth_uri,
+    expires_in: value.expires_in
+  };
 }
 
 /** True when a Google OAuth client id is configured for the browser. */
@@ -170,21 +580,113 @@ export function googleClientId(): string {
 }
 
 /** Email + password. Dipakai panel admin; API memakai prefix `/v1`. */
-export async function loginWithPassword(email: string, password: string): Promise<AuthResult> {
-  const response = await apiFetch<{ data: AuthResult }>('/v1/auth/login', {
+export async function loginWithPassword(email: string, password: string): Promise<LoginResult> {
+  const response = await apiFetch<{ data: unknown }>('/v1/auth/login', {
     method: 'POST',
-    body: JSON.stringify({ email, password })
+    // `cookie: true`: refresh token dikirim API lewat cookie HttpOnly, bukan body.
+    body: JSON.stringify({ email, password, cookie: true })
   });
-  return response.data;
+  return readLoginResult(response.data);
 }
 
 /** Google Sign-In: kirim ID token dari Google Identity Services. */
-export async function loginWithGoogle(idToken: string): Promise<AuthResult> {
-  const response = await apiFetch<{ data: AuthResult }>('/v1/auth/google', {
+export async function loginWithGoogle(idToken: string): Promise<LoginResult> {
+  const response = await apiFetch<{ data: unknown }>('/v1/auth/google', {
     method: 'POST',
-    body: JSON.stringify({ id_token: idToken })
+    body: JSON.stringify({ id_token: idToken, cookie: true })
   });
-  return response.data;
+  return readLoginResult(response.data);
+}
+
+/** FR-128 langkah 2: tukar challenge + kode TOTP menjadi sesi penuh. */
+export async function verifyTwoFactor(
+  challengeToken: string,
+  code: string
+): Promise<SessionResult> {
+  const response = await apiFetch<{ data: unknown }>('/v1/auth/2fa/verify', {
+    method: 'POST',
+    body: JSON.stringify({ challenge_token: challengeToken, code, cookie: true })
+  });
+  return requireSessionResult(response.data);
+}
+
+/** Jalur cadangan saat aplikasi autentikator tidak bisa diakses. */
+export async function verifyBackupCode(
+  challengeToken: string,
+  code: string
+): Promise<SessionResult> {
+  const response = await apiFetch<{ data: unknown }>('/v1/auth/2fa/backup-code', {
+    method: 'POST',
+    body: JSON.stringify({ challenge_token: challengeToken, code, cookie: true })
+  });
+  return requireSessionResult(response.data);
+}
+
+/** FR-128 langkah 1 enrollment: rahasia base32 + URI `otpauth://`. */
+export async function startTwoFactorEnrollment(
+  enrollToken: string
+): Promise<TwoFactorEnrollment> {
+  const response = await apiFetch<{ data: unknown }>('/v1/auth/2fa/enroll', {
+    method: 'POST',
+    body: JSON.stringify({ enroll_token: enrollToken })
+  });
+  return readEnrollmentResult(response.data);
+}
+
+/** Langkah 2: aktifkan TOTP, terbitkan sesi, dan tampilkan kode cadangan sekali. */
+export async function completeTwoFactorEnrollment(
+  enrollToken: string,
+  code: string
+): Promise<TwoFactorEnrolledSession> {
+  const response = await apiFetch<{ data: unknown }>('/v1/auth/2fa/enroll/verify', {
+    method: 'POST',
+    body: JSON.stringify({ enroll_token: enrollToken, code, cookie: true })
+  });
+  const session = requireSessionResult(response.data);
+  if (!isRecord(response.data)) throw invalidAuthPayload();
+  const rawCodes = response.data.backup_codes;
+  if (!Array.isArray(rawCodes)) throw invalidAuthPayload();
+  const backupCodes = rawCodes.filter((item): item is string => typeof item === 'string');
+  if (backupCodes.length !== rawCodes.length) throw invalidAuthPayload();
+  return { ...session, backup_codes: backupCodes };
+}
+
+/**
+ * Cabut sesi di server: Bearer access token di header, cookie refresh dibersihkan
+ * API lewat respons. Sengaja tidak lewat `apiFetch` supaya logout tidak pernah
+ * memicu refresh; pemanggil menutup sesi lokal apa pun hasilnya.
+ *
+ * Dijalankan di lock yang sama dengan refresh: logout tidak boleh berselang
+ * dengan rotasi cookie, dan refresh yang sudah berjalan tidak boleh menulis
+ * token baru sesudah ini (`invalidateRefresh`).
+ */
+export async function logoutSession(): Promise<void> {
+  // Wajib sebelum await pertama: refresh yang masih di jalan harus dibatalkan.
+  invalidateRefresh();
+
+  const sendLogout = (): Promise<Response> => {
+    const token = readToken();
+    const headers = new Headers({ Accept: 'application/json' });
+    if (token) headers.set('Authorization', `Bearer ${token}`);
+    return fetch(apiUrl('/v1/auth/logout'), {
+      method: 'POST',
+      headers,
+      credentials: 'include'
+    });
+  };
+
+  // Satu request saja: callback lock bisa menyusul setelah batas waktu.
+  let request: Promise<Response> | null = null;
+  const sendOnce = (): Promise<Response> => {
+    request ??= sendLogout();
+    return request;
+  };
+
+  const locked = await runUnderRefreshLock(sendOnce);
+  const response = locked ?? (await sendOnce());
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
 }
 
 /** Peran yang boleh membuka panel operasi. */
@@ -757,3 +1259,98 @@ export async function rejectMedia(id: string, note: string): Promise<AdminMediaI
   return response.data.media;
 }
 
+/* -------------------------------------------------------------------------- */
+/* Rekonsiliasi harian gateway <-> ledger (FR-131 fase 1)                     */
+/* -------------------------------------------------------------------------- */
+
+export type ReconciliationProvider = 'midtrans' | 'pjp';
+
+/** `reconciliation_runs.status`; `running`/`failed` are reserved by the schema. */
+export type ReconciliationRunStatus = 'running' | 'balanced' | 'discrepancy' | 'failed';
+
+export type ReconciliationClassification =
+  | 'matched'
+  | 'duplicate'
+  | 'missing_in_ledger'
+  | 'missing_at_gateway'
+  | 'amount_mismatch'
+  | 'fee_mismatch'
+  | 'unverified';
+
+export type ReconciliationSeverity = 'info' | 'warning' | 'critical';
+
+/** `POST/GET /v1/admin/reconciliation/runs` — money is an integer rupiah number. */
+export interface ReconciliationRunSummary {
+  run_id: string;
+  provider: string;
+  report_date: string;
+  status: ReconciliationRunStatus;
+  report_source: string;
+  trigger_source: string;
+  checked_count: number;
+  matched_count: number;
+  diff_count: number;
+  gateway_total_idr: number;
+  ledger_total_idr: number;
+  diff_idr: number;
+  started_at: string;
+  finished_at: string | null;
+}
+
+export interface ReconciliationDiff {
+  id: string;
+  classification: ReconciliationClassification;
+  severity: ReconciliationSeverity;
+  external_id: string | null;
+  gateway_amount_idr: number | null;
+  ledger_amount_idr: number | null;
+  delta_idr: number | null;
+  detail: Record<string, unknown>;
+  due_at: string | null;
+  resolved_at: string | null;
+}
+
+export interface ReconciliationRunDetail extends ReconciliationRunSummary {
+  diffs: ReconciliationDiff[];
+}
+
+export interface ReconciliationRunPage {
+  items: ReconciliationRunSummary[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface RunReconciliationInput {
+  provider: ReconciliationProvider;
+  report_date: string;
+}
+
+export function listReconciliationRuns(
+  params: { page?: number; page_size?: number } = {}
+): Promise<ReconciliationRunPage> {
+  const search = new URLSearchParams();
+  if (params.page) search.set('page', String(params.page));
+  if (params.page_size) search.set('page_size', String(params.page_size));
+  const suffix = search.toString() ? `?${search.toString()}` : '';
+  return apiFetch<ReconciliationRunPage>(`/v1/admin/reconciliation/runs${suffix}`);
+}
+
+export function getReconciliationRun(id: string): Promise<ReconciliationRunDetail> {
+  return apiFetch<ReconciliationRunDetail>(
+    `/v1/admin/reconciliation/runs/${encodeURIComponent(id)}`
+  );
+}
+
+/**
+ * Idempoten lewat `UNIQUE (provider, scope, report_date)` di server, jadi
+ * `Idempotency-Key` tidak dikirim: panggilan ulang mengembalikan run yang sama.
+ */
+export function runReconciliation(
+  input: RunReconciliationInput
+): Promise<ReconciliationRunSummary> {
+  return apiFetch<ReconciliationRunSummary>('/v1/admin/reconciliation/runs', {
+    method: 'POST',
+    body: JSON.stringify(input)
+  });
+}

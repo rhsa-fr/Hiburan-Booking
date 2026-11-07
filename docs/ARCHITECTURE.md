@@ -125,7 +125,19 @@ vendor unggah → vendor_media (status=pending) → admin approve → kolom publ
 - Kolom `nik` di `users` dienkripsi AES-256-GCM (`nik_ciphertext`, migrasi `019`);
   baris lama di-backfill saat dibaca.
 - Setiap request yang membawa `jti` dicek ke `sessions` (§6), jadi token dari sesi
-  yang dicabut langsung ditolak. Yang belum ada: 2FA admin dan token admin HttpOnly.
+  yang dicabut langsung ditolak. 2FA admin (FR-128) dan mode cookie HttpOnly untuk
+  panel sudah ada: `refresh_token` panel hidup di cookie `tarlink_rt`
+  (`HttpOnly`, `SameSite=Strict`, `Path=/v1/auth`), bukan di storage JavaScript.
+- Panel mengirim CSP enforced (`default-src 'self'`, allowlist origin API, origin
+  media dari `MEDIA_PUBLIC_BASE_URL`, dan Google Identity Services,
+  `frame-ancestors 'none'`) plus `X-Frame-Options: DENY`; `'unsafe-eval'` dan `ws:`
+  hanya ada di mode dev. `script-src` masih memakai `'unsafe-inline'` karena Next
+  belum memakai nonce lewat middleware — ini utang teknis yang harus ditutup
+  sebelum panel dianggap tahan XSS. Nonce belum dipasang karena CSP saat ini
+  statis di `headers()`: CSP ber-nonce harus dibuat per-request di `middleware.ts`,
+  dan Next hanya menyuntikkan nonce ke rute yang dirender dinamis. Mengaktifkannya
+  berarti memaksa seluruh rute panel dinamis (kehilangan prerender); keputusan itu
+  belum diambil.
 
 ### 3.3 Chat booking (FR-050)
 
@@ -151,8 +163,9 @@ vendor unggah → vendor_media (status=pending) → admin approve → kolom publ
   membandingkannya dengan versi aktif dan menolak versi basi.
 - body `tos`/`privacy` v1 masih placeholder bertanda `draft`; penggantian teks
   final harus lewat migrasi baru.
-- Jalur Google belum mencatat consent karena tidak ada layar persetujuan; gap ini
-  dicatat, bukan ditutupi.
+- Sign-up Google pertama kali kini wajib mengirim `consent` (`tos_version_id`,
+  `privacy_version_id`) dan menulis dua baris `user_consents` yang sama seperti
+  registrasi email. Akun Google yang sudah ada tidak diminta consent ulang.
 
 ## 4. Ledger (bagian paling sensitif)
 
@@ -241,12 +254,25 @@ untuk nilai ≥ Rp10 juta, 48 jam.
    sebagai `refresh_token_hash`). Respons login berisi `access_token` (15 menit) dan
    `refresh_token` (30 hari, `REFRESH_TTL_DAYS`).
 3. `POST /auth/refresh` **merotasi**: baris lama dicabut (`rotated_at`), baris baru
-   dibuat dalam `family_id` yang sama. Refresh token lama → 401; memakainya lagi
-   dianggap reuse dan mencabut seluruh family. Path Bearer lama tetap ada untuk admin.
-4. `POST /auth/logout` mencabut sesi berdasarkan refresh token atau `jti`.
+   dibuat dalam `family_id` yang sama (`parent_id` menunjuk `sessions.id`, bukan `jti`).
+   Refresh token lama → 401; memakainya lagi dianggap reuse dan mencabut seluruh family.
+   Path Bearer lama masih diterima untuk kompatibilitas, tetapi panel admin tidak
+   memakainya lagi. Kegagalan refresh dihitung per IP di memori proses (sliding
+   window 5 menit, maks 30); percobaan ke-31 dijawab `429`. Hitungan ini bukan
+   pengganti rotasi dan tidak dibagi antar-instance. Cookie `tarlink_rt` yang tidak
+   bisa didekode dihapus pada refresh/logout.
+4. `POST /auth/logout` mencabut sesi berdasarkan refresh token (body atau cookie
+   `tarlink_rt`) atau `jti`, lalu menghapus cookie.
 5. Klien (`ApiClient` Flutter) menyimpan access + refresh token di
    `flutter_secure_storage`; cold start memakai refresh token walau access token
    sudah kedaluwarsa, lalu refresh-on-401 untuk request lain.
+   Panel admin berbeda: refresh token hanya di cookie `tarlink_rt` (HttpOnly),
+   access token di `localStorage` agar seluruh tab berbagi satu salinan. Refresh
+   diserialisasi lintas tab dengan `navigator.locks`; origin tanpa Web Locks
+   memakai lease `localStorage` (TTL 15 dtk, menunggu maks 10 dtk) sebagai
+   fallback. Tab yang kalah cepat memakai
+   token hasil tab lain tanpa memanggil `/auth/refresh` lagi, sehingga rotasi tidak
+   saling membunuh sesi. Konsekuensi: panel dan API harus same-site.
 6. Kuota login/OTP dicek per email **dan** per IP (`login_attempts`,
    `otp_requests.requester_ip`); `TRUST_PROXY=true` diperlukan di belakang proxy.
    OTP `dev_code` hanya keluar bila `NODE_ENV != production` dan `OTP_DEV_MODE=true`.
@@ -298,6 +324,22 @@ sengketa, audit, pengaturan, wilayah (`regions`, FR-125), pengajuan vendor
 (`refunds`).
 
 Aturan: panel tidak menghitung uang sendiri; semua angka dari `GET /admin/*`.
+
+Lane verifikasi panel:
+
+- `npm run typecheck:admin` — kode produksi saja; `apps/admin/tsconfig.json`
+  mengecualikan `**/*.test.ts` dan `test/**` supaya build tidak pernah menarik
+  import test.
+- `npm run typecheck:admin:test` — lane terpisah (`apps/admin/tsconfig.test.json`)
+  untuk file test; `npm run test:admin` menjalankannya sebelum Vitest.
+- `npm run test:admin` — Vitest Node (tanpa jsdom) untuk `**/*.test.ts` dan
+  `**/*.test.tsx` di panel; `npm -w apps/admin test` menjalankan Vitest yang sama
+  dari workspace (mengandalkan `vitest` yang di-hoist dari root), sedangkan lane
+  typecheck test hanya ada di `npm run test:admin`.
+- `npm run verify:admin` — header CSP + keamanan dan hidrasi `/login` lewat Chrome
+  headless (CDP, tanpa dependency); panel harus berjalan lebih dulu. Alur login +
+  2FA, viewer KTP blob, refresh dan logout lintas tab diuji manual di Chrome
+  headless pada 2026-11-07.
 
 ## 9. Aplikasi Flutter (pelanggan + portal vendor)
 
@@ -398,7 +440,7 @@ WebSocket per booking, fan-out `LISTEN/NOTIFY`).
 
 Yang masih terbuka (lihat [AGENTS.md § Batasan](../AGENTS.md#batasan-yang-diketahui)):
 push notification, chat foto/lokasi dan penyaringan kontak (FR-135), picker peta lokasi
-acara, UI check-in berbasis GPS, token admin HttpOnly, dan 2FA admin. Provider WhatsApp/SMS
+acara, UI check-in berbasis GPS. Provider WhatsApp/SMS
 tidak dipakai (ADR 0011). Integrasi
 charge + notifikasi + refund QRIS memakai Midtrans sandbox; endpoint check-in/no-show
 basic sudah ada. Payout vendor + rekening terenkripsi sudah ada; integrasi Iris

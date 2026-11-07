@@ -68,6 +68,8 @@ flutter:
 
   assets:
     - assets/images/
+    # Logo metode pembayaran (wordmark resmi, PNG transparan).
+    - assets/images/payments/
 
   # Roboto Flex, font yang dipakai desain Stitch. Dibundel agar tetap sama
   # tanpa jaringan dan tanpa paket google_fonts.

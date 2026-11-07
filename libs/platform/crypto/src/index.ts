@@ -25,9 +25,26 @@ export interface SecretCipherEnv {
   BANK_ACCOUNT_KEY_ID?: string;
 }
 
+/**
+ * Explicit key material for callers that do not use the bank-account env names
+ * (currently the admin TOTP secret). `name` is only used in error messages so
+ * operators know which variable to fix.
+ */
+export interface SecretCipherKeyMaterial {
+  readonly key?: string;
+  readonly previousKey?: string;
+  readonly keyId?: string;
+  readonly name: string;
+}
+
 interface KeyEntry {
   id: string;
   key: Buffer;
+}
+
+interface CipherMessages {
+  readonly corrupt: string;
+  readonly keyMismatch: string;
 }
 
 function parseKey(value: string | undefined, name: string): Buffer | null {
@@ -57,20 +74,17 @@ function decryptWith(entry: KeyEntry, payload: Buffer): string | null {
   }
 }
 
-export function createSecretCipher(env: SecretCipherEnv): SecretCipher {
-  const currentKey = parseKey(env.BANK_ACCOUNT_ENCRYPTION_KEY, 'BANK_ACCOUNT_ENCRYPTION_KEY');
-  if (!currentKey) {
-    throw new AppError(
-      'INTERNAL_ERROR',
-      'BANK_ACCOUNT_ENCRYPTION_KEY belum diisi. Nomor rekening tidak bisa disimpan sebelum kunci enkripsi tersedia.'
-    );
-  }
+const BANK_MESSAGES: CipherMessages = {
+  corrupt: 'Data rekening terenkripsi rusak atau tidak lengkap.',
+  keyMismatch: 'Nomor rekening tidak bisa didekripsi. Kunci enkripsi tidak cocok dengan data tersimpan.'
+};
 
-  const previousKey = parseKey(
-    env.BANK_ACCOUNT_ENCRYPTION_KEY_PREVIOUS,
-    'BANK_ACCOUNT_ENCRYPTION_KEY_PREVIOUS'
-  );
-  const keyId = (env.BANK_ACCOUNT_KEY_ID ?? 'v1').trim() || 'v1';
+function buildCipher(
+  currentKey: Buffer,
+  previousKey: Buffer | null,
+  keyId: string,
+  messages: CipherMessages
+): SecretCipher {
   const active: KeyEntry = { id: keyId, key: currentKey };
   const ring: KeyEntry[] = previousKey
     ? [active, { id: `${keyId}:previous`, key: previousKey }]
@@ -89,7 +103,7 @@ export function createSecretCipher(env: SecretCipherEnv): SecretCipher {
 
     decrypt(payload: Buffer, storedKeyId?: string | null): string {
       if (payload.length <= IV_BYTES + TAG_BYTES) {
-        throw new AppError('CONFLICT', 'Data rekening terenkripsi rusak atau tidak lengkap.');
+        throw new AppError('CONFLICT', messages.corrupt);
       }
 
       // Prefer the key that was used at write time; fall back to the rest of the
@@ -104,10 +118,45 @@ export function createSecretCipher(env: SecretCipherEnv): SecretCipher {
         if (plaintext !== null) return plaintext;
       }
 
-      throw new AppError(
-        'CONFLICT',
-        'Nomor rekening tidak bisa didekripsi. Kunci enkripsi tidak cocok dengan data tersimpan.'
-      );
+      throw new AppError('CONFLICT', messages.keyMismatch);
     }
   };
+}
+
+export function createSecretCipher(env: SecretCipherEnv): SecretCipher {
+  const currentKey = parseKey(env.BANK_ACCOUNT_ENCRYPTION_KEY, 'BANK_ACCOUNT_ENCRYPTION_KEY');
+  if (!currentKey) {
+    throw new AppError(
+      'INTERNAL_ERROR',
+      'BANK_ACCOUNT_ENCRYPTION_KEY belum diisi. Nomor rekening tidak bisa disimpan sebelum kunci enkripsi tersedia.'
+    );
+  }
+
+  const previousKey = parseKey(
+    env.BANK_ACCOUNT_ENCRYPTION_KEY_PREVIOUS,
+    'BANK_ACCOUNT_ENCRYPTION_KEY_PREVIOUS'
+  );
+  const keyId = (env.BANK_ACCOUNT_KEY_ID ?? 'v1').trim() || 'v1';
+  return buildCipher(currentKey, previousKey, keyId, BANK_MESSAGES);
+}
+
+/**
+ * Same envelope and key ring as `createSecretCipher`, but from explicit key
+ * material. Returns `null` when no current key is configured, so a caller can
+ * keep booting in dev/test and fail only when the secret is actually needed.
+ */
+export function createSecretCipherFromKey(
+  material: SecretCipherKeyMaterial
+): SecretCipher | null {
+  const currentKey = parseKey(material.key, material.name);
+  if (!currentKey) return null;
+
+  const previousKey = parseKey(material.previousKey, `${material.name}_PREVIOUS`);
+  const keyId = (material.keyId ?? 'v1').trim() || 'v1';
+
+  return buildCipher(currentKey, previousKey, keyId, {
+    corrupt: 'Data terenkripsi rusak atau tidak lengkap.',
+    keyMismatch:
+      'Data terenkripsi tidak bisa didekripsi. Kunci enkripsi tidak cocok dengan data tersimpan.'
+  });
 }

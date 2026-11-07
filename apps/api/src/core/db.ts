@@ -12,6 +12,12 @@ export function getPool(): Pool {
       idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 5_000
     });
+    // An idle client can be terminated by the server (restart, WSL suspend,
+    // failover). Without a listener the emitted 'error' is unhandled and the
+    // whole API process exits; log it and let the pool reconnect instead.
+    pool.on('error', (err) => {
+      console.error(`[db] idle client error: ${err.message}`);
+    });
   }
   return pool;
 }

@@ -22,6 +22,7 @@ import {
   type BookingSlotRow,
   type BookingStatusPatch,
   type CustomerBookingListRow,
+  type DisputeRow,
   type NewBookingAddon
 } from './booking.repository';
 import {
@@ -31,7 +32,8 @@ import {
   type CreateBookingDto,
   type DeclineBookingDto,
   type ListBookingsQueryDto,
-  type NoShowBookingDto
+  type NoShowBookingDto,
+  type OpenDisputeDto
 } from './dto';
 import { currentRequestId } from './request-context';
 import { deriveScheduleWindow } from './schedule';
@@ -46,6 +48,8 @@ import {
 } from './state-machine';
 
 const HOUR_MS = 60 * 60 * 1000;
+/** FR-056 / TECH-DESIGN §S-04: admin must decide within 72 hours. */
+const DISPUTE_SLA_HOURS = 72;
 export const BOOKING_IDEMPOTENCY_STORE = 'BOOKING_IDEMPOTENCY_STORE';
 export const BOOKING_IDEMPOTENCY_SCOPE = 'POST /v1/bookings';
 const IDEMPOTENCY_TTL_SECONDS = 24 * 60 * 60;
@@ -193,6 +197,30 @@ export interface CustomerBookingListPage {
 export interface ListBookingsResult {
   data: BookingView[];
   next_cursor: string | null;
+}
+
+/** POST /bookings/:id/disputes response (FR-056). */
+export interface DisputeOpenView {
+  dispute_id: string;
+  booking_id: string;
+  status: string;
+  reason_code: string;
+  description: string;
+  opened_at: string;
+  sla_due_at: string;
+}
+
+/** GET /bookings/:id/disputes item. */
+export interface BookingDisputeView {
+  id: string;
+  status: string;
+  reason_code: string;
+  description: string;
+  opened_at: string;
+  sla_due_at: string;
+  resolved_at: string | null;
+  resolution: string | null;
+  resolution_note: string | null;
 }
 
 /**
@@ -845,6 +873,97 @@ export class BookingService {
   }
 
   /**
+   * FR-056 / S-04 / S-08: customer or vendor opens a dispute themselves inside
+   * the 7-day window. The state machine picks the source state: `held` freezes
+   * the money before release, `released` becomes a post-release clawback claim.
+   * The dispute row and the settlement move in the same transaction, so the
+   * ledger can never see `disputed` without an open dispute (or vice versa).
+   */
+  async openDispute(
+    id: string,
+    input: OpenDisputeDto,
+    user: AuthUser,
+    now: Date = new Date()
+  ): Promise<DisputeOpenView> {
+    return withTransaction(async (client) => {
+      const row = await this.repo.findByIdForUpdate(client, id);
+      if (!row) throw new AppError('NOT_FOUND', `Booking ${id} tidak ditemukan`);
+
+      const role = await this.resolveDisputeActor(row, user);
+
+      const settlement = row.settlement_status;
+      if (settlement !== 'held' && settlement !== 'released') {
+        throw new AppError(
+          'CONFLICT',
+          `Sengketa hanya dapat dibuka saat settlement held atau released (sekarang ${settlement})`
+        );
+      }
+
+      const action: BookingAction =
+        settlement === 'released' ? 'dispute.open_post_release' : 'dispute.open';
+      const openDisputes = await this.repo.countOpenDisputes(client, id);
+      const result = applyTransition(bookingStateFromRow(row), action, {
+        actor: role,
+        now,
+        openDisputes,
+        reason: input.description
+      });
+
+      const next = await this.repo.updateStatus(client, id, {
+        settlement_status: result.next.settlement_status
+      });
+
+      const inserted = await this.repo.insertDispute(client, {
+        bookingId: id,
+        raisedBy: user.id,
+        reasonCode: input.reason_code,
+        description: input.description,
+        slaDueAt: new Date(now.getTime() + DISPUTE_SLA_HOURS * HOUR_MS)
+      });
+      if (!inserted) {
+        throw new AppError('CONFLICT', 'Sengketa untuk booking ini sudah terbuka.');
+      }
+
+      await this.writeHistory(client, id, result, action, role, user.id, input.description);
+      await this.repo.enqueueOutbox(client, {
+        aggregateId: id,
+        aggregateVersion: next.row_version,
+        eventType: 'booking.dispute_opened',
+        payload: { ...this.outboxPayload(next), dispute_reason: input.reason_code },
+        dedupeKey: `booking.dispute_opened:${id}`
+      });
+
+      // Read back the row inside the transaction: the insert only reports
+      // whether it happened, and the client needs the generated id/timestamps.
+      const [dispute] = await this.repo.listDisputes(id, client);
+      if (!dispute) {
+        throw new AppError('INTERNAL_ERROR', 'Sengketa tidak terbaca setelah disimpan');
+      }
+
+      return {
+        dispute_id: dispute.id,
+        booking_id: id,
+        status: dispute.status,
+        reason_code: dispute.reasonCode,
+        description: dispute.description,
+        opened_at: dispute.openedAt.toISOString(),
+        sla_due_at: dispute.slaDueAt.toISOString()
+      };
+    });
+  }
+
+  /** GET /bookings/:id/disputes for participants and admins only. */
+  async listBookingDisputes(id: string, user: AuthUser): Promise<BookingDisputeView[]> {
+    const row = await this.repo.findById(id);
+    if (!row) throw new AppError('NOT_FOUND', `Booking ${id} tidak ditemukan`);
+
+    await this.resolveDisputeReader(row, user);
+
+    const disputes = await this.repo.listDisputes(id);
+    return disputes.map((dispute) => this.toDisputeView(dispute));
+  }
+
+  /**
    * L-11 (`payment.dp_succeeded`): the DP is paid, so the booking becomes
    * `confirmed` / `dp_paid` / `held`.
    *
@@ -1183,6 +1302,62 @@ export class BookingService {
     }
   }
 
+  /**
+   * FR-056 / S-04 / S-08: the acting dispute role comes from row ownership, not
+   * from the order of the user's roles. Real vendor accounts also carry the
+   * `customer` role, so a role-priority lookup always answers `'customer'` and
+   * then fails the ownership check.
+   *
+   * The `vendor_owner` role string is global, so it is paired with
+   * `isVendorOwner(row.vendor_id, ...)`: owning vendor A must not grant
+   * owner-level write access to vendor B's bookings just because the user is an
+   * active `can_respond` member there (`isVendorResponder` would say yes).
+   *
+   * S-04 (`settlement_status = 'held'`) admits customer, vendor_owner and
+   * admin_support on the vendor's own booking. S-08 (`released`, post-release
+   * clawback) admits customer and admin only, so a vendor that reaches that
+   * state is refused by the state machine itself with a 409.
+   */
+  private async resolveDisputeActor(
+    row: BookingRow,
+    user: AuthUser
+  ): Promise<'customer' | 'vendor_owner'> {
+    if (row.customer_id === user.id) return 'customer';
+    if (
+      user.roles.includes('vendor_owner') &&
+      (await this.repo.isVendorOwner(row.vendor_id, user.id))
+    ) {
+      return 'vendor_owner';
+    }
+    throw new AppError(
+      'FORBIDDEN',
+      `Peran [${user.roles.join(', ')}] tidak berwenang atas sengketa booking ini`
+    );
+  }
+
+  /**
+   * FR-056 read path (GET /bookings/:id/disputes). Read access mirrors
+   * `assertCanView`: the customer, admins, and the vendor owner or ANY active
+   * `vendor_members` row — `can_respond` is not required. Otherwise a member
+   * with `can_respond = false` could read `GET /bookings/:id` but get 404 on
+   * its disputes, which is exactly the inconsistency this predicate fixes.
+   *
+   * The write path stays stricter: `openDispute` calls `resolveDisputeActor`,
+   * which admits only the customer or the vendor's actual owner and throws
+   * FORBIDDEN for everyone else; vendor actions that mutate the booking go
+   * through `assertResponder` (`isVendorResponder`), which still requires
+   * `can_respond`.
+   *
+   * Non-participants still get NOT_FOUND, like `assertCanView` (§7.3): a 403
+   * here would confirm that the booking exists.
+   */
+  private async resolveDisputeReader(row: BookingRow, user: AuthUser): Promise<void> {
+    if (row.customer_id === user.id) return;
+    if (isAdmin(user)) return;
+    if (await this.repo.canViewBookingAsVendor(row.id, user.id)) return;
+    throw new AppError('NOT_FOUND', `Booking ${row.id} tidak ditemukan`);
+  }
+
   private async assertResponder(vendorId: string, user: AuthUser): Promise<void> {
     const allowed = await this.repo.isVendorResponder(vendorId, user.id);
     if (!allowed) {
@@ -1345,6 +1520,20 @@ export class BookingService {
               start_date: row.event_start_date,
               end_date: row.event_end_date
             }
+    };
+  }
+
+  private toDisputeView(dispute: DisputeRow): BookingDisputeView {
+    return {
+      id: dispute.id,
+      status: dispute.status,
+      reason_code: dispute.reasonCode,
+      description: dispute.description,
+      opened_at: dispute.openedAt.toISOString(),
+      sla_due_at: dispute.slaDueAt.toISOString(),
+      resolved_at: iso(dispute.resolvedAt),
+      resolution: dispute.resolution,
+      resolution_note: dispute.resolutionNote
     };
   }
 

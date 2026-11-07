@@ -15,6 +15,31 @@ Access token berlaku 15 menit. `POST /auth/refresh` menerima `refresh_token`
 refresh token lama menjadi 401. Memakai ulang token yang sudah dirotasi mencabut
 seluruh family sesi tersebut.
 
+**Mode cookie (panel admin).** Hanya endpoint ini yang menerima `cookie: true` di body:
+`POST /auth/login`, `POST /auth/google`, `POST /auth/2fa/verify`, `POST /auth/2fa/backup-code`,
+dan `POST /auth/2fa/enroll/verify` (bukan `/auth/register` atau `/auth/otp/verify`).
+Dengan flag itu server mengirim `Set-Cookie:
+tarlink_rt=<refresh_token>; Path=/v1/auth; HttpOnly; SameSite=Strict`
+(`Secure` bila `NODE_ENV=production`) dan **menghilangkan** `refresh_token` dari body,
+sehingga JavaScript panel tidak pernah bisa membacanya. `POST /auth/refresh` tanpa
+body lalu memakai cookie tersebut dan merotasinya; bila kredensialnya **ditolak**
+(`UNAUTHENTICATED`), cookie ikut dihapus. Kegagalan `429` (throttle) atau `5xx`
+tidak menghapus cookie karena kredensialnya belum tentu salah. `POST /auth/logout`
+selalu menghapus cookie **dan** mencabut sesi yang diwakilinya, termasuk saat access
+token sudah kedaluwarsa. Klien Flutter tidak memakai flag ini: `refresh_token` tetap
+dikembalikan di body seperti sebelumnya.
+
+Kegagalan `POST /auth/refresh` dihitung per IP: setelah 30 kegagalan dalam 5 menit,
+percobaan berikutnya dari IP yang sama dijawab `429 RATE_LIMITED`. Hitungan ini
+in-memory per proses API (bukan tabel), jadi beberapa instance memegang hitungan
+terpisah. Cookie `tarlink_rt` yang hadir tetapi tidak bisa didekode tetap dihapus
+lewat `Set-Cookie` pada `/auth/refresh` dan `/auth/logout`, sehingga browser tidak
+mengirim sampah yang sama terus-menerus.
+
+Mode cookie mengandsikan panel dan API **same-site** (beda port/subdomain masih
+same-site). Memindahkan panel ke domain lain mematikan `SameSite=Strict`, sehingga
+silent refresh tidak jalan dan operator harus login tiap 15 menit.
+
 **Bentuk respons**
 
 Sebagian besar endpoint menulis payload di dalam `data`:
@@ -35,7 +60,8 @@ otomatis bila ada.
 ```
 
 Kode status yang dipakai: `400` validasi, `401` sesi tidak sah, `403` peran kurang,
-`404` tidak ada, `409` konflik status/jadwal, `422` aturan bisnis, `500` server.
+`404` tidak ada, `409` konflik status/jadwal, `422` aturan bisnis, `429` percobaan
+berlebih, `500` server.
 
 **Pagination**
 
@@ -73,28 +99,89 @@ dan sebagai guard unik per pelanggan.
 | Method | Path | Body | Keterangan |
 |---|---|---|---|
 | POST | `/auth/register` | `{ full_name, email, phone, password, consent: { tos_version_id, privacy_version_id } }` | Membuat akun pelanggan + mencatat consent |
-| POST | `/auth/login` | `{ email, password }` | **Email**, bukan nomor WA |
+| POST | `/auth/login` | `{ email, password }` | **Email**, bukan nomor WA; akun `admin_*` menerima challenge 2FA, bukan sesi |
 | POST | `/auth/otp/request` | `{ email }` | Kirim OTP ke email (dev mengembalikan `dev_code` hanya bila `NODE_ENV !== production` **dan** `OTP_DEV_MODE=true`) |
-| POST | `/auth/otp/verify` | `{ email, code }` | Verifikasi OTP |
-| POST | `/auth/google` | `{ id_token }` | Login Google (opsional, tidak dipakai mobile) |
-| POST | `/auth/refresh` | `{ refresh_token }` | Rotasi sesi; tanpa body memakai Bearer lama (legacy) |
-| POST | `/auth/logout` | `{ refresh_token? }` | Mencabut sesi; tanpa body memakai Bearer |
+| POST | `/auth/otp/verify` | `{ email, code }` | Verifikasi OTP; akun `admin_*` juga melewati gerbang 2FA |
+| POST | `/auth/google` | `{ id_token, consent?: { tos_version_id, privacy_version_id } }` | Login Google (opsional, tidak dipakai mobile); `consent` **wajib** bila akun belum ada (FR-103), diabaikan untuk akun lama; akun `admin_*` juga melewati gerbang 2FA |
+| POST | `/auth/2fa/verify` | `{ challenge_token, code }` | Langkah 2 login admin: tukar ticket + TOTP 6 digit jadi sesi |
+| POST | `/auth/2fa/backup-code` | `{ challenge_token, code }` | Sama, memakai satu backup code (`XXXX-XXXX`, sekali pakai) |
+| POST | `/auth/2fa/enroll` | `{ enroll_token }` | Langkah 1 enrollment: `secret` + `otpauth_uri` (entri manual, tanpa QR) |
+| POST | `/auth/2fa/enroll/verify` | `{ enroll_token, code }` | Langkah 2 enrollment: aktifkan TOTP, sesi + `backup_codes` (tampil sekali) |
+| POST | `/auth/2fa/reset` | `{ user_id }` | `admin_super` menghapus 2FA admin lain dan mencabut semua sesinya |
+| POST | `/auth/refresh` | `{ refresh_token?, cookie? }` | Rotasi sesi; tanpa body memakai cookie `tarlink_rt` (panel) atau Bearer lama (legacy) |
+| POST | `/auth/logout` | `{ refresh_token? }` | Mencabut sesi dari refresh token body, cookie `tarlink_rt`, atau `jti`; selalu menghapus cookie |
 | GET | `/auth/me` | — | Profil + peran pengguna |
 | DELETE | `/auth/me` | `{ confirm: "HAPUS AKUN", reason? }` | Hapus akun mandiri (anonimisasi, FR-101) |
 | GET | `/auth/account-deletion` | — | Status permintaan hapus akun terbaru |
 
-Respons login (dibungkus `data`):
+Respons login (dibungkus `data`) bisa berbentuk **sesi** atau **challenge 2FA**.
+Pelanggan dan vendor menerima sesi seperti sebelumnya:
 
 ```json
 {
   "data": {
     "access_token": "…",
     "refresh_token": "…",
+    "token_type": "Bearer",
     "expires_in": 900,
-    "user": { "id": "uuid", "email": "…", "phone": "+62…", "full_name": "…", "roles": ["customer"] }
+    "user": { "id": "uuid", "phone": "+62…", "roles": ["customer"], "email": "…" }
   }
 }
 ```
+
+`user.email` hanya ada pada login password/Google dan penyelesaian 2FA. `user` tidak
+memuat `full_name`; profil lengkap ada di `GET /auth/me`.
+
+Akun dengan peran `admin_*` **tidak pernah** menerima sesi langsung dari login. Gerbang
+2FA berlaku untuk semua jalur login (password, OTP, Google), sehingga `admin_*` menerima
+salah satu dari dua bentuk berikut:
+
+```json
+{ "data": { "mfa_required": true, "challenge_token": "…", "expires_in": 600 } }
+```
+
+```json
+{ "data": { "mfa_setup_required": true, "enroll_token": "…", "expires_in": 600 } }
+```
+
+`mfa_required` berarti TOTP sudah aktif dan login menunggu kode; `mfa_setup_required`
+berarti admin belum enrollment dan harus menyelesaikannya lebih dulu. Ticket `verify`
+dan `enroll` sama-sama berlaku 10 menit dan hanya sekali pakai; token yang salah jenis
+(mis. `enroll_token` dikirim ke `/auth/2fa/verify`) dijawab `401` seperti token tidak
+dikenal.
+
+**Alur 2FA admin (FR-128).** `POST /auth/2fa/verify` menukar `challenge_token` + kode
+TOTP 6 digit menjadi sesi dengan bentuk yang sama seperti login biasa (termasuk
+`refresh_token`). `401 UNAUTHENTICATED` untuk ticket tidak sah/kedaluwarsa/sudah dipakai
+atau kode salah; `429 RATE_LIMITED` setelah 6 tebakan salah pada satu ticket, atau bila
+budget 10 kegagalan dalam 15 menit untuk email/IP yang sama sudah habis.
+`POST /auth/2fa/backup-code` memakai kode cadangan `XXXX-XXXX` (dash dan huruf
+besar/kecil dinormalisasi server); setiap kode hanya berlaku sekali.
+
+`POST /auth/2fa/enroll` adalah langkah 1 dan hanya butuh `enroll_token` — tanpa bearer,
+karena ticket itu sendiri kredensialnya. Respons:
+
+```json
+{ "data": { "secret": "…", "otpauth_uri": "otpauth://totp/…", "expires_in": 600 } }
+```
+
+Server tidak mengirim QR: klien menampilkan `secret` untuk entri manual atau merender
+`otpauth_uri` sendiri. `expires_in` adalah sisa umur ticket, bukan TTL baru. Bila 2FA
+sudah aktif, endpoint ini menjawab `409 CONFLICT`.
+
+`POST /auth/2fa/enroll/verify` adalah langkah 2: mengaktifkan TOTP, menerbitkan sesi, dan
+mengembalikan `backup_codes` (10 kode sekali pakai) **hanya pada respons ini**. Kode
+salah → `401`, batas tebakan habis → `429`, 2FA sudah aktif → `409`.
+
+`POST /auth/2fa/reset` hanya untuk `admin_super`; peran admin lain `403 FORBIDDEN`.
+Body `{ user_id }`, respons `{ "user_id": "uuid", "revoked_sessions": 2 }`. TOTP, backup
+code, dan ticket target dihapus, semua sesi target dicabut, dan tindakan dicatat di
+`audit_logs` dengan aksi `auth.2fa.reset` (header `x-request-id` ikut disimpan bila
+dikirim). Target yang bukan admin aktif dijawab `404 NOT_FOUND`.
+
+Enrollment dan verifikasi TOTP membutuhkan `TOTP_ENCRYPTION_KEY` (base64 dari 32 byte;
+`TOTP_ENCRYPTION_KEY_PREVIOUS` untuk rotasi). Tanpa kunci itu server gagal tertutup:
+`500 INTERNAL_ERROR` dan tidak ada secret yang tersimpan.
 
 `GET /auth/me` mengembalikan `{ "data": { "user": { id, phone, email, full_name,
 roles, created_at } } }`. Peran diambil dari database, bukan dari isi token.
@@ -329,6 +416,92 @@ lifecycle ke `no_show` dan settlement ke `disputed`, serta membuka baris `disput
 agar dana tidak bisa dirilis.
 
 Konflik status → `409`.
+
+### `POST /bookings/:id/disputes`
+
+FR-056: pelanggan atau vendor membuka sengketa sendiri. Ada dua jendela, ditentukan
+oleh status settlement booking:
+
+| Kondisi | Jendela | Aktor (state machine) |
+|---|---|---|
+| settlement `held` (sebelum rilis) | `dispute_window_ends_at` = `scheduled_end_at` + **7 hari** | `customer`, `vendor_owner`, `admin_support` (S-04) |
+| settlement `released` (setelah rilis) | `released_at` + **30 hari** (klaim clawback) | `customer`, `admin_support` (S-08) |
+
+Jendela pra-rilis dihitung dari **akhir acara**, bukan dari `completed_at`. Jendela
+pasca-rilis dihitung dari waktu dana dirilis (`released_at`), bukan dari tanggal acara;
+setelah 30 hari lewat, klaim ditolak `409 CONFLICT`.
+
+Endpoint ini menerima peran `customer` dan `vendor_owner`. Pada booking yang sudah
+`released` hanya `customer` yang bisa membuka sengketa, karena S-08 tidak memuat
+`vendor_owner` sehingga vendor dijawab `409`. `admin_support` adalah aktor sah pada S-04
+dan S-08 di state machine, tetapi belum ada endpoint HTTP untuknya — admin menangani
+sengketa yang sudah ada lewat antrean `/admin/disputes`.
+
+```json
+{
+  "reason_code": "quality",
+  "description": "Fotografer tidak datang sesuai paket yang disepakati."
+}
+```
+
+- `reason_code` wajib salah satu dari: `not_as_described`, `late_arrival`, `fraud`,
+  `quality`, `cancellation_abuse`, `other`. `no_show` tidak dapat dipilih di sini —
+  jalur itu hanya lewat `POST /bookings/:id/no-show`.
+- `description` wajib 10–1000 karakter.
+
+Status `201 Created`. Respons:
+
+```json
+{
+  "data": {
+    "dispute_id": "uuid",
+    "booking_id": "uuid",
+    "status": "open",
+    "reason_code": "quality",
+    "description": "…",
+    "opened_at": "2026-11-07T10:00:00.000Z",
+    "sla_due_at": "2026-11-10T10:00:00.000Z"
+  }
+}
+```
+
+Efeknya, dalam satu transaksi: settlement `held` → `disputed`
+(`dispute.open`) atau settlement `released` → `disputed`
+(`dispute.open_post_release`, hanya pelanggan), satu baris `disputes` baru,
+satu baris riwayat, dan outbox `booking.dispute_opened`. Baris sengketa memakai
+SLA admin **72 jam** (`sla_due_at = opened_at + 72 jam`).
+
+`409 CONFLICT` bila: jendela yang berlaku sudah lewat (7 hari pra-rilis atau 30 hari
+pasca-rilis), settlement bukan `held`/`released`, atau sudah ada sengketa aktif untuk
+booking tersebut. `403 FORBIDDEN` bila pemanggil bukan peserta booking.
+
+### `GET /bookings/:id/disputes`
+
+Daftar sengketa booking, urut `opened_at` terbaru. Boleh diakses pelanggan pemilik
+booking, vendor terkait (`vendor_owner` atau anggota `vendor_members` aktif — tanpa
+syarat `can_respond`, sama dengan akses `GET /bookings/:id`), dan admin
+(`admin_support` / `admin_finance` / `admin_super`).
+Pemanggil lain → `404 NOT_FOUND`, sama seperti `GET /bookings/:id`, agar keberadaan
+booking tidak bocor. Jalur tulis (`POST /bookings/:id/disputes`) tetap lebih sempit:
+hanya pelanggan pemilik booking atau `vendor_owner`, dan `403 FORBIDDEN` untuk pihak lain.
+
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "status": "open",
+      "reason_code": "quality",
+      "description": "…",
+      "opened_at": "2026-11-07T10:00:00.000Z",
+      "sla_due_at": "2026-11-10T10:00:00.000Z",
+      "resolved_at": null,
+      "resolution": null,
+      "resolution_note": null
+    }
+  ]
+}
+```
 
 ### `POST /bookings/:bookingId/review`
 
@@ -879,10 +1052,57 @@ Semua butuh peran `admin`/`operator`.
 | GET | `/admin/vendors/:vendorId/bank-accounts` | Rekening pencairan vendor |
 | POST | `/admin/vendors/:vendorId/bank-accounts/:id/verify` | Verifikasi rekening (`admin_super`) |
 | POST | `/admin/vendors/:vendorId/bank-accounts/:id/reject` | Tolak rekening (`admin_super`) |
+| POST | `/admin/reconciliation/runs` | Jalankan rekonsiliasi lane payment (body `{ provider, report_date }`) |
+| GET | `/admin/reconciliation/runs` | Daftar run (`page`, `page_size` maks 100) |
+| GET | `/admin/reconciliation/runs/:id` | Detail run + daftar diff |
 
 `PATCH /admin/vendors/:id` juga menerima `avatar_url`, `banner_url`,
 `photo_urls`, `video_url`. `POST/PATCH .../packages` menerima
 `personnel_count`, `inclusions[]`, dan `photo_url` (sama seperti portal vendor).
+
+### Rekonsiliasi harian (FR-131)
+
+Fase 1 bersifat **read-only**: membandingkan sisi gateway dengan ledger dan
+menyimpan temuan. Tidak ada jurnal yang diposting dan tidak ada baris
+`payments`/`payouts`/`refunds` yang diubah. Peran: `admin_finance`/`admin_super`.
+
+`POST /admin/reconciliation/runs` menerima `{ "provider": "midtrans" | "pjp",
+"report_date": "YYYY-MM-DD" }` (tanggal kalender WIB). Sisi gateway dibaca dari
+`webhook_events` (`signature_valid = true`, event `payment.paid`) pada
+`received_at`; sisi ledger dari `payments` berstatus `paid` pada `paid_at`.
+Batas hari setengah-terbuka: `>= 00:00 WIB` dan `< 00:00 WIB hari berikutnya`.
+`Idempotency-Key` opsional pada fase ini karena `UNIQUE (provider, scope,
+report_date)` sudah membuat operasi idempoten: panggilan kedua mengembalikan run
+yang sama tanpa menulis diff/audit baru.
+
+Status run: `balanced` bila tidak ada temuan, `discrepancy` bila ada minimal
+satu diff selain `matched`. Respons:
+
+```json
+{
+  "run_id": "uuid",
+  "provider": "midtrans",
+  "report_date": "2026-11-06",
+  "status": "discrepancy",
+  "report_source": "webhook_events",
+  "trigger_source": "admin",
+  "checked_count": 12,
+  "matched_count": 11,
+  "diff_count": 1,
+  "gateway_total_idr": 2400000,
+  "ledger_total_idr": 1200000,
+  "diff_idr": 1200000,
+  "started_at": "2026-11-07T00:00:00.000Z",
+  "finished_at": "2026-11-07T00:00:00.000Z"
+}
+```
+
+`GET /admin/reconciliation/runs/:id` menambahkan `diffs[]` berisi
+`classification` (`matched`, `duplicate`, `missing_in_ledger`,
+`missing_at_gateway`, `amount_mismatch`), `severity`, `external_id`,
+`gateway_amount_idr`, `ledger_amount_idr`, `delta_idr` (`gateway - ledger`), dan
+`detail`. Temuan `duplicate` tidak menambah total karena total memakai satu
+nilai per `external_id` unik.
 
 ### Wilayah (FR-125)
 

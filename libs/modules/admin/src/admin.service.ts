@@ -907,6 +907,13 @@ export class AdminService {
         resolvedBy: context.actorId,
         note: input.note
       });
+      await this.repository.enqueueDisputeResolved(client, {
+        disputeId,
+        bookingId: booking.id,
+        bookingCode: booking.code,
+        status: 'rejected',
+        resolution: input.resolution
+      });
       await this.repository.insertAudit(client, {
         actorId: context.actorId,
         actorRole: context.actorRole,
@@ -979,6 +986,13 @@ export class AdminService {
       vendorShareIdr: plan.vendorPayableIdr,
       resolvedBy: context.actorId,
       note: input.note
+    });
+    await this.repository.enqueueDisputeResolved(client, {
+      disputeId,
+      bookingId: booking.id,
+      bookingCode: booking.code,
+      status: 'resolved',
+      resolution: input.resolution
     });
     await this.repository.insertAudit(client, {
       actorId: context.actorId,
@@ -1108,6 +1122,13 @@ export class AdminService {
         vendorShareIdr: 0n,
         resolvedBy: context.actorId,
         note: input.note
+      });
+      await this.repository.enqueueDisputeResolved(client, {
+        disputeId,
+        bookingId: booking.id,
+        bookingCode: booking.code,
+        status: 'resolved',
+        resolution
       });
       await this.repository.insertAudit(client, {
         actorId: context.actorId,

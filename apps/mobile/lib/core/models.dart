@@ -530,6 +530,62 @@ class BookingView {
   final String updatedAt;
 }
 
+/// FR-056: one dispute row as `/bookings/:id/disputes` reports it. The list
+/// endpoint sends `id` while the create response sends `dispute_id`.
+class DisputeSummary {
+  const DisputeSummary({
+    required this.disputeId,
+    required this.bookingId,
+    required this.status,
+    required this.reasonCode,
+    required this.description,
+    required this.openedAt,
+    required this.slaDueAt,
+    this.resolvedAt,
+    this.resolution,
+    this.resolutionNote,
+  });
+
+  factory DisputeSummary.fromJson(Map<String, dynamic> json) => DisputeSummary(
+    disputeId: _string(json['dispute_id'] ?? json['id']),
+    bookingId: _string(json['booking_id']),
+    status: _string(json['status']),
+    reasonCode: _string(json['reason_code']),
+    description: _string(json['description']),
+    openedAt: _string(json['opened_at']),
+    slaDueAt: _string(json['sla_due_at']),
+    resolvedAt: _stringOrNull(json['resolved_at']),
+    resolution: _stringOrNull(json['resolution']),
+    resolutionNote: _stringOrNull(json['resolution_note']),
+  );
+
+  final String disputeId;
+  final String bookingId;
+  final String status;
+  final String reasonCode;
+  final String description;
+  final String openedAt;
+  final String slaDueAt;
+  final String? resolvedAt;
+  final String? resolution;
+  final String? resolutionNote;
+
+  /// Open until an admin closes it; a booking may hold only one at a time.
+  bool get isOpen =>
+      status == 'open' ||
+      status == 'investigating' ||
+      status == 'awaiting_evidence';
+}
+
+/// Tolerates both the raw envelope `{data: {items}}` and the already unwrapped
+/// `{items}` that the API client hands to callers.
+List<DisputeSummary> parseDisputeList(dynamic value) {
+  final root = _map(value);
+  final data = _map(root['data']);
+  final items = data.containsKey('items') ? data['items'] : root['items'];
+  return _maps(items).map(DisputeSummary.fromJson).toList(growable: false);
+}
+
 class PaymentInstruction {
   const PaymentInstruction({
     required this.type,

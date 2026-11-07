@@ -6,6 +6,7 @@
 import type { ExecutionContext } from '@nestjs/common';
 import { describe, expect, it } from 'vitest';
 import { AppError } from '@tarlink/core/errors';
+import { createSecretCipherFromKey } from '@tarlink/platform/crypto';
 import {
   AuthGuard,
   signAccessToken,
@@ -14,30 +15,45 @@ import {
 } from '@tarlink/platform/auth';
 import type {
   AccountDeletionRecord,
+  AdminChallengeRecord,
   AuthRepository,
   AuthUserProfile,
   AuthUserRecord,
+  NewAdminChallenge,
   NewLoginAttempt,
   NewOtpRequest,
   NewSession,
   NewUser,
   NewUserConsent,
   OtpRequestRecord,
-  SessionRefreshRecord
+  SessionRefreshRecord,
+  TwoFactorResetInput,
+  TwoFactorResetOutcome,
+  TwoFactorState
 } from './auth.repository';
 import type { GoogleIdentity, GoogleTokenVerifier } from './google-verifier';
 import { GoogleTokenInfoVerifier } from './google-verifier';
 import { AuthController } from './auth.controller';
+import { generateTotpCode } from './totp';
 import {
   AuthService,
   INVALID_CREDENTIALS_MESSAGE,
   hashOtpCode,
   hashPassword,
   OTP_RATE_LIMIT_WINDOW_SECONDS,
-  type AuthServiceDeps
+  TOTP_CHALLENGE_MAX_ATTEMPTS,
+  TOTP_CHALLENGE_TTL_SECONDS,
+  TOTP_FAILURE_MAX,
+  type AuthServiceDeps,
+  type PasswordLoginResult,
+  type VerifyOtpResult
 } from './auth.service';
 
 const SECRET = 'test-jwt-secret-at-least-16-chars';
+/** base64(32 bytes); the service only ever sees the encoded form. */
+const TEST_TOTP_KEY = Buffer.alloc(32, 7).toString('base64');
+/** 20-byte base32 secret used by the fake enrolled admin. */
+const TEST_TOTP_SECRET = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
 const USER_ID = '11111111-1111-4111-8111-111111111111';
 const PHONE = '628123456789';
 const EMAIL = 'user@tarlink.id';
@@ -64,17 +80,40 @@ interface StoredUser {
   name: string | null;
   googleSub: string | null;
   emailVerifiedAt: Date | null;
+  twoFactorEnabled: boolean;
+  totpSecretEncrypted: Buffer | null;
+  totpKeyId: string | null;
+  totpEnrolledAt: Date | null;
+  twoFactorEnforcedAt: Date | null;
+}
+
+interface StoredChallenge extends AdminChallengeRecord {
+  tokenHash: string;
+  requesterIp: string | null;
+  userAgent: string | null;
+  createdAt: Date;
+}
+
+interface StoredBackupCode {
+  userId: string;
+  codeHash: string;
+  usedAt: Date | null;
 }
 
 class FakeAuthRepository implements AuthRepository {
   readonly otpRequests: StoredOtpRequest[] = [];
   readonly users: StoredUser[] = [];
   readonly roles: Array<{ userId: string; role: Role }> = [];
-  readonly sessions: Array<NewSession & { revokedAt: Date | null }> = [];
+  /** `id` mirrors `sessions.id`: generated here, never equal to `jti`. */
+  readonly sessions: Array<NewSession & { id: string; revokedAt: Date | null }> = [];
+  private sessionSeq = 0;
   readonly loginAttempts: NewLoginAttempt[] = [];
   readonly passwordUpdatedAt = new Map<string, Date>();
   readonly deletionRequests: AccountDeletionRecord[] = [];
   readonly consents: NewUserConsent[] = [];
+  readonly challenges: StoredChallenge[] = [];
+  readonly backupCodes: StoredBackupCode[] = [];
+  readonly auditLogs: Array<Record<string, unknown>> = [];
   privateKeys: string[] = [];
 
   async countRecentOtpRequests(email: string, since: Date): Promise<number> {
@@ -182,7 +221,12 @@ class FakeAuthRepository implements AuthRepository {
       passwordHash: input.passwordHash,
       name: input.name,
       googleSub: input.googleSub,
-      emailVerifiedAt: input.emailVerifiedAt
+      emailVerifiedAt: input.emailVerifiedAt,
+      twoFactorEnabled: false,
+      totpSecretEncrypted: null,
+      totpKeyId: null,
+      totpEnrolledAt: null,
+      twoFactorEnforcedAt: null
     };
     this.users.push(user);
     this.roles.push({ userId: user.id, role: 'customer' });
@@ -204,18 +248,49 @@ class FakeAuthRepository implements AuthRepository {
   async countFailedLoginAttempts(email: string, since: Date): Promise<number> {
     const needle = email.toLowerCase();
     return this.loginAttempts.filter(
-      (row) => row.email.toLowerCase() === needle && !row.succeeded && row.createdAt >= since
+      (row) =>
+        row.email.toLowerCase() === needle &&
+        !row.succeeded &&
+        (row.stage ?? 'password') === 'password' &&
+        row.createdAt >= since
     ).length;
   }
 
   async countFailedLoginAttemptsByIp(ip: string, since: Date): Promise<number> {
     return this.loginAttempts.filter(
-      (row) => row.ip === ip && !row.succeeded && row.createdAt >= since
+      (row) =>
+        row.ip === ip &&
+        !row.succeeded &&
+        (row.stage ?? 'password') === 'password' &&
+        row.createdAt >= since
     ).length;
   }
 
   async recordLoginAttempt(input: NewLoginAttempt): Promise<void> {
-    this.loginAttempts.push({ ...input });
+    this.loginAttempts.push({ ...input, stage: input.stage ?? 'password' });
+  }
+
+  async countFailedTotpAttempts(email: string, since: Date): Promise<number> {
+    const needle = email.trim().toLowerCase();
+    return this.loginAttempts.filter(
+      (row) =>
+        !row.succeeded &&
+        (row.stage ?? 'password') === 'totp' &&
+        row.createdAt >= since &&
+        // Mirrors the repository: an empty needle matches only rows stored
+        // without an email, never other accounts' failures.
+        row.email.toLowerCase() === needle
+    ).length;
+  }
+
+  async countFailedTotpAttemptsByIp(ip: string, since: Date): Promise<number> {
+    return this.loginAttempts.filter(
+      (row) =>
+        row.ip === ip &&
+        !row.succeeded &&
+        (row.stage ?? 'password') === 'totp' &&
+        row.createdAt >= since
+    ).length;
   }
 
   async updatePassword(userId: string, passwordHash: string, updatedAt: Date): Promise<boolean> {
@@ -228,7 +303,10 @@ class FakeAuthRepository implements AuthRepository {
   }
 
   async insertSession(input: NewSession): Promise<void> {
-    this.sessions.push({ ...input, revokedAt: null });
+    // Postgres generates `sessions.id` from its own default; the fake must mint
+    // a distinct value so `parent_id` linking is exercised, not hidden by jti.
+    this.sessionSeq += 1;
+    this.sessions.push({ ...input, id: `session-row-${this.sessionSeq}`, revokedAt: null });
   }
 
   async findActiveSessionByJti(jti: string, now: Date): Promise<{ userId: string } | null> {
@@ -257,6 +335,7 @@ class FakeAuthRepository implements AuthRepository {
     const row = this.sessions.find((session) => session.refreshTokenHash === refreshTokenHash);
     if (!row) return null;
     return {
+      id: row.id,
       jti: row.jti,
       userId: row.userId,
       familyId: row.familyId,
@@ -332,12 +411,176 @@ class FakeAuthRepository implements AuthRepository {
       [...this.deletionRequests].reverse().find((row) => row.userId === userId) ?? null
     );
   }
+
+  /* --------------------------------------------------------------- 2FA/FR-128 */
+
+  async findTwoFactorState(userId: string): Promise<TwoFactorState | null> {
+    const user = this.users.find((candidate) => candidate.id === userId);
+    if (!user) return null;
+    return {
+      id: user.id,
+      phone: user.phone,
+      email: user.email,
+      passwordHash: user.passwordHash,
+      twoFactorEnabled: user.twoFactorEnabled,
+      totpSecretEncrypted: user.totpSecretEncrypted,
+      totpKeyId: user.totpKeyId
+    };
+  }
+
+  /**
+   * Mirrors the SQL upsert: at most one open challenge per user, and a second
+   * issuance replaces it (new id/token/expiry) with `attempts` reset to zero.
+   */
+  async insertAdminChallenge(input: NewAdminChallenge): Promise<void> {
+    const next: StoredChallenge = {
+      id: input.id,
+      userId: input.userId,
+      kind: input.kind,
+      tokenHash: input.tokenHash,
+      attempts: 0,
+      maxAttempts: input.maxAttempts,
+      expiresAt: input.expiresAt,
+      consumedAt: null,
+      requesterIp: input.requesterIp,
+      userAgent: input.userAgent,
+      createdAt: input.createdAt
+    };
+    const openIndex = this.challenges.findIndex(
+      (row) => row.userId === input.userId && row.consumedAt === null
+    );
+    if (openIndex >= 0) {
+      this.challenges[openIndex] = next;
+      return;
+    }
+    this.challenges.push(next);
+  }
+
+  async findChallengeByTokenHash(tokenHash: string): Promise<AdminChallengeRecord | null> {
+    const row = this.challenges.find((candidate) => candidate.tokenHash === tokenHash);
+    if (!row) return null;
+    return {
+      id: row.id,
+      userId: row.userId,
+      kind: row.kind,
+      attempts: row.attempts,
+      maxAttempts: row.maxAttempts,
+      expiresAt: row.expiresAt,
+      consumedAt: row.consumedAt
+    };
+  }
+
+  async incrementChallengeAttempt(id: string, now: Date): Promise<number | null> {
+    const row = this.challenges.find((candidate) => candidate.id === id);
+    if (!row) return null;
+    if (row.consumedAt !== null || row.expiresAt <= now) return null;
+    if (row.attempts >= row.maxAttempts) return null;
+    row.attempts += 1;
+    return row.attempts;
+  }
+
+  async consumeChallenge(id: string, consumedAt: Date): Promise<boolean> {
+    const row = this.challenges.find((candidate) => candidate.id === id);
+    if (!row || row.consumedAt !== null || row.expiresAt <= consumedAt) return false;
+    row.consumedAt = consumedAt;
+    return true;
+  }
+
+  async storeTotpSecret(
+    userId: string,
+    secretEncrypted: Buffer,
+    keyId: string,
+    _at: Date
+  ): Promise<boolean> {
+    const user = this.users.find((candidate) => candidate.id === userId);
+    if (!user || user.twoFactorEnabled) return false;
+    user.totpSecretEncrypted = secretEncrypted;
+    user.totpKeyId = keyId;
+    user.totpEnrolledAt = null;
+    return true;
+  }
+
+  async completeTwoFactorEnrollment(
+    userId: string,
+    backupCodeHashes: readonly string[],
+    at: Date
+  ): Promise<boolean> {
+    const user = this.users.find((candidate) => candidate.id === userId);
+    if (!user || user.twoFactorEnabled) return false;
+
+    user.twoFactorEnabled = true;
+    user.totpEnrolledAt = at;
+    user.twoFactorEnforcedAt ??= at;
+
+    for (let index = this.backupCodes.length - 1; index >= 0; index -= 1) {
+      if (this.backupCodes[index]?.userId === userId) this.backupCodes.splice(index, 1);
+    }
+    for (const codeHash of backupCodeHashes) {
+      this.backupCodes.push({ userId, codeHash, usedAt: null });
+    }
+    return true;
+  }
+
+  async markBackupCodeUsed(userId: string, codeHash: string, at: Date): Promise<boolean> {
+    const row = this.backupCodes.find(
+      (candidate) =>
+        candidate.userId === userId &&
+        candidate.codeHash === codeHash &&
+        candidate.usedAt === null
+    );
+    if (!row) return false;
+    row.usedAt = at;
+    return true;
+  }
+
+  async resetTwoFactor(input: TwoFactorResetInput): Promise<TwoFactorResetOutcome> {
+    const user = this.users.find((candidate) => candidate.id === input.userId);
+    const isAdmin = this.roles.some(
+      (row) => row.userId === input.userId && row.role.startsWith('admin_')
+    );
+    if (!user || !isAdmin) throw new AppError('NOT_FOUND', 'Akun admin tidak ditemukan');
+
+    const before = user.twoFactorEnabled;
+    user.totpSecretEncrypted = null;
+    user.totpKeyId = null;
+    user.totpEnrolledAt = null;
+    user.twoFactorEnabled = false;
+
+    for (let index = this.backupCodes.length - 1; index >= 0; index -= 1) {
+      if (this.backupCodes[index]?.userId === input.userId) this.backupCodes.splice(index, 1);
+    }
+    for (let index = this.challenges.length - 1; index >= 0; index -= 1) {
+      const challenge = this.challenges[index];
+      if (challenge?.userId === input.userId && challenge.consumedAt === null) {
+        this.challenges.splice(index, 1);
+      }
+    }
+
+    const active = this.sessions.filter(
+      (session) => session.userId === input.userId && !session.revokedAt
+    );
+    for (const session of active) session.revokedAt = input.at;
+
+    this.auditLogs.push({
+      actorId: input.actorId,
+      actorRole: input.actorRole,
+      action: 'auth.2fa.reset',
+      entityType: 'user',
+      entityId: input.userId,
+      requestId: input.requestId,
+      before: { two_factor_enabled: before },
+      after: { two_factor_enabled: false, sessions_revoked: active.length }
+    });
+
+    return { userId: input.userId, revokedSessions: active.length };
+  }
 }
 
 interface Harness {
   readonly repository: FakeAuthRepository;
   readonly service: AuthService;
   advance(seconds: number): void;
+  now(): Date;
 }
 
 function makeHarness(overrides: Partial<AuthServiceDeps> = {}): Harness {
@@ -351,6 +594,7 @@ function makeHarness(overrides: Partial<AuthServiceDeps> = {}): Harness {
     jwtTtlSeconds: 900,
     nodeEnv: 'test',
     otpDevMode: true,
+    totpEncryptionKey: TEST_TOTP_KEY,
     now: () => current,
     newId: () => {
       sequence += 1;
@@ -364,8 +608,57 @@ function makeHarness(overrides: Partial<AuthServiceDeps> = {}): Harness {
     service,
     advance(seconds: number): void {
       current = new Date(current.getTime() + seconds * 1000);
-    }
+    },
+    now: () => current
   };
+}
+
+/**
+ * Tests only ever assert on the session branch; this narrows the union instead
+ * of teaching every call site the response shape by hand.
+ */
+function sessionOf(result: PasswordLoginResult): VerifyOtpResult {
+  if ('mfa_required' in result || 'mfa_setup_required' in result) {
+    throw new Error(`expected a session, got ${JSON.stringify(result)}`);
+  }
+  return result;
+}
+
+function testCipher() {
+  const cipher = createSecretCipherFromKey({ key: TEST_TOTP_KEY, name: 'TOTP_ENCRYPTION_KEY' });
+  if (!cipher) throw new Error('test cipher unavailable');
+  return cipher;
+}
+
+/** Turns a stored user into an enrolled admin with a known TOTP secret. */
+function enableTwoFactor(
+  repository: FakeAuthRepository,
+  userId: string,
+  secret = TEST_TOTP_SECRET
+): void {
+  const user = repository.users.find((candidate) => candidate.id === userId);
+  if (!user) throw new Error(`unknown test user ${userId}`);
+  const cipher = testCipher();
+  user.totpSecretEncrypted = cipher.encrypt(secret);
+  user.totpKeyId = cipher.keyId;
+  user.twoFactorEnabled = true;
+  user.totpEnrolledAt = new Date('2026-10-01T00:00:00.000Z');
+}
+
+/** Full admin login: password challenge -> TOTP -> session. */
+async function adminSession(
+  harness: Harness,
+  secret = TEST_TOTP_SECRET,
+  password = ADMIN_PASSWORD
+): Promise<VerifyOtpResult> {
+  const challenge = await harness.service.loginWithPassword({ email: ADMIN_EMAIL, password });
+  if (!('mfa_required' in challenge)) {
+    throw new Error(`expected mfa_required, got ${JSON.stringify(challenge)}`);
+  }
+  return harness.service.verifyTwoFactorCode({
+    challenge_token: challenge.challenge_token,
+    code: generateTotpCode(secret, harness.now())
+  });
 }
 
 function addUser(
@@ -389,7 +682,12 @@ function addUser(
     passwordHash: options.passwordHash ?? null,
     name: options.name ?? null,
     googleSub: options.googleSub ?? null,
-    emailVerifiedAt: options.emailVerifiedAt ?? null
+    emailVerifiedAt: options.emailVerifiedAt ?? null,
+    twoFactorEnabled: false,
+    totpSecretEncrypted: null,
+    totpKeyId: null,
+    totpEnrolledAt: null,
+    twoFactorEnforcedAt: null
   });
   for (const role of roles) repository.roles.push({ userId: id, role });
 }
@@ -486,7 +784,7 @@ describe('AuthService.verifyOtp', () => {
     addUser(repository, ['customer']);
     const code = await requestCode(service);
 
-    const first = await service.verifyOtp({ email: EMAIL, code });
+    const first = sessionOf(await service.verifyOtp({ email: EMAIL, code }));
 
     await expect(service.verifyOtp({ email: EMAIL, code })).rejects.toMatchObject({
       code: 'VALIDATION_ERROR'
@@ -501,7 +799,7 @@ describe('AuthService.verifyOtp', () => {
     addUser(repository);
     const code = await requestCode(service);
 
-    const result = await service.verifyOtp({ email: EMAIL, code });
+    const result = sessionOf(await service.verifyOtp({ email: EMAIL, code }));
     const claims = verifyAccessToken(result.access_token, SECRET);
 
     expect(result.user.roles).toEqual([]);
@@ -551,13 +849,27 @@ describe('AuthService.loginWithPassword', () => {
     });
   }
 
-  it('issues a token carrying the admin roles for a correct email and password', async () => {
-    const { repository, service } = makeHarness();
+  it('issues a token carrying the admin roles after the TOTP step', async () => {
+    const harness = makeHarness();
+    const { repository, service } = harness;
     await addAdmin(repository, ['admin_finance', 'admin_super']);
+    enableTwoFactor(repository, ADMIN_ID);
 
-    const result = await service.loginWithPassword({
+    const challenge = await service.loginWithPassword({
       email: ADMIN_EMAIL,
       password: ADMIN_PASSWORD,
+      ip: '203.0.113.9'
+    });
+    expect(challenge).toMatchObject({
+      mfa_required: true,
+      expires_in: TOTP_CHALLENGE_TTL_SECONDS
+    });
+    expect(repository.sessions).toHaveLength(0);
+    if (!('mfa_required' in challenge)) throw new Error('expected mfa_required');
+
+    const result = await service.verifyTwoFactorCode({
+      challenge_token: challenge.challenge_token,
+      code: generateTotpCode(TEST_TOTP_SECRET, harness.now()),
       ip: '203.0.113.9'
     });
     const claims = verifyAccessToken(result.access_token, SECRET);
@@ -575,8 +887,10 @@ describe('AuthService.loginWithPassword', () => {
     expect(repository.sessions).toHaveLength(1);
     expect(repository.loginAttempts[0]).toMatchObject({
       email: ADMIN_EMAIL,
-      succeeded: true
+      succeeded: true,
+      stage: 'password'
     });
+    expect(repository.loginAttempts.some((row) => row.stage === 'totp' && row.succeeded)).toBe(true);
   });
 
   it('rejects a wrong password with the generic message and records the attempt', async () => {
@@ -602,10 +916,12 @@ describe('AuthService.loginWithPassword', () => {
     const { repository, service } = makeHarness();
     await addAdmin(repository, ['customer', 'vendor_owner']);
 
-    const result = await service.loginWithPassword({
-      email: ADMIN_EMAIL,
-      password: ADMIN_PASSWORD
-    });
+    const result = sessionOf(
+      await service.loginWithPassword({
+        email: ADMIN_EMAIL,
+        password: ADMIN_PASSWORD
+      })
+    );
     const claims = verifyAccessToken(result.access_token, SECRET);
 
     expect(result.user.roles).toEqual(['customer', 'vendor_owner']);
@@ -649,9 +965,11 @@ describe('AuthService.loginWithPassword', () => {
   });
 
   it('setPassword stores a scrypt hash and revokes existing sessions', async () => {
-    const { repository, service } = makeHarness();
+    const harness = makeHarness();
+    const { repository, service } = harness;
     await addAdmin(repository);
-    await service.loginWithPassword({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD });
+    enableTwoFactor(repository, ADMIN_ID);
+    await adminSession(harness);
     expect(repository.sessions).toHaveLength(1);
     expect(repository.sessions[0]?.revokedAt).toBeNull();
 
@@ -668,20 +986,794 @@ describe('AuthService.loginWithPassword', () => {
       email: ADMIN_EMAIL,
       password: newPassword
     });
-    expect(relogin.user.roles).toEqual(['admin_super']);
+    // The new password is accepted, but the admin still stops at the 2FA gate.
+    expect(relogin).toMatchObject({ mfa_required: true });
+    expect(repository.sessions).toHaveLength(1);
   });
 
   it('matches the email case-insensitively', async () => {
     const { repository, service } = makeHarness();
-    await addAdmin(repository);
+    await addAdmin(repository, ['customer']);
 
-    const result = await service.loginWithPassword({
-      email: 'Admin@Tarlink.id',
-      password: ADMIN_PASSWORD
-    });
+    const result = sessionOf(
+      await service.loginWithPassword({
+        email: 'Admin@Tarlink.id',
+        password: ADMIN_PASSWORD
+      })
+    );
 
     expect(result.user.email).toBe(ADMIN_EMAIL);
     expect(repository.loginAttempts[0]?.email).toBe(ADMIN_EMAIL);
+  });
+});
+
+describe('AuthService admin 2FA (FR-128)', () => {
+  async function addAdminUser(
+    repository: FakeAuthRepository,
+    roles: Role[] = ['admin_super'],
+    password = ADMIN_PASSWORD
+  ): Promise<void> {
+    addUser(repository, roles, {
+      id: ADMIN_ID,
+      phone: ADMIN_PHONE,
+      email: ADMIN_EMAIL,
+      passwordHash: await hashPassword(password)
+    });
+  }
+
+  async function startEnrollment(harness: Harness) {
+    const challenge = await harness.service.loginWithPassword({
+      email: ADMIN_EMAIL,
+      password: ADMIN_PASSWORD
+    });
+    if (!('mfa_setup_required' in challenge)) {
+      throw new Error(`expected mfa_setup_required, got ${JSON.stringify(challenge)}`);
+    }
+    return {
+      enrollToken: challenge.enroll_token,
+      secret: (await harness.service.beginTwoFactorEnrollment({
+        enroll_token: challenge.enroll_token
+      })).secret
+    };
+  }
+
+  /** Password login that stops at the TOTP step; returns the opaque ticket. */
+  async function openChallenge(
+    harness: Harness,
+    options: { email?: string; password?: string; ip?: string } = {}
+  ): Promise<string> {
+    const challenge = await harness.service.loginWithPassword({
+      email: options.email ?? ADMIN_EMAIL,
+      password: options.password ?? ADMIN_PASSWORD,
+      ip: options.ip
+    });
+    if (!('mfa_required' in challenge)) {
+      throw new Error(`expected mfa_required, got ${JSON.stringify(challenge)}`);
+    }
+    return challenge.challenge_token;
+  }
+
+  /** Sends one wrong code and returns the error code the service answered with. */
+  async function wrongCodeResult(
+    service: AuthService,
+    token: string,
+    code: string,
+    ip?: string
+  ): Promise<string> {
+    try {
+      await service.verifyTwoFactorCode({ challenge_token: token, code, ip });
+    } catch (error) {
+      if (error instanceof AppError) return error.code;
+      throw error;
+    }
+    throw new Error('expected the wrong code to be rejected');
+  }
+
+  /**
+   * Spends the whole cross-challenge budget with wrong codes: one ticket locked
+   * by its own cap, then the remaining guesses on a fresh ticket.
+   */
+  async function spendTotpBudget(
+    harness: Harness,
+    options: { email?: string; password?: string; ip?: string } = {}
+  ): Promise<void> {
+    const valid = generateTotpCode(TEST_TOTP_SECRET, harness.now());
+    const wrong = valid === '000000' ? '000001' : '000000';
+
+    // Six guesses: 401 until the per-challenge cap answers 429.
+    const first = await openChallenge(harness, options);
+    for (let attempt = 1; attempt <= TOTP_CHALLENGE_MAX_ATTEMPTS; attempt += 1) {
+      const code = await wrongCodeResult(harness.service, first, wrong, options.ip);
+      expect(code).toBe(
+        attempt === TOTP_CHALLENGE_MAX_ATTEMPTS ? 'RATE_LIMITED' : 'UNAUTHENTICATED'
+      );
+    }
+
+    // Four more guesses on a fresh ticket: the last one spends the window budget.
+    const second = await openChallenge(harness, options);
+    const remaining = TOTP_FAILURE_MAX - TOTP_CHALLENGE_MAX_ATTEMPTS;
+    for (let attempt = 1; attempt <= remaining; attempt += 1) {
+      const code = await wrongCodeResult(harness.service, second, wrong, options.ip);
+      expect(code).toBe(attempt === remaining ? 'RATE_LIMITED' : 'UNAUTHENTICATED');
+    }
+  }
+
+  /**
+   * Simulates an account that has no email: `recordTotpAttempt` then stores
+   * `''` and the counters bucket by that empty value.
+   */
+  function setAdminEmail(repository: FakeAuthRepository, email: string | null): void {
+    const admin = repository.users.find((candidate) => candidate.id === ADMIN_ID);
+    if (!admin) throw new Error('expected the test admin to exist');
+    admin.email = email;
+  }
+
+  it('AC5.1 answers mfa_setup_required and issues no session for an unenrolled admin', async () => {
+    const { repository, service } = makeHarness();
+    await addAdminUser(repository);
+
+    const result = await service.loginWithPassword({
+      email: ADMIN_EMAIL,
+      password: ADMIN_PASSWORD,
+      ip: '203.0.113.9'
+    });
+
+    expect(result).toMatchObject({ mfa_setup_required: true, expires_in: 600 });
+    expect(result).not.toHaveProperty('access_token');
+    expect(result).not.toHaveProperty('refresh_token');
+    expect(repository.sessions).toHaveLength(0);
+
+    if (!('mfa_setup_required' in result)) throw new Error('expected mfa_setup_required');
+    expect(result.enroll_token).toMatch(/^[\w-]{40,}$/);
+    // Only the hash is persisted; the opaque token exists in the response only.
+    expect(repository.challenges).toHaveLength(1);
+    expect(repository.challenges[0]).toMatchObject({
+      userId: ADMIN_ID,
+      kind: 'enroll',
+      requesterIp: '203.0.113.9'
+    });
+    expect(repository.challenges[0]?.tokenHash).toHaveLength(64);
+    expect(repository.challenges[0]?.tokenHash).not.toBe(result.enroll_token);
+  });
+
+  it('AC5.2 locks after six wrong codes, then a fresh challenge issues one session', async () => {
+    const harness = makeHarness();
+    const { repository, service } = harness;
+    await addAdminUser(repository);
+    enableTwoFactor(repository, ADMIN_ID);
+
+    const challenge = await service.loginWithPassword({
+      email: ADMIN_EMAIL,
+      password: ADMIN_PASSWORD
+    });
+    if (!('mfa_required' in challenge)) throw new Error('expected mfa_required');
+    expect(challenge.expires_in).toBe(600);
+    expect(repository.sessions).toHaveLength(0);
+
+    const valid = generateTotpCode(TEST_TOTP_SECRET, harness.now());
+    const wrong = valid === '000000' ? '000001' : '000000';
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await expect(
+        service.verifyTwoFactorCode({
+          challenge_token: challenge.challenge_token,
+          code: wrong
+        })
+      ).rejects.toMatchObject({ code: 'UNAUTHENTICATED' });
+    }
+    // The sixth guess hits max_attempts and is reported as rate limited.
+    await expect(
+      service.verifyTwoFactorCode({ challenge_token: challenge.challenge_token, code: wrong })
+    ).rejects.toMatchObject({ code: 'RATE_LIMITED' });
+    // Once locked, even the right code is refused.
+    await expect(
+      service.verifyTwoFactorCode({ challenge_token: challenge.challenge_token, code: valid })
+    ).rejects.toMatchObject({ code: 'RATE_LIMITED' });
+
+    expect(repository.challenges[0]?.attempts).toBe(6);
+    expect(repository.sessions).toHaveLength(0);
+    expect(repository.loginAttempts.filter((row) => row.stage === 'totp')).toHaveLength(6);
+
+    // TOTP failures do not spend the password quota: the admin can start over.
+    const second = await service.loginWithPassword({
+      email: ADMIN_EMAIL,
+      password: ADMIN_PASSWORD
+    });
+    if (!('mfa_required' in second)) throw new Error('expected mfa_required');
+
+    const session = await service.verifyTwoFactorCode({
+      challenge_token: second.challenge_token,
+      code: generateTotpCode(TEST_TOTP_SECRET, harness.now())
+    });
+    expect(session.user.roles).toEqual(['admin_super']);
+    expect(repository.sessions).toHaveLength(1);
+
+    // A challenge is single use: replaying it cannot mint a second session.
+    await expect(
+      service.verifyTwoFactorCode({
+        challenge_token: second.challenge_token,
+        code: generateTotpCode(TEST_TOTP_SECRET, harness.now())
+      })
+    ).rejects.toMatchObject({ code: 'UNAUTHENTICATED' });
+    expect(repository.sessions).toHaveLength(1);
+  });
+
+  it('locks the account across challenges after ten wrong codes', async () => {
+    const harness = makeHarness();
+    const { repository, service } = harness;
+    await addAdminUser(repository);
+    enableTwoFactor(repository, ADMIN_ID);
+
+    await spendTotpBudget(harness);
+    expect(
+      repository.loginAttempts.filter((row) => row.stage === 'totp' && !row.succeeded)
+    ).toHaveLength(TOTP_FAILURE_MAX);
+    // One live ticket per user: the second login replaced the locked one.
+    expect(repository.challenges).toHaveLength(1);
+
+    // A fresh password login cannot buy another set of guesses.
+    await expect(
+      service.loginWithPassword({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD })
+    ).rejects.toMatchObject({ code: 'RATE_LIMITED' });
+
+    expect(repository.challenges).toHaveLength(1);
+    expect(repository.sessions).toHaveLength(0);
+  });
+
+  it('keeps an email-less account and a named account in separate TOTP budgets', async () => {
+    const harness = makeHarness();
+    const { repository, service } = harness;
+    const secondAdminId = '66666666-6666-4666-8666-666666666666';
+    const secondAdminEmail = 'a@example.test';
+    const secondAdminPassword = 'rahasia-admin-lain';
+
+    await addAdminUser(repository);
+    enableTwoFactor(repository, ADMIN_ID);
+    addUser(repository, ['admin_super'], {
+      id: secondAdminId,
+      phone: '629111222555',
+      email: secondAdminEmail,
+      passwordHash: await hashPassword(secondAdminPassword)
+    });
+    enableTwoFactor(repository, secondAdminId);
+
+    const valid = generateTotpCode(TEST_TOTP_SECRET, harness.now());
+    const wrong = valid === '000000' ? '000001' : '000000';
+
+    // Two failures while the account has no email land in the empty bucket.
+    const token = await openChallenge(harness);
+    setAdminEmail(repository, null);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      expect(await wrongCodeResult(service, token, wrong)).toBe('UNAUTHENTICATED');
+    }
+    expect(
+      repository.loginAttempts.filter((row) => row.stage === 'totp' && row.email === '')
+    ).toHaveLength(2);
+    setAdminEmail(repository, ADMIN_EMAIL);
+
+    // Those two belong to the empty bucket only: the named account still has
+    // its own full budget, which `spendTotpBudget` asserts by locking exactly
+    // on the tenth failure.
+    await spendTotpBudget(harness, {
+      email: secondAdminEmail,
+      password: secondAdminPassword
+    });
+    expect(
+      repository.loginAttempts.filter(
+        (row) => row.stage === 'totp' && row.email.toLowerCase() === secondAdminEmail
+      ).length
+    ).toBe(TOTP_FAILURE_MAX);
+    // ...and its failures never landed in the empty bucket.
+    expect(
+      repository.loginAttempts.filter(
+        (row) => row.stage === 'totp' && !row.succeeded && row.email === ''
+      )
+    ).toHaveLength(2);
+
+    const emailLess = await openChallenge(harness);
+    setAdminEmail(repository, null);
+    // The right code still logs in: ten failures for another account are not
+    // the email-less account's failures.
+    await expect(
+      service.verifyTwoFactorCode({
+        challenge_token: emailLess,
+        code: generateTotpCode(TEST_TOTP_SECRET, harness.now())
+      })
+    ).resolves.toMatchObject({ user: { roles: ['admin_super'] } });
+    expect(repository.sessions).toHaveLength(1);
+  });
+
+  it('still locks an account that has no email after ten failures', async () => {
+    const harness = makeHarness();
+    const { repository, service } = harness;
+    await addAdminUser(repository);
+    enableTwoFactor(repository, ADMIN_ID);
+
+    const valid = generateTotpCode(TEST_TOTP_SECRET, harness.now());
+    const wrong = valid === '000000' ? '000001' : '000000';
+
+    // Six guesses spend the first ticket's cap while the account has no email,
+    // so every failure is recorded with an empty email.
+    const first = await openChallenge(harness);
+    setAdminEmail(repository, null);
+    for (let attempt = 1; attempt <= TOTP_CHALLENGE_MAX_ATTEMPTS; attempt += 1) {
+      expect(await wrongCodeResult(service, first, wrong)).toBe(
+        attempt === TOTP_CHALLENGE_MAX_ATTEMPTS ? 'RATE_LIMITED' : 'UNAUTHENTICATED'
+      );
+    }
+
+    // Four more on a fresh ticket spend the empty bucket's window budget.
+    setAdminEmail(repository, ADMIN_EMAIL);
+    const second = await openChallenge(harness);
+    setAdminEmail(repository, null);
+    const remaining = TOTP_FAILURE_MAX - TOTP_CHALLENGE_MAX_ATTEMPTS;
+    for (let attempt = 1; attempt <= remaining; attempt += 1) {
+      expect(await wrongCodeResult(service, second, wrong)).toBe(
+        attempt === remaining ? 'RATE_LIMITED' : 'UNAUTHENTICATED'
+      );
+    }
+    expect(
+      repository.loginAttempts.filter((row) => row.stage === 'totp' && row.email === '')
+    ).toHaveLength(TOTP_FAILURE_MAX);
+
+    // The empty bucket is spent too: a fresh ticket refuses even the right code.
+    setAdminEmail(repository, ADMIN_EMAIL);
+    const third = await openChallenge(harness);
+    setAdminEmail(repository, null);
+    await expect(
+      service.verifyTwoFactorCode({
+        challenge_token: third,
+        code: generateTotpCode(TEST_TOTP_SECRET, harness.now())
+      })
+    ).rejects.toMatchObject({
+      code: 'RATE_LIMITED',
+      message: expect.stringContaining('Coba lagi nanti')
+    });
+    expect(repository.sessions).toHaveLength(0);
+  });
+
+  it('locks the IP across challenges even when the email differs', async () => {
+    const harness = makeHarness();
+    const { repository, service } = harness;
+    const secondAdminId = '55555555-5555-4555-8555-555555555555';
+    const secondAdminEmail = 'admin.dua@tarlink.id';
+    const secondAdminPassword = 'rahasia-admin-kedua';
+    const ip = '203.0.113.44';
+
+    await addAdminUser(repository);
+    enableTwoFactor(repository, ADMIN_ID);
+    addUser(repository, ['admin_super'], {
+      id: secondAdminId,
+      phone: '629111222444',
+      email: secondAdminEmail,
+      passwordHash: await hashPassword(secondAdminPassword)
+    });
+    enableTwoFactor(repository, secondAdminId);
+
+    await spendTotpBudget(harness, { ip });
+
+    // Same host, another admin: the per-email counter is zero, the IP one is not.
+    await expect(
+      service.loginWithPassword({ email: secondAdminEmail, password: secondAdminPassword, ip })
+    ).rejects.toMatchObject({ code: 'RATE_LIMITED' });
+    expect(repository.challenges.filter((row) => row.userId === secondAdminId)).toHaveLength(0);
+
+    // The same admin from another network is not blocked by that IP counter.
+    const elsewhere = await service.loginWithPassword({
+      email: secondAdminEmail,
+      password: secondAdminPassword,
+      ip: '198.51.100.9'
+    });
+    expect(elsewhere).toMatchObject({ mfa_required: true });
+  });
+
+  it('does not count successful verifications as TOTP failures', async () => {
+    const harness = makeHarness();
+    const { repository, service } = harness;
+    await addAdminUser(repository);
+    enableTwoFactor(repository, ADMIN_ID);
+
+    // More successes than the failure cap must not spend the budget.
+    for (let round = 0; round < TOTP_FAILURE_MAX; round += 1) {
+      await adminSession(harness);
+    }
+    expect(repository.sessions).toHaveLength(TOTP_FAILURE_MAX);
+    expect(
+      repository.loginAttempts.filter((row) => row.stage === 'totp' && !row.succeeded)
+    ).toHaveLength(0);
+
+    const token = await openChallenge(harness);
+    const valid = generateTotpCode(TEST_TOTP_SECRET, harness.now());
+    const wrong = valid === '000000' ? '000001' : '000000';
+    // Still an ordinary wrong answer, not a lockout.
+    expect(await wrongCodeResult(service, token, wrong)).toBe('UNAUTHENTICATED');
+  });
+
+  it('keeps the six-guesses-per-challenge cap when the window is not spent', async () => {
+    const harness = makeHarness();
+    const { repository, service } = harness;
+    await addAdminUser(repository);
+    enableTwoFactor(repository, ADMIN_ID);
+
+    const token = await openChallenge(harness);
+    const valid = generateTotpCode(TEST_TOTP_SECRET, harness.now());
+    const wrong = valid === '000000' ? '000001' : '000000';
+
+    for (let attempt = 1; attempt < TOTP_CHALLENGE_MAX_ATTEMPTS; attempt += 1) {
+      expect(await wrongCodeResult(service, token, wrong)).toBe('UNAUTHENTICATED');
+    }
+    // The sixth guess is still the per-challenge lock, with its own message.
+    await expect(
+      service.verifyTwoFactorCode({ challenge_token: token, code: wrong })
+    ).rejects.toMatchObject({
+      code: 'RATE_LIMITED',
+      message: expect.stringContaining('Mulai ulang proses login')
+    });
+    expect(repository.challenges[0]?.attempts).toBe(TOTP_CHALLENGE_MAX_ATTEMPTS);
+  });
+
+  it('rejects a correct code on an already-issued ticket once the window budget is spent', async () => {
+    const harness = makeHarness();
+    const { repository, service } = harness;
+    await addAdminUser(repository);
+    enableTwoFactor(repository, ADMIN_ID);
+
+    const valid = generateTotpCode(TEST_TOTP_SECRET, harness.now());
+    const wrong = valid === '000000' ? '000001' : '000000';
+
+    // Six failures spend the first ticket's own cap...
+    const first = await openChallenge(harness);
+    for (let attempt = 1; attempt <= TOTP_CHALLENGE_MAX_ATTEMPTS; attempt += 1) {
+      expect(await wrongCodeResult(service, first, wrong)).toBe(
+        attempt === TOTP_CHALLENGE_MAX_ATTEMPTS ? 'RATE_LIMITED' : 'UNAUTHENTICATED'
+      );
+    }
+
+    // ...and four on the replacement ticket spend the 10-failure window budget.
+    const second = await openChallenge(harness);
+    const remaining = TOTP_FAILURE_MAX - TOTP_CHALLENGE_MAX_ATTEMPTS;
+    for (let attempt = 1; attempt <= remaining; attempt += 1) {
+      expect(await wrongCodeResult(service, second, wrong)).toBe(
+        attempt === remaining ? 'RATE_LIMITED' : 'UNAUTHENTICATED'
+      );
+    }
+
+    // The ticket still has guesses left under its own cap, but the window is
+    // spent: even the correct code must be refused, and no session minted.
+    expect(repository.challenges).toHaveLength(1);
+    expect(repository.challenges[0]?.attempts).toBeLessThan(TOTP_CHALLENGE_MAX_ATTEMPTS);
+    await expect(
+      service.verifyTwoFactorCode({ challenge_token: second, code: valid })
+    ).rejects.toMatchObject({
+      code: 'RATE_LIMITED',
+      message: expect.stringContaining('Coba lagi nanti')
+    });
+    expect(repository.challenges[0]?.consumedAt).toBeNull();
+    expect(repository.sessions).toHaveLength(0);
+  });
+
+  it('keeps exactly one open challenge across two consecutive password logins', async () => {
+    const harness = makeHarness();
+    const { repository, service } = harness;
+    await addAdminUser(repository);
+    enableTwoFactor(repository, ADMIN_ID);
+
+    const first = await openChallenge(harness);
+    const second = await openChallenge(harness);
+
+    expect(second).not.toBe(first);
+    const open = repository.challenges.filter(
+      (challenge) => challenge.userId === ADMIN_ID && challenge.consumedAt === null
+    );
+    expect(open).toHaveLength(1);
+    expect(repository.challenges).toHaveLength(1);
+    expect(open[0]?.attempts).toBe(0);
+
+    // The replaced ticket is gone: only the newest one can be redeemed.
+    await expect(
+      service.verifyTwoFactorCode({
+        challenge_token: first,
+        code: generateTotpCode(TEST_TOTP_SECRET, harness.now())
+      })
+    ).rejects.toMatchObject({ code: 'UNAUTHENTICATED' });
+
+    const session = await service.verifyTwoFactorCode({
+      challenge_token: second,
+      code: generateTotpCode(TEST_TOTP_SECRET, harness.now())
+    });
+    expect(session.user.roles).toEqual(['admin_super']);
+    expect(repository.sessions).toHaveLength(1);
+  });
+
+  it('AC5.3 accepts a backup code once and rejects the second use', async () => {
+    const harness = makeHarness();
+    const { repository, service } = harness;
+    await addAdminUser(repository);
+
+    const { enrollToken, secret } = await startEnrollment(harness);
+    const enrolled = await service.completeTwoFactorEnrollment({
+      enroll_token: enrollToken,
+      code: generateTotpCode(secret, harness.now())
+    });
+    expect(enrolled.backup_codes).toHaveLength(10);
+    expect(repository.sessions).toHaveLength(1);
+
+    const firstCode = enrolled.backup_codes[0];
+    if (!firstCode) throw new Error('expected a backup code');
+
+    const challenge = await service.loginWithPassword({
+      email: ADMIN_EMAIL,
+      password: ADMIN_PASSWORD
+    });
+    if (!('mfa_required' in challenge)) throw new Error('expected mfa_required');
+
+    // Dashes and case are ignored on purpose.
+    const session = await service.verifyBackupCode({
+      challenge_token: challenge.challenge_token,
+      code: firstCode.toLowerCase().replace('-', ' ')
+    });
+    expect(session.user.roles).toEqual(['admin_super']);
+    expect(repository.sessions).toHaveLength(2);
+
+    const replayChallenge = await service.loginWithPassword({
+      email: ADMIN_EMAIL,
+      password: ADMIN_PASSWORD
+    });
+    if (!('mfa_required' in replayChallenge)) throw new Error('expected mfa_required');
+    await expect(
+      service.verifyBackupCode({
+        challenge_token: replayChallenge.challenge_token,
+        code: firstCode
+      })
+    ).rejects.toMatchObject({ code: 'UNAUTHENTICATED' });
+    expect(repository.sessions).toHaveLength(2);
+  });
+
+  it('AC5.4 keeps the customer and vendor login payload identical', async () => {
+    const { repository, service } = makeHarness();
+    addUser(repository, ['customer'], {
+      id: ADMIN_ID,
+      phone: ADMIN_PHONE,
+      email: ADMIN_EMAIL,
+      passwordHash: await hashPassword(ADMIN_PASSWORD)
+    });
+    addUser(repository, ['vendor_owner'], {
+      id: USER_ID,
+      phone: PHONE,
+      email: 'vendor@tarlink.id',
+      passwordHash: await hashPassword('kata-sandi-vendor')
+    });
+
+    const customer = sessionOf(
+      await service.loginWithPassword({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD })
+    );
+    const vendor = sessionOf(
+      await service.loginWithPassword({
+        email: 'vendor@tarlink.id',
+        password: 'kata-sandi-vendor'
+      })
+    );
+
+    const sessionKeys = ['access_token', 'expires_in', 'refresh_token', 'token_type', 'user'];
+    expect(Object.keys(customer).sort()).toEqual(sessionKeys);
+    expect(Object.keys(vendor).sort()).toEqual(sessionKeys);
+    expect(customer.user).toEqual({
+      id: ADMIN_ID,
+      phone: ADMIN_PHONE,
+      roles: ['customer'],
+      email: ADMIN_EMAIL
+    });
+    expect(vendor.user.roles).toEqual(['vendor_owner']);
+    expect(repository.challenges).toHaveLength(0);
+    expect(repository.sessions).toHaveLength(2);
+  });
+
+  it('AC5.5 reset clears TOTP, revokes every session and writes the audit row', async () => {
+    const harness = makeHarness();
+    const { repository, service } = harness;
+    await addAdminUser(repository);
+    enableTwoFactor(repository, ADMIN_ID);
+    await adminSession(harness);
+    expect(repository.sessions).toHaveLength(1);
+
+    // An open verify challenge must not survive the reset either.
+    const open = await service.loginWithPassword({
+      email: ADMIN_EMAIL,
+      password: ADMIN_PASSWORD
+    });
+    expect(open).toMatchObject({ mfa_required: true });
+
+    const result = await service.resetTwoFactor({
+      userId: ADMIN_ID,
+      actorId: USER_ID,
+      actorRole: 'admin_super',
+      requestId: 'req-2fa-reset'
+    });
+
+    expect(result).toEqual({ user_id: ADMIN_ID, revoked_sessions: 1 });
+    const user = repository.users.find((candidate) => candidate.id === ADMIN_ID);
+    expect(user).toMatchObject({
+      twoFactorEnabled: false,
+      totpSecretEncrypted: null,
+      totpKeyId: null,
+      totpEnrolledAt: null
+    });
+    expect(repository.sessions.every((session) => session.revokedAt !== null)).toBe(true);
+    expect(
+      repository.challenges.filter(
+        (challenge) => challenge.userId === ADMIN_ID && challenge.consumedAt === null
+      )
+    ).toHaveLength(0);
+    expect(repository.backupCodes).toHaveLength(0);
+    expect(repository.auditLogs).toEqual([
+      {
+        actorId: USER_ID,
+        actorRole: 'admin_super',
+        action: 'auth.2fa.reset',
+        entityType: 'user',
+        entityId: ADMIN_ID,
+        requestId: 'req-2fa-reset',
+        before: { two_factor_enabled: true },
+        after: { two_factor_enabled: false, sessions_revoked: 1 }
+      }
+    ]);
+  });
+
+  it('reset answers NOT_FOUND for a customer or an unknown id', async () => {
+    const { repository, service } = makeHarness();
+    addUser(repository, ['customer']);
+
+    await expect(
+      service.resetTwoFactor({ userId: USER_ID, actorId: ADMIN_ID, actorRole: 'admin_super' })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(
+      service.resetTwoFactor({
+        userId: '99999999-9999-4999-8999-999999999999',
+        actorId: ADMIN_ID,
+        actorRole: 'admin_super'
+      })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(repository.auditLogs).toHaveLength(0);
+  });
+
+  it('gates OTP login for an admin instead of issuing a session', async () => {
+    const { repository, service } = makeHarness();
+    addUser(repository, ['admin_super'], {
+      id: ADMIN_ID,
+      phone: ADMIN_PHONE,
+      email: ADMIN_EMAIL,
+      passwordHash: null
+    });
+    const code = await requestCode(service, ADMIN_EMAIL);
+
+    const result = await service.verifyOtp({ email: ADMIN_EMAIL, code });
+
+    expect(result).toMatchObject({ mfa_setup_required: true });
+    expect(repository.sessions).toHaveLength(0);
+    expect(repository.otpRequests[0]?.consumedAt).not.toBeNull();
+  });
+
+  it('gates Google login for an enrolled admin', async () => {
+    const verifier = new FakeGoogleVerifier({
+      sub: 'admin-google',
+      email: ADMIN_EMAIL,
+      emailVerified: true
+    });
+    const { repository, service } = makeHarness({ googleVerifier: verifier });
+    addUser(repository, ['admin_super'], {
+      id: ADMIN_ID,
+      phone: ADMIN_PHONE,
+      email: ADMIN_EMAIL,
+      googleSub: 'admin-google'
+    });
+    enableTwoFactor(repository, ADMIN_ID);
+
+    const result = await service.loginWithGoogle({ id_token: 'google-id-token' });
+
+    expect(result).toMatchObject({ mfa_required: true });
+    expect(repository.sessions).toHaveLength(0);
+  });
+
+  it('stores the TOTP secret encrypted and decrypts the same value back', async () => {
+    const harness = makeHarness();
+    const { repository, service } = harness;
+    await addAdminUser(repository);
+
+    const { enrollToken, secret } = await startEnrollment(harness);
+    const stored = repository.users.find((candidate) => candidate.id === ADMIN_ID);
+    if (!stored?.totpSecretEncrypted) throw new Error('expected an encrypted secret');
+
+    expect(stored.twoFactorEnabled).toBe(false);
+    expect(stored.totpKeyId).toBe(testCipher().keyId);
+    // The plaintext must not be recoverable from the column without the key.
+    expect(stored.totpSecretEncrypted.toString('utf8')).not.toContain(secret);
+    expect(testCipher().decrypt(stored.totpSecretEncrypted, stored.totpKeyId)).toBe(secret);
+
+    const enrolled = await service.completeTwoFactorEnrollment({
+      enroll_token: enrollToken,
+      code: generateTotpCode(secret, harness.now())
+    });
+    expect(enrolled.backup_codes).toHaveLength(10);
+    expect(stored.twoFactorEnabled).toBe(true);
+  });
+
+  it('fails enrollment closed when TOTP_ENCRYPTION_KEY is missing', async () => {
+    const harness = makeHarness({ totpEncryptionKey: undefined });
+    const { repository, service } = harness;
+    await addAdminUser(repository);
+
+    const challenge = await service.loginWithPassword({
+      email: ADMIN_EMAIL,
+      password: ADMIN_PASSWORD
+    });
+    if (!('mfa_setup_required' in challenge)) throw new Error('expected mfa_setup_required');
+
+    await expect(
+      service.beginTwoFactorEnrollment({ enroll_token: challenge.enroll_token })
+    ).rejects.toMatchObject({ code: 'INTERNAL_ERROR' });
+
+    const stored = repository.users.find((candidate) => candidate.id === ADMIN_ID);
+    expect(stored?.totpSecretEncrypted).toBeNull();
+    expect(repository.sessions).toHaveLength(0);
+  });
+
+  it('rejects wrong-kind, expired and reused challenges', async () => {
+    const wrongKind = makeHarness();
+    await addAdminUser(wrongKind.repository);
+    const setup = await wrongKind.service.loginWithPassword({
+      email: ADMIN_EMAIL,
+      password: ADMIN_PASSWORD
+    });
+    if (!('mfa_setup_required' in setup)) throw new Error('expected mfa_setup_required');
+    await expect(
+      wrongKind.service.verifyTwoFactorCode({
+        challenge_token: setup.enroll_token,
+        code: '000000'
+      })
+    ).rejects.toMatchObject({ code: 'UNAUTHENTICATED' });
+
+    const expired = makeHarness();
+    await addAdminUser(expired.repository);
+    const expiredSetup = await expired.service.loginWithPassword({
+      email: ADMIN_EMAIL,
+      password: ADMIN_PASSWORD
+    });
+    if (!('mfa_setup_required' in expiredSetup)) throw new Error('expected mfa_setup_required');
+    expired.advance(TOTP_CHALLENGE_TTL_SECONDS + 1);
+    await expect(
+      expired.service.beginTwoFactorEnrollment({ enroll_token: expiredSetup.enroll_token })
+    ).rejects.toMatchObject({ code: 'UNAUTHENTICATED' });
+
+    const reused = makeHarness();
+    await addAdminUser(reused.repository);
+    const { enrollToken, secret } = await startEnrollment(reused);
+    await reused.service.completeTwoFactorEnrollment({
+      enroll_token: enrollToken,
+      code: generateTotpCode(secret, reused.now())
+    });
+    await expect(
+      reused.service.completeTwoFactorEnrollment({
+        enroll_token: enrollToken,
+        code: generateTotpCode(secret, reused.now())
+      })
+    ).rejects.toMatchObject({ code: 'UNAUTHENTICATED' });
+  });
+
+  it('answers CONFLICT when enrollment races an already-enabled account', async () => {
+    const { repository, service } = makeHarness();
+    await addAdminUser(repository);
+    const setup = await service.loginWithPassword({
+      email: ADMIN_EMAIL,
+      password: ADMIN_PASSWORD
+    });
+    if (!('mfa_setup_required' in setup)) throw new Error('expected mfa_setup_required');
+
+    // Simulates the account being enrolled by another request meanwhile.
+    enableTwoFactor(repository, ADMIN_ID);
+
+    await expect(
+      service.beginTwoFactorEnrollment({ enroll_token: setup.enroll_token })
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
   });
 });
 
@@ -834,7 +1926,9 @@ describe('AuthService.loginWithGoogle', () => {
     });
     const { repository, service } = makeHarness({ googleVerifier: verifier });
 
-    const result = await service.loginWithGoogle({ id_token: 'google-id-token' });
+    const result = sessionOf(
+      await service.loginWithGoogle({ id_token: 'google-id-token', consent: CONSENT })
+    );
     const claims = verifyAccessToken(result.access_token, SECRET);
 
     expect(verifier.calls).toEqual(['google-id-token']);
@@ -865,13 +1959,114 @@ describe('AuthService.loginWithGoogle', () => {
       phone: '629111000222'
     });
 
-    const result = await service.loginWithGoogle({ id_token: 'google-id-token' });
+    const result = sessionOf(await service.loginWithGoogle({ id_token: 'google-id-token' }));
 
     expect(repository.users).toHaveLength(1);
     expect(repository.users[0]?.googleSub).toBe('google-sub-existing');
     expect(repository.users[0]?.emailVerifiedAt).not.toBeNull();
     expect(result.user.id).toBe(USER_ID);
     expect(result.user.roles).toEqual(['customer']);
+  });
+
+  it('rejects a new Google account without policy consent', async () => {
+    const verifier = verifierWith({
+      sub: 'google-sub-no-consent',
+      email: GOOGLE_EMAIL,
+      emailVerified: true
+    });
+    const { repository, service } = makeHarness({ googleVerifier: verifier });
+
+    await expect(service.loginWithGoogle({ id_token: 'google-id-token' })).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: 'Persetujuan Syarat & Ketentuan serta Kebijakan Privasi wajib dicentang'
+    });
+
+    expect(repository.users).toHaveLength(0);
+    expect(repository.sessions).toHaveLength(0);
+    expect(repository.consents).toHaveLength(0);
+  });
+
+  it('rejects a new Google account with a stale policy version', async () => {
+    const verifier = verifierWith({
+      sub: 'google-sub-stale',
+      email: GOOGLE_EMAIL,
+      emailVerified: true
+    });
+    const { repository, service } = makeHarness({ googleVerifier: verifier });
+
+    await expect(
+      service.loginWithGoogle({
+        id_token: 'google-id-token',
+        consent: { tos_version_id: PRIVACY_VERSION_ID, privacy_version_id: PRIVACY_VERSION_ID }
+      })
+    ).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: 'Versi kebijakan sudah berubah. Muat ulang halaman pendaftaran.'
+    });
+
+    expect(repository.users).toHaveLength(0);
+    expect(repository.consents).toHaveLength(0);
+  });
+
+  it('records ToS and privacy consent for a new Google account', async () => {
+    const verifier = verifierWith({
+      sub: 'google-sub-with-consent',
+      email: GOOGLE_EMAIL,
+      emailVerified: true
+    });
+    const { repository, service } = makeHarness({ googleVerifier: verifier });
+
+    const result = sessionOf(
+      await service.loginWithGoogle({
+        id_token: 'google-id-token',
+        consent: CONSENT,
+        ip: '203.0.113.9',
+        userAgent: 'vitest'
+      })
+    );
+    const claims = verifyAccessToken(result.access_token, SECRET);
+
+    expect(result.user.roles).toEqual(['customer']);
+    expect(claims.sub).toBe(repository.users[0]?.id);
+    expect(repository.sessions).toHaveLength(1);
+    expect(repository.consents).toEqual([
+      {
+        policyCode: 'tos',
+        policyVersionId: TOS_VERSION_ID,
+        acceptedAt: expect.any(Date),
+        ip: '203.0.113.9',
+        userAgent: 'vitest'
+      },
+      {
+        policyCode: 'privacy',
+        policyVersionId: PRIVACY_VERSION_ID,
+        acceptedAt: expect.any(Date),
+        ip: '203.0.113.9',
+        userAgent: 'vitest'
+      }
+    ]);
+  });
+
+  it('logs in an existing Google account without consent', async () => {
+    const verifier = verifierWith({
+      sub: 'google-sub-repeat',
+      email: GOOGLE_EMAIL,
+      emailVerified: true
+    });
+    const { repository, service } = makeHarness({ googleVerifier: verifier });
+    addUser(repository, ['customer'], {
+      id: USER_ID,
+      email: GOOGLE_EMAIL,
+      phone: null,
+      googleSub: 'google-sub-repeat'
+    });
+
+    const result = sessionOf(await service.loginWithGoogle({ id_token: 'google-id-token' }));
+
+    expect(result.user.id).toBe(USER_ID);
+    expect(repository.users).toHaveLength(1);
+    expect(repository.consents).toHaveLength(0);
+    expect(repository.sessions).toHaveLength(1);
   });
 
   it('rejects an invalid ID token with UNAUTHENTICATED', async () => {
@@ -1071,6 +2266,7 @@ describe('AuthService.getProfile', () => {
 describe('AuthService.deleteAccount (FR-101)', () => {
   function seedSession(repository: FakeAuthRepository) {
     repository.sessions.push({
+      id: 'session-row-seed-1',
       jti: 'jti-delete-1',
       userId: USER_ID,
       issuedAt: new Date('2026-10-21T09:00:00.000Z'),
@@ -1162,7 +2358,7 @@ describe('AuthService.refresh', () => {
     repository: FakeAuthRepository,
     service: AuthService
   ): Promise<string | undefined> {
-    const login = await service.loginWithPassword({ email: EMAIL, password: PASSWORD });
+    const login = sessionOf(await service.loginWithPassword({ email: EMAIL, password: PASSWORD }));
     return verifyAccessToken(login.access_token, SECRET).jti;
   }
 
@@ -1178,7 +2374,7 @@ describe('AuthService.refresh', () => {
       email: EMAIL,
       passwordHash: await hashPassword(PASSWORD)
     });
-    const login = await service.loginWithPassword({ email: EMAIL, password: PASSWORD });
+    const login = sessionOf(await service.loginWithPassword({ email: EMAIL, password: PASSWORD }));
     const loginJti = verifyAccessToken(login.access_token, SECRET).jti;
     repository.roles.push({ userId: USER_ID, role: 'vendor_owner' });
 
@@ -1415,7 +2611,9 @@ describe('AuthService refresh token + IP limits', () => {
       email: EMAIL,
       passwordHash: await hashPassword(PASSWORD)
     });
-    const login = await harness.service.loginWithPassword({ email: EMAIL, password: PASSWORD });
+    const login = sessionOf(
+      await harness.service.loginWithPassword({ email: EMAIL, password: PASSWORD })
+    );
     return { ...harness, login };
   }
 
@@ -1436,6 +2634,14 @@ describe('AuthService refresh token + IP limits', () => {
     expect(refreshed.access_token).not.toBe(login.access_token);
     const active = repository.sessions.filter((session) => session.revokedAt === null);
     expect(active).toHaveLength(1);
+
+    // The child row must point at the old row's `id` (the FK target), not its
+    // jti, which is a different value and made PostgreSQL reject the rotation.
+    const oldSession = repository.sessions[0];
+    const newSession = active[0];
+    expect(oldSession?.id).not.toBe(oldSession?.jti);
+    expect(newSession?.parentId).toBe(oldSession?.id);
+    expect(newSession?.parentId).not.toBe(oldSession?.jti);
   });
 
   it('revokes the whole family when a rotated token is replayed', async () => {

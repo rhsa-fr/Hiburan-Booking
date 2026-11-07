@@ -11,9 +11,10 @@ import {
   isPanelRole,
   loginWithGoogle,
   loginWithPassword,
-  type AuthResult
+  type LoginResult,
+  type SessionResult
 } from '@/lib/api';
-import { roleLabel, saveSession, saveToken } from '@/lib/session';
+import { roleLabel, saveMfaTicket, saveSession, saveToken } from '@/lib/session';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -48,12 +49,12 @@ export default function LoginPage() {
   const emailValid = EMAIL_PATTERN.test(email.trim());
   const passwordValid = password.length >= 8;
 
-  function finish(result: AuthResult): void {
+  function finish(result: SessionResult): void {
     if (!isPanelRole(result.user.roles)) {
       setFormError('Akun ini tidak punya akses ke panel operasi.');
       return;
     }
-    saveToken(result.access_token);
+    saveToken(result.access_token, result.user.id);
     const primaryRole =
       result.user.roles.find((role) => role.startsWith('admin_')) ?? result.user.roles[0] ?? '';
     saveSession({
@@ -65,9 +66,36 @@ export default function LoginPage() {
     router.replace('/');
   }
 
+  /**
+   * FR-128: admin tidak langsung menerima sesi. `mfa_required` membawa
+   * challenge token, `mfa_setup_required` membawa tiket enrollment; keduanya
+   * diserahkan lewat sessionStorage dan tidak pernah disimpan sebagai sesi.
+   */
+  function handleLoginResult(result: LoginResult): void {
+    if ('mfa_required' in result) {
+      saveMfaTicket({
+        kind: 'verify',
+        token: result.challenge_token,
+        expiresIn: result.expires_in
+      });
+      router.replace('/login/2fa');
+      return;
+    }
+    if ('mfa_setup_required' in result) {
+      saveMfaTicket({
+        kind: 'enroll',
+        token: result.enroll_token,
+        expiresIn: result.expires_in
+      });
+      router.replace('/login/2fa/enroll');
+      return;
+    }
+    finish(result);
+  }
+
   const login = useMutation({
     mutationFn: () => loginWithPassword(email.trim(), password),
-    onSuccess: finish,
+    onSuccess: handleLoginResult,
     onError: (error: Error) => {
       setFormError(error.message || 'Gagal masuk. Coba lagi.');
     }
@@ -75,7 +103,7 @@ export default function LoginPage() {
 
   const googleLogin = useMutation({
     mutationFn: (idToken: string) => loginWithGoogle(idToken),
-    onSuccess: finish,
+    onSuccess: handleLoginResult,
     onError: (error: Error) => {
       setFormError(error.message || 'Google Sign-In gagal.');
     }

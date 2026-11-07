@@ -5,6 +5,9 @@ import { AuthGuard, JWT_SECRET, RolesGuard } from '@tarlink/platform/auth';
 import { AdminController } from './admin.controller';
 import { AdminRepository } from './admin.repository';
 import { AdminService } from './admin.service';
+import { ReconciliationController } from './reconciliation.controller';
+import { ReconciliationRepository } from './reconciliation.repository';
+import { ReconciliationService } from './reconciliation.service';
 
 /**
  * Admin read + release module.
@@ -15,10 +18,12 @@ import { AdminService } from './admin.service';
  */
 @Module({
   imports: [PaymentModule],
-  controllers: [AdminController],
+  controllers: [AdminController, ReconciliationController],
   providers: [
     AdminRepository,
     AdminService,
+    ReconciliationRepository,
+    ReconciliationService,
     { provide: JWT_SECRET, useValue: loadConfig().JWT_SECRET },
     { provide: AuthGuard, useClass: AuthGuard },
     RolesGuard

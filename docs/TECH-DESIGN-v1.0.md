@@ -3171,6 +3171,10 @@ RETURNING b.id;
 3. **Reuse detection:** refresh token yang sudah dirotasi dipakai lagi → cabut seluruh `family_id`, catat audit `auth.refresh_reuse`, kirim notifikasi keamanan.
 4. Revocation: `sessions.revoked_at` + cache Redis (`revoked_jti` TTL = sisa umur token). Logout, ganti nomor, suspend user, dan perubahan peran → cabut sesi terkait.
 5. Admin panel: cookie `HttpOnly; Secure; SameSite=Strict` untuk refresh, token akses di memori (bukan `localStorage`). CSP ketat + `frame-ancestors 'none'`.
+   *Implementasi 2026-11:* token akses panel disimpan di `localStorage` (bukan memori) supaya
+   beberapa tab berbagi token yang sama; `sessionStorage` per tab membuat dua tab saling
+   mencabut sesi setiap rotasi. Refresh token tetap hanya di cookie HttpOnly. Cookie memakai
+   `REFRESH_TTL_DAYS` (default 30 hari), belum 12 jam seperti butir 2.
 6. Klaim `roles` **bukan** sumber otorisasi tunggal: server memuat peran terbaru dari DB (cache 60 detik) agar pencabutan peran berlaku cepat.
 
 ### 9.2 RBAC 6 Peran

@@ -17,6 +17,25 @@ function bookingCode(payload: Record<string, unknown>): string {
   return typeof code === 'string' && code.length > 0 ? code : 'Pesanan';
 }
 
+/**
+ * The admin decision is the only part of a resolved dispute the parties need:
+ * whether money goes back to the customer, to the vendor, or nowhere.
+ */
+function disputeResolutionBody(code: string, payload: Record<string, unknown>): string {
+  switch (payload.resolution) {
+    case 'refund_full':
+    case 'refund_partial':
+      return `${code}: refund diputuskan. Dana dikembalikan sesuai keputusan admin.`;
+    case 'release_to_vendor':
+      return `${code}: dana diteruskan ke vendor.`;
+    case 'reject':
+    case 'no_action':
+      return `${code}: sengketa ditolak.`;
+    default:
+      return `${code}: sengketa sudah diputuskan.`;
+  }
+}
+
 export function planNotification(
   eventType: string,
   payload: Record<string, unknown>
@@ -83,6 +102,18 @@ export function planNotification(
         audience: 'both',
         title: 'Pesanan kedaluwarsa',
         body: `${code} kedaluwarsa karena batas waktu terlewat.`
+      };
+    case 'booking.dispute_opened':
+      return {
+        audience: 'both',
+        title: 'Sengketa dibuka',
+        body: `${code}: dana ditahan sampai admin memutuskan.`
+      };
+    case 'booking.dispute_resolved':
+      return {
+        audience: 'both',
+        title: 'Sengketa diputuskan',
+        body: disputeResolutionBody(code, payload)
       };
     default:
       return null;

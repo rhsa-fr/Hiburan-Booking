@@ -86,6 +86,24 @@ export const noShowBookingSchema = z.object({
   reason: z.string().min(1).max(500)
 });
 
+/**
+ * FR-056: reasons a participant may pick themselves. `no_show` is deliberately
+ * absent — that path is opened by `POST /bookings/:id/no-show`, not by choice.
+ */
+export const DISPUTE_REASON_CODES = [
+  'not_as_described',
+  'late_arrival',
+  'fraud',
+  'quality',
+  'cancellation_abuse',
+  'other'
+] as const;
+
+export const openDisputeSchema = z.object({
+  reason_code: z.enum(DISPUTE_REASON_CODES),
+  description: z.string().min(10).max(1000)
+});
+
 /** The listable lifecycle values (S-05 `no_show` is not listable here). */
 export const BOOKING_LIST_STATUSES = [
   'requested',
@@ -141,6 +159,8 @@ export type DeclineBookingDto = z.infer<typeof declineBookingSchema>;
 export type CancelBookingDto = z.infer<typeof cancelBookingSchema>;
 export type CheckinBookingDto = z.infer<typeof checkinBookingSchema>;
 export type NoShowBookingDto = z.infer<typeof noShowBookingSchema>;
+export type OpenDisputeDto = z.infer<typeof openDisputeSchema>;
+export type DisputeReasonCode = (typeof DISPUTE_REASON_CODES)[number];
 export type ListBookingsQueryDto = z.infer<typeof listBookingsQuerySchema>;
 export type AvailabilityQueryDto = z.infer<typeof availabilityQuerySchema>;
 

@@ -186,6 +186,53 @@ export type AutoCompletableRow = {
   scheduled_end_at: Date;
 };
 
+export type DisputeStatus =
+  | 'open'
+  | 'investigating'
+  | 'awaiting_evidence'
+  | 'resolved'
+  | 'rejected';
+
+export type DisputeResolution =
+  | 'refund_full'
+  | 'refund_partial'
+  | 'release_to_vendor'
+  | 'split'
+  | 'no_action';
+
+/** Persisted dispute row, already mapped to the camelCase the service uses. */
+export type DisputeRow = {
+  id: string;
+  status: DisputeStatus;
+  reasonCode: string;
+  description: string;
+  openedAt: Date;
+  slaDueAt: Date;
+  resolvedAt: Date | null;
+  resolution: DisputeResolution | null;
+  resolutionNote: string | null;
+};
+
+type DisputeDbRow = {
+  id: string;
+  status: DisputeStatus;
+  reason_code: string;
+  description: string;
+  opened_at: Date;
+  sla_due_at: Date;
+  resolved_at: Date | null;
+  resolution: DisputeResolution | null;
+  resolution_note: string | null;
+};
+
+export interface InsertDisputeInput {
+  bookingId: string;
+  raisedBy: string;
+  reasonCode: string;
+  description: string;
+  slaDueAt: Date;
+}
+
 export interface NewEventRecord {
   code: string;
   customerId: string;
@@ -604,20 +651,63 @@ export class BookingRepository {
     return rows.rows[0]?.count ?? 0;
   }
 
+  /**
+   * Opens a dispute row. The partial unique index `disputes_one_open_per_booking`
+   * allows at most one active dispute per booking, so a second attempt inserts
+   * nothing and is reported as `false` instead of raising 23505.
+   */
+  async insertDispute(client: PoolClient, input: InsertDisputeInput): Promise<boolean> {
+    const rows = await client.query<{ id: string }>(
+      `INSERT INTO disputes
+         (booking_id, raised_by, reason_code, description, status, sla_due_at)
+       VALUES ($1, $2, $3, $4, 'open', $5)
+       ON CONFLICT (booking_id)
+         WHERE status IN ('open', 'investigating', 'awaiting_evidence')
+       DO NOTHING
+       RETURNING id`,
+      [
+        input.bookingId,
+        input.raisedBy,
+        input.reasonCode,
+        input.description,
+        input.slaDueAt.toISOString()
+      ]
+    );
+    return rows.rows.length > 0;
+  }
+
   /** No-show opens the dispute row that freezes release until an admin decides. */
   async insertNoShowDispute(
     client: PoolClient,
     input: { bookingId: string; raisedBy: string; description: string; slaDueAt: Date }
-  ): Promise<void> {
-    await client.query(
-      `INSERT INTO disputes
-         (booking_id, raised_by, reason_code, description, status, sla_due_at)
-       VALUES ($1, $2, 'no_show', $3, 'open', $4)
-       ON CONFLICT (booking_id)
-         WHERE status IN ('open', 'investigating', 'awaiting_evidence')
-       DO NOTHING`,
-      [input.bookingId, input.raisedBy, input.description, input.slaDueAt.toISOString()]
-    );
+  ): Promise<boolean> {
+    return this.insertDispute(client, { ...input, reasonCode: 'no_show' });
+  }
+
+  /**
+   * Disputes of one booking, newest first. `client` lets the caller read the
+   * row it just inserted inside its own transaction.
+   */
+  async listDisputes(bookingId: string, client?: PoolClient): Promise<DisputeRow[]> {
+    const sql = `SELECT id, status, reason_code, description, opened_at, sla_due_at,
+                        resolved_at, resolution, resolution_note
+                   FROM disputes
+                  WHERE booking_id = $1
+                  ORDER BY opened_at DESC, id DESC`;
+    const rows = client
+      ? (await client.query<DisputeDbRow>(sql, [bookingId])).rows
+      : await query<DisputeDbRow>(sql, [bookingId]);
+    return rows.map((row) => ({
+      id: row.id,
+      status: row.status,
+      reasonCode: row.reason_code,
+      description: row.description,
+      openedAt: row.opened_at,
+      slaDueAt: row.sla_due_at,
+      resolvedAt: row.resolved_at,
+      resolution: row.resolution,
+      resolutionNote: row.resolution_note
+    }));
   }
 
   /** Optimistic-concurrency friendly status write; only listed columns change. */
@@ -722,6 +812,22 @@ export class BookingRepository {
         message.availableAt ?? null
       ]
     );
+  }
+
+  /**
+   * True only for the vendor's `owner_user_id`. Owner-level writes must use
+   * this, not `isVendorResponder`: a user can own one vendor while being a
+   * responder member of another, and a global `vendor_owner` role string does
+   * not say which vendor they own.
+   */
+  async isVendorOwner(vendorId: string, userId: string): Promise<boolean> {
+    const rows = await query<{ allowed: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM vendors WHERE id = $1 AND owner_user_id = $2
+       ) AS allowed`,
+      [vendorId, userId]
+    );
+    return rows[0]?.allowed ?? false;
   }
 
   async isVendorResponder(vendorId: string, userId: string): Promise<boolean> {

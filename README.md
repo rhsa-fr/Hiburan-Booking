@@ -104,9 +104,11 @@ curl http://localhost:3001/v1/health
 |---|---|
 | `npm run migrate` | Terapkan `db/migrations` (ada `migrate:dry` untuk cek) |
 | `npm run verify:db` | Verifikasi invarian DB |
-| `npm test` | Seluruh test backend + worker (Vitest) |
+| `npm test` | Seluruh test backend + worker + panel (Vitest) |
 | `npm run typecheck` | Typecheck API |
-| `npm run typecheck:admin` | Typecheck panel |
+| `npm run typecheck:admin` | Typecheck panel (kode produksi) |
+| `npm run typecheck:admin:test` | Typecheck file test panel |
+| `npm run verify:admin` | Cek header CSP + hidrasi `/login` (panel harus berjalan) |
 | `npm run build:api` / `start:api` | Bangun / jalankan API (`dist/`) |
 | `npm run build:worker` / `start:worker` | Bangun / jalankan worker |
 | `npm run dev:admin` | Panel dev (`:3002`) |
