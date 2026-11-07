@@ -257,7 +257,7 @@ export function BookingDetail({
                     {
                       label: 'Dana dicairkan',
                       value: (
-                        <span className="text-base font-medium text-ok">
+                        <span className="text-base font-medium text-okInk">
                           {formatDateTimeID(booking.released_at)}
                         </span>
                       )

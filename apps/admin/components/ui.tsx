@@ -5,9 +5,10 @@
  * Route files and feature components compose from these exports only: no raw
  * `<button>`, `<table>`, or ad-hoc control markup outside this module.
  *
- * The palette follows the product owner's reference (index.html + style.css)
- * through the Tailwind tokens in tailwind.config.ts: page / sidebar / subtle
- * / surface / primary / textMain / textSecondary / textMuted / border.
+ * The palette follows the product owner's reference (northstar dashboard:
+ * warm paper page, white hairline cards, near-black sidebar, lime accent)
+ * through the Tailwind tokens in tailwind.config.ts: page / surface / card /
+ * subtle / sidebar / primary / accent / textMain / textSecondary / textMuted.
  *
  * When the visual reference changes again, restyle the primitives below — the
  * routes should not need edits.
@@ -44,7 +45,7 @@ export { axisLabel, statusLabel };
 /* Buttons                                                                    */
 /* -------------------------------------------------------------------------- */
 
-export type ButtonVariant = 'primary' | 'outline' | 'ghost' | 'danger';
+export type ButtonVariant = 'primary' | 'outline' | 'ghost' | 'danger' | 'sidebar';
 export type ButtonSize = 'sm' | 'md';
 
 const BUTTON_BASE =
@@ -52,13 +53,15 @@ const BUTTON_BASE =
 
 const BUTTON_VARIANT_CLASSES: Record<ButtonVariant, string> = {
   primary:
-    'bg-primary text-white hover:bg-primary/90 active:bg-primary/80 disabled:bg-border disabled:text-textMuted',
+    'bg-primary text-white hover:bg-primaryDeep active:bg-primaryDeep/90 disabled:bg-border disabled:text-textMuted',
   outline:
-    'border border-border bg-surface text-textMain hover:bg-subtle hover:border-textMuted/40 disabled:border-border disabled:text-textMuted',
+    'border border-border bg-card text-textMain hover:bg-subtle hover:border-textMuted/40 disabled:border-border disabled:text-textMuted',
   ghost:
-    'text-primary hover:bg-primary/10 active:bg-primary/15 disabled:text-textMuted',
+    'text-primary hover:bg-primarySoft active:bg-primarySoft/80 disabled:text-textMuted',
   danger:
-    'bg-danger text-white hover:bg-danger/90 active:bg-danger/80 disabled:bg-border disabled:text-textMuted'
+    'bg-danger text-white hover:bg-danger/90 active:bg-danger/80 disabled:bg-border disabled:text-textMuted',
+  sidebar:
+    'text-sidebarInk hover:bg-sidebarSoft hover:text-white active:bg-sidebarSoft/80 disabled:text-sidebarMuted'
 };
 
 const BUTTON_SIZE_CLASSES: Record<ButtonSize, string> = {
@@ -235,7 +238,7 @@ export function Card({
     <section
       aria-labelledby={labelledBy}
       className={clsx(
-        'rounded-card border border-border bg-surface shadow-soft',
+        'rounded-card border border-border bg-card shadow-soft',
         className
       )}
     >
@@ -267,7 +270,7 @@ export function CardHeader({
       <div className="min-w-0">
         <div className="flex items-center gap-2">
           {icon ? (
-            <span aria-hidden className="inline-flex text-textSecondary">
+            <span aria-hidden className="inline-flex text-textMuted">
               {icon}
             </span>
           ) : null}
@@ -322,11 +325,11 @@ export function PageHeader({
   return (
     <header className="mb-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
       <div className="min-w-0">
-        <h1 className="text-[28px] font-bold leading-[1.2] tracking-[-0.02em] text-textMain md:text-[30px]">
+        <h1 className="text-[23px] font-bold leading-[1.2] tracking-[-0.02em] text-textMain md:text-[24px]">
           {title}
         </h1>
         {description ? (
-          <div className="mt-2 max-w-[68ch] text-base leading-relaxed text-textSecondary">
+          <div className="mt-2 max-w-[68ch] text-[14px] leading-relaxed text-textSecondary">
             {description}
           </div>
         ) : null}
@@ -348,11 +351,11 @@ export function PageHeader({
 export type BadgeTone = 'primary' | 'soft' | 'ok' | 'danger' | 'muted';
 
 const BADGE_TONE_CLASSES: Record<BadgeTone, string> = {
-  primary: 'bg-primary/10 text-primary',
-  soft: 'bg-primary-soft/45 text-textMain',
-  ok: 'bg-ok/10 text-ok',
-  danger: 'bg-danger/10 text-danger',
-  muted: 'bg-textMuted/15 text-textSecondary'
+  primary: 'bg-accentSoft text-accentText',
+  soft: 'bg-primarySoft text-textMain',
+  ok: 'bg-okSoft text-okInk',
+  danger: 'bg-dangerSoft text-danger',
+  muted: 'bg-subtle text-textMuted'
 };
 
 export function StatusBadge({
@@ -474,11 +477,11 @@ export function TableHead({ children }: { children: ReactNode }) {
 }
 
 export function TableBody({ children }: { children: ReactNode }) {
-  return <tbody className="divide-y divide-border">{children}</tbody>;
+  return <tbody className="divide-y divide-borderSoft">{children}</tbody>;
 }
 
 export function TableFoot({ children }: { children: ReactNode }) {
-  return <tfoot className="border-t border-border bg-subtle">{children}</tfoot>;
+  return <tfoot className="border-t border-borderSoft bg-subtle">{children}</tfoot>;
 }
 
 export function TableRow({
@@ -497,8 +500,8 @@ export function TableRow({
       onClick={onClick}
       className={clsx(
         'transition-colors',
-        onClick ? 'cursor-pointer hover:bg-subtle' : '',
-        selected ? 'bg-primary/5' : '',
+        onClick ? 'cursor-pointer hover:bg-subtle/60' : '',
+        selected ? 'bg-accentSoft/60' : '',
         className
       )}
     >
@@ -524,7 +527,7 @@ export function TableHeadCell({
     <button
       type="button"
       onClick={onSort}
-      className="inline-flex min-h-10 items-center gap-1.5 rounded-sm text-[13px] font-medium text-textSecondary transition-colors hover:text-textMain"
+      className="inline-flex min-h-10 items-center gap-1.5 rounded-sm text-[11px] font-semibold uppercase tracking-[0.06em] text-textMuted transition-colors hover:text-textMain"
     >
       {children}
       <ArrowUpDown aria-hidden className="h-3.5 w-3.5" />
@@ -540,7 +543,7 @@ export function TableHeadCell({
         sort === 'asc' ? 'ascending' : sort === 'desc' ? 'descending' : undefined
       }
       className={clsx(
-        'bg-subtle px-4 py-3 text-[13px] font-medium text-textSecondary',
+        'bg-subtle px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.06em] text-textMuted',
         align === 'right' && 'text-right',
         align === 'center' && 'text-center',
         className
@@ -1264,10 +1267,10 @@ export function PeriodTabs({
 export type AlertTone = 'info' | 'ok' | 'warning' | 'danger';
 
 const ALERT_TONE_CLASSES: Record<AlertTone, string> = {
-  info: 'border-primary/20 bg-primary/10 text-primary',
-  ok: 'border-ok/20 bg-ok/10 text-ok',
-  warning: 'border-primary-soft/60 bg-primary-soft/30 text-textMain',
-  danger: 'border-danger/20 bg-danger/10 text-danger'
+  info: 'border-info/20 bg-info/10 text-infoInk',
+  ok: 'border-ok/25 bg-okSoft text-okInk',
+  warning: 'border-accentDeep/40 bg-accentSoft text-accentInk',
+  danger: 'border-danger/20 bg-dangerSoft text-danger'
 };
 
 function AlertIcon({ tone }: { tone: AlertTone }) {
@@ -1430,7 +1433,7 @@ export function TableSkeleton({ rows = 6 }: { rows?: number }) {
   return (
     <div role="status" aria-label="Memuat data">
       <span className="sr-only">Memuat data…</span>
-      <div className="divide-y divide-border">
+      <div className="divide-y divide-borderSoft">
         {Array.from({ length: rows }).map((_, index) => (
           <div key={index} className="flex items-center gap-4 px-5 py-4">
             <Skeleton className="h-9 w-9 shrink-0 rounded-sm" />
@@ -1454,7 +1457,7 @@ export function StatSkeleton({ count = 4 }: { count?: number }) {
     >
       <span className="sr-only">Memuat ringkasan…</span>
       {Array.from({ length: count }).map((_, index) => (
-        <div key={index} className="rounded-card bg-subtle p-5">
+        <div key={index} className="rounded-card border border-border bg-card p-5 shadow-soft">
           <Skeleton className="h-10 w-10 rounded-field" />
           <Skeleton className="mt-4 h-3 w-28" />
           <Skeleton className="mt-2 h-7 w-20" />
@@ -1491,10 +1494,10 @@ export type StatTone = 'default' | 'primary' | 'soft' | 'ok' | 'danger';
 
 const KPI_TONE_CLASSES: Record<StatTone, string> = {
   default: 'bg-subtle text-textSecondary',
-  primary: 'bg-primary/10 text-primary',
-  soft: 'bg-primary-soft/45 text-textMain',
-  ok: 'bg-ok/10 text-ok',
-  danger: 'bg-danger/10 text-danger'
+  primary: 'bg-accentSoft text-accentText',
+  soft: 'bg-primarySoft text-textMain',
+  ok: 'bg-okSoft text-okInk',
+  danger: 'bg-dangerSoft text-danger'
 };
 
 export function StatGrid({
@@ -1534,7 +1537,7 @@ export function KpiCard({
   tone?: StatTone;
 }) {
   return (
-    <div className="flex items-center gap-4 rounded-card bg-subtle p-5">
+    <div className="flex items-center gap-4 rounded-card border border-border bg-card p-5 shadow-soft">
       {icon ? (
         <span
           aria-hidden
@@ -1558,8 +1561,8 @@ export function KpiCard({
             className={clsx(
               'mt-1.5 line-clamp-2 min-h-[2.1rem] text-[13px] leading-snug',
               tone === 'danger' && 'font-semibold text-danger',
-              tone === 'ok' && 'font-medium text-ok',
-              tone === 'primary' && 'font-medium text-primary',
+              tone === 'ok' && 'font-medium text-okInk',
+              tone === 'primary' && 'font-medium text-accentText',
               tone === 'soft' && 'font-medium text-textMain',
               tone === 'default' && 'text-textSecondary'
             )}
@@ -1707,14 +1710,14 @@ export function BarChart({
           {data.map((item) => (
             <div
               key={item.label}
-              className="flex w-full max-w-[38px] justify-self-center items-end overflow-hidden rounded-field bg-subtle ring-1 ring-inset ring-border/70"
+              className="flex w-full max-w-[38px] justify-self-center items-end overflow-hidden rounded-field bg-subtle ring-1 ring-inset ring-border"
               style={{ height: `${barArea}px` }}
             >
               {item.value > 0 ? (
                 <div
                   className={clsx(
                     'w-full rounded-sm',
-                    item.highlight ? 'bg-primary' : 'bg-primary/70'
+                    item.highlight ? 'bg-accent' : 'bg-accent/55'
                   )}
                   style={{ height: `${(item.value / max) * 100}%` }}
                   title={`${item.label}: ${item.value} ${unit}`}
@@ -1727,7 +1730,7 @@ export function BarChart({
           {data.map((item) => (
             <span
               key={`label-${item.label}`}
-              className="text-center text-[11.5px] leading-none text-textSecondary"
+              className="text-center text-[11.5px] leading-none text-textMuted"
             >
               {item.label}
             </span>
@@ -1749,8 +1752,8 @@ export interface DonutSegment {
 }
 
 const DONUT_COLORS: Record<DonutColor, string> = {
-  primary: 'var(--tl-primary)',
-  soft: 'var(--tl-primary-soft)',
+  primary: 'var(--tl-accent)',
+  soft: '#D9E3C9',
   ok: 'var(--tl-ok)',
   danger: 'var(--tl-danger)',
   muted: 'var(--tl-text-muted)'
@@ -1795,7 +1798,7 @@ export function DonutChart({
         className="grid h-[156px] w-[156px] shrink-0 place-items-center rounded-full"
         style={{ background: `conic-gradient(${stops.join(', ')})` }}
       >
-        <div className="grid h-[118px] w-[118px] place-items-center rounded-full bg-surface text-center">
+        <div className="grid h-[118px] w-[118px] place-items-center rounded-full bg-card text-center">
           <div>
             <p className="text-[11.5px] text-textSecondary">{centerLabel}</p>
             <p className="tnum mt-0.5 text-[18px] font-bold text-textMain">{centerValue}</p>
@@ -1807,7 +1810,7 @@ export function DonutChart({
           const label = segment.href ? (
             <Link
               href={segment.href}
-              className="text-textMain underline decoration-textMuted/40 underline-offset-2 transition-colors hover:text-primary hover:decoration-primary"
+              className="text-textMain underline decoration-textMuted/40 underline-offset-2 transition-colors hover:text-accentText hover:decoration-accentText"
             >
               {segment.label}
             </Link>
@@ -1856,7 +1859,7 @@ export function Meter({
       <div
         className={clsx(
           'h-full rounded-full',
-          tone === 'ok' ? 'bg-ok' : tone === 'danger' ? 'bg-danger' : 'bg-primary'
+          tone === 'ok' ? 'bg-ok' : tone === 'danger' ? 'bg-danger' : 'bg-accent'
         )}
         style={{ width: `${width}%` }}
       />
@@ -1925,7 +1928,7 @@ export function KeyValue({
             <dd
               className={clsx(
                 'mt-0.5 truncate text-base font-semibold text-textMain',
-                item.tone === 'ok' && 'text-ok',
+                item.tone === 'ok' && 'text-okInk',
                 item.tone === 'danger' && 'text-danger'
               )}
             >
@@ -1956,7 +1959,7 @@ export function KeyValue({
           <dd
             className={clsx(
               'tnum shrink-0 text-[15px] font-semibold text-textMain',
-              item.tone === 'ok' && 'text-ok',
+              item.tone === 'ok' && 'text-okInk',
               item.tone === 'danger' && 'text-danger'
             )}
           >
@@ -2105,7 +2108,7 @@ export function SidebarNavItem({
             className={clsx(
               'flex min-h-12 w-full items-center gap-2.5 rounded-sm px-3 text-[15px] font-medium transition-colors',
               collapsed ? 'justify-center px-0' : '',
-              active ? 'bg-border/70 font-semibold text-textMain' : 'text-textSecondary hover:bg-border/60 hover:text-textMain'
+              active ? 'bg-white font-semibold text-textMain' : 'text-sidebarMuted hover:bg-sidebarSoft hover:text-white'
             )}
           >
             <span aria-hidden className="shrink-0">
@@ -2122,13 +2125,13 @@ export function SidebarNavItem({
             )}
           </button>
           {open && !collapsed ? (
-            <ul className="ml-5 mt-1 flex flex-col gap-1 border-l border-border pl-3">
+            <ul className="ml-5 mt-1 flex flex-col gap-1 border-l border-sidebarLine pl-3">
               {item.submenu?.map((child) => (
                 <li key={child.id}>
                   <Link
                     href={child.href}
                     onClick={onNavigate}
-                    className="flex min-h-11 items-center rounded-sm px-2.5 text-[14px] text-textSecondary transition-colors hover:bg-border/60 hover:text-textMain"
+                    className="flex min-h-11 items-center rounded-sm px-2.5 text-[14px] text-sidebarMuted transition-colors hover:bg-sidebarSoft hover:text-white"
                   >
                     {child.label}
                   </Link>
@@ -2148,8 +2151,8 @@ export function SidebarNavItem({
             'flex min-h-12 items-center gap-2.5 rounded-sm px-3 text-[15px] font-medium transition-colors',
             collapsed ? 'justify-center px-0' : '',
             active
-              ? 'bg-border/70 font-semibold text-textMain'
-              : 'text-textSecondary hover:bg-border/60 hover:text-textMain'
+              ? 'bg-white font-semibold text-textMain'
+              : 'text-sidebarMuted hover:bg-sidebarSoft hover:text-white'
           )}
         >
           <span aria-hidden className="shrink-0">
@@ -2167,14 +2170,14 @@ export function BrandMark({ className }: { className?: string }) {
     <span
       aria-hidden
       className={clsx(
-        'grid h-[26px] w-[26px] shrink-0 grid-cols-2 gap-[2px] rounded-sm bg-primary p-[5px]',
+        'grid h-[26px] w-[26px] shrink-0 grid-cols-2 gap-[2px] rounded-[10px] bg-accent p-[5px]',
         className
       )}
     >
-      <span className="rounded-full bg-white" />
-      <span className="rounded-full bg-white" />
-      <span className="rounded-full bg-white" />
-      <span className="rounded-full bg-white" />
+      <span className="rounded-full bg-accentInk" />
+      <span className="rounded-full bg-accentInk" />
+      <span className="rounded-full bg-accentInk" />
+      <span className="rounded-full bg-accentInk" />
     </span>
   );
 }
@@ -2203,7 +2206,7 @@ export function Sidebar({
   return (
     <aside
       className={clsx(
-        'flex h-full flex-col justify-between border-r border-border bg-sidebar transition-[width] duration-200',
+        'flex h-full flex-col justify-between border-r border-sidebarLine bg-sidebar text-sidebarInk transition-[width] duration-200',
         collapsed ? 'w-[76px]' : 'w-[250px]',
         className
       )}
@@ -2217,7 +2220,7 @@ export function Sidebar({
         >
           <BrandMark />
           {collapsed ? null : (
-            <span className="flex-1 text-[17px] font-bold tracking-[-0.01em] text-textMain">
+            <span className="flex-1 text-[17px] font-bold tracking-[-0.01em] text-sidebarInk">
               {brandLabel}
             </span>
           )}
@@ -2226,7 +2229,7 @@ export function Sidebar({
             onClick={onToggleCollapse}
             title={collapsed ? 'Perlebar sidebar' : 'Ciutkan sidebar'}
             aria-label={collapsed ? 'Perlebar sidebar' : 'Ciutkan sidebar'}
-            className="grid h-9 w-9 shrink-0 place-items-center rounded-sm text-textMuted transition-colors hover:bg-border/60 hover:text-textMain"
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-sm text-sidebarMuted transition-colors hover:bg-sidebarSoft hover:text-white"
           >
             <LayoutPanelLeft aria-hidden className="h-[18px] w-[18px]" />
           </button>
@@ -2237,7 +2240,7 @@ export function Sidebar({
         <nav aria-label="Navigasi utama" className="mt-6 flex flex-col gap-6">
           {groups.map((group) => (
             <div key={group.id}>
-              <p className="mb-2 px-2.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-textMuted">
+              <p className="mb-2 px-2.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-sidebarMuted">
                 {collapsed ? '' : group.label}
               </p>
               <ul className="flex flex-col gap-1">
@@ -2257,7 +2260,7 @@ export function Sidebar({
         </nav>
       </div>
 
-      <div className="border-t border-border px-4 pb-14 pt-4">{footer}</div>
+      <div className="border-t border-sidebarLine px-4 pb-14 pt-4">{footer}</div>
     </aside>
   );
 }
@@ -2292,25 +2295,25 @@ export function WorkspaceSelector({
         aria-label={`Wilayah kerja: ${current.label}`}
         title={collapsed ? current.label : undefined}
         className={clsx(
-          'flex min-h-12 w-full items-center gap-2.5 rounded-field border border-border bg-surface px-3 text-left shadow-soft transition-colors hover:border-textMuted/40',
+          'flex min-h-12 w-full items-center gap-2.5 rounded-field border border-sidebarLine bg-sidebarSoft px-3 text-left text-sidebarInk shadow-soft transition-colors hover:border-sidebarMuted/60',
           collapsed ? 'justify-center px-0' : ''
         )}
       >
         <span
           aria-hidden
-          className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-textMain text-[11px] font-bold text-white"
+          className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-accent text-[11px] font-bold text-accentInk"
         >
           {collapsed ? <MapPin className="h-3.5 w-3.5" /> : 'P'}
         </span>
         {collapsed ? null : (
           <>
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-[13.5px] font-semibold text-textMain">
+              <span className="block truncate text-[13.5px] font-semibold text-sidebarInk">
                 {current.label}
               </span>
-              <span className="block truncate text-[11.5px] text-textMuted">{current.hint}</span>
+              <span className="block truncate text-[11.5px] text-sidebarMuted">{current.hint}</span>
             </span>
-            <ChevronDown aria-hidden className="h-4 w-4 shrink-0 text-textMuted" />
+            <ChevronDown aria-hidden className="h-4 w-4 shrink-0 text-sidebarMuted" />
           </>
         )}
       </button>
@@ -2360,13 +2363,13 @@ export function Avatar({
 
   const toneClass =
     tone === 'ok'
-      ? 'bg-ok/15 text-ok'
+      ? 'bg-okSoft text-okInk'
       : tone === 'danger'
-        ? 'bg-danger/15 text-danger'
+        ? 'bg-dangerSoft text-danger'
         : tone === 'dark'
           ? 'bg-textMain text-white'
           : tone === 'soft'
-            ? 'bg-primary-soft/50 text-textMain'
+            ? 'bg-primarySoft text-textMain'
             : 'bg-primary/15 text-primary';
 
   return (
@@ -2642,7 +2645,7 @@ export function Topbar({
   return (
     <header
       className={clsx(
-        'flex min-h-[72px] flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3 sm:px-7',
+        'flex min-h-[72px] flex-wrap items-center justify-between gap-3 border-b border-borderSoft bg-surface px-4 py-3 sm:px-7',
         className
       )}
     >

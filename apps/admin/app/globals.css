@@ -3,23 +3,56 @@
 @tailwind utilities;
 
 :root {
-  /* `--font-jakarta`_now dimuat sendiri oleh next/font (lihat app/layout.tsx). */
+  /* Inter dimuat lewat next/font (lihat app/layout.tsx) sebagai --font-inter. */
 
-  /* Palette acuan: D:\Project\Tarlink\index.html + style.css.
-     Token yang sama dengan tailwind.config.ts, dipakai untuk gradient dan
-     elemen yang tidak bisawarnai lewat utility class. */
-  --tl-page: #f8f9fb;
-  --tl-sidebar: #f6f7f9;
-  --tl-subtle: #f7f8fa;
-  --tl-surface: #ffffff;
-  --tl-primary: #4e6bff;
-  --tl-primary-soft: #b8c7ff;
-  --tl-text-main: #1a1d26;
-  --tl-text-secondary: #6c727f;
-  --tl-text-muted: #9ea3ae;
-  --tl-border: #eceef2;
-  --tl-ok: #1f7a4d;
-  --tl-danger: #b3261e;
+  /* Palette acuan: northstar dashboard (kertas hangat, sidebar hampir hitam,
+     aksen kapur). Token yang sama dengan tailwind.config.ts, dipakai untuk
+     gradient, chart, dan elemen yang tidak bisa diwarnai lewat utility class. */
+  --tl-page: #ecebe6;
+  --tl-surface: #fbfbf9;
+  --tl-card: #ffffff;
+  --tl-subtle: #f4f4f2;
+
+  --tl-sidebar: #171816;
+  --tl-sidebar-soft: #232522;
+  --tl-sidebar-line: #2c302a;
+  --tl-sidebar-ink: #e9ece6;
+  --tl-sidebar-muted: #8f968c;
+
+  --tl-text-main: #15171a;
+  --tl-text-secondary: #3d4249;
+  --tl-text-muted: #5f6b76;
+
+  --tl-border: #ececeb;
+  --tl-border-soft: #f1f1ef;
+
+  --tl-primary: #15171a;
+  --tl-primary-deep: #272b30;
+  --tl-primary-soft: #f4f4f2;
+
+  --tl-accent: #c8f751;
+  --tl-accent-deep: #b6e83c;
+  --tl-accent-ink: #17210a;
+  --tl-accent-text: #417a12;
+  --tl-accent-soft: #eefbd5;
+  /* Segmen donat "refund sebagian": kapur yang diredupkan agar tidak
+     menyamai kapur aksen utama. */
+  --tl-accent-muted: #d9e3c9;
+
+  --tl-scroll-thumb: #d8d6ce;
+  --tl-scroll-thumb-hover: #c6c3b9;
+
+  --tl-ok: #4ba82e;
+  --tl-ok-ink: #417a12;
+  --tl-ok-soft: #eefbd5;
+
+  --tl-danger: #c02c5c;
+  --tl-danger-soft: #fde8ee;
+
+  --tl-info: #3b82f6;
+  --tl-info-ink: #1d4ed8;
+  --tl-violet: #9333ea;
+  --tl-pink: #d9488b;
 
   color-scheme: light;
 }
@@ -49,24 +82,29 @@
   }
 
   :focus-visible {
-    outline: 2px solid #4e6bff;
+    outline: 2px solid #15171a;
     outline-offset: 2px;
   }
 
+  /* Sidebar hampir hitam: outline global #15171A nyaris tak terlihat. */
+  aside :focus-visible {
+    outline-color: var(--tl-accent);
+  }
+
   ::selection {
-    background: #e8eeff;
-    color: #1a1d26;
+    background: #eefbd5;
+    color: #17210a;
   }
 
   input,
   select,
   textarea {
-    caret-color: #4e6bff;
+    caret-color: #15171a;
   }
 
   * {
     scrollbar-width: thin;
-    scrollbar-color: #d6dae3 transparent;
+    scrollbar-color: #d8d6ce #ecebe6;
   }
 
   *::-webkit-scrollbar {
@@ -75,24 +113,33 @@
   }
 
   *::-webkit-scrollbar-track {
-    background: transparent;
+    background: #ecebe6;
   }
 
   *::-webkit-scrollbar-thumb {
-    background: #d6dae3;
-    border: 3px solid #f8f9fb;
+    background: #d8d6ce;
+    border: 3px solid #ecebe6;
     border-radius: 999px;
   }
 
   *::-webkit-scrollbar-thumb:hover {
-    background: #b9bfcc;
+    background: #c6c3b9;
   }
+}
+
+/* Lucide menulis stroke-width sebagai atribut SVG (2). Aturan CSS menang atas
+   presentation attribute, jadi semua ikon ikut ketebalan referensi.
+   Sengaja di luar @layer: lucide-react baru menambahkan class ini saat runtime,
+   sehingga pemindai content Tailwind tidak pernah melihatnya. */
+.lucide {
+  stroke-width: 1.6;
 }
 
 @layer utilities {
   .tnum {
     font-variant-numeric: tabular-nums lining-nums;
   }
+
   .animate-fade-in {
     animation: fade-in 160ms ease-out both;
   }
