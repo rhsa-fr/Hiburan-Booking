@@ -19,6 +19,27 @@ export type CspOptions = {
 };
 
 const GOOGLE_IDENTITY = 'https://accounts.google.com';
+/** Avatars embedded by Google Identity Services. */
+const GOOGLE_AVATARS = 'https://*.googleusercontent.com';
+
+/**
+ * Normalises an absolute URL to its origin. A blank value falls back to the
+ * given origin, and a malformed value is reported and dropped: splicing the raw
+ * string into the CSP header could append unintended sources.
+ */
+export function toOrigin(value: string, fallback: string): string {
+  const candidate = value.trim();
+  if (!candidate) return fallback;
+  try {
+    const origin = new URL(candidate).origin;
+    // `file:` and other non-network schemes stringify as "null".
+    if (origin === 'null') return fallback;
+    return origin;
+  } catch {
+    console.warn(`[csp] mengabaikan origin tidak valid: ${candidate.slice(0, 80)}`);
+    return fallback;
+  }
+}
 
 /** Collapses duplicates while dropping blank values (failed origin parsing). */
 function unique(values: string[]): string[] {
@@ -41,16 +62,20 @@ export function buildContentSecurityPolicy(options: CspOptions): string {
   ].join(' ');
 
   // 'unsafe-inline' is required and has no nonce alternative: next/font emits an
-  // inline <style> for the font family and Tailwind writes inline component
-  // styles. A nonce here would break them without buying script protection.
-  const styleSrc = "'self' 'unsafe-inline'";
+  // inline @font-face block, and the chart components in components/ui.tsx pass
+  // style attributes (bar height, grid columns, conic-gradient, width %). A
+  // style nonce cannot cover style attributes, so it would break both without
+  // buying script protection. Google Identity Services also loads its button
+  // stylesheet from accounts.google.com/gsi/style.
+  const styleSrc = ["'self'", "'unsafe-inline'", GOOGLE_IDENTITY].join(' ');
 
   const imgSrc = [
     "'self'",
     'data:',
     'blob:',
     ...unique([apiOrigin, mediaOrigin]),
-    GOOGLE_IDENTITY
+    GOOGLE_IDENTITY,
+    GOOGLE_AVATARS
   ].join(' ');
 
   // ws: is needed by the dev HMR socket only.

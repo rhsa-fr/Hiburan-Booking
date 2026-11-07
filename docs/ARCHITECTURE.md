@@ -131,15 +131,25 @@ vendor unggah → vendor_media (status=pending) → admin approve → kolom publ
 - Panel mengirim CSP enforced per request dari `apps/admin/middleware.ts`
   (string-nya satu sumber di `apps/admin/lib/csp.ts`): `default-src 'self'`,
   `script-src 'self' 'nonce-<per-request>' 'strict-dynamic'
-  https://accounts.google.com`, allowlist origin API + `MEDIA_PUBLIC_BASE_URL`
-  untuk `img-src`/`connect-src`, `frame-ancestors 'none'`, plus
-  `X-Frame-Options: DENY`. Tidak ada `'unsafe-inline'` di `script-src`; nonce
-  dibuat tiap request dan ikut di header request supaya Next menempelkannya ke
-  `<script>` miliknya. `style-src` tetap `'unsafe-inline'` karena next/font dan
-  Tailwind menulis style inline. `'unsafe-eval'` dan `ws:` hanya ada di mode
-  dev. Konsekuensinya root layout memaksa `dynamic = 'force-dynamic'` (nonce
-  menuntut render per request), jadi panel tidak lagi punya rute prerender
-  statis.
+  https://accounts.google.com`; `style-src 'self' 'unsafe-inline'
+  https://accounts.google.com` (stylesheet tombol Google Identity Services);
+  `img-src` origin API + `MEDIA_PUBLIC_BASE_URL` +
+  `https://*.googleusercontent.com`; `connect-src` origin API +
+  `https://accounts.google.com`; `frame-src` Google; `frame-ancestors 'none'`;
+  `base-uri`, `form-action`, dan `object-src` dikunci. Tidak ada
+  `'unsafe-inline'` di `script-src`; nonce dibuat tiap request dan ikut di header
+  request supaya Next menempelkannya ke `<script>` miliknya. `style-src` tetap
+  `'unsafe-inline'` karena next/font menulis blok `@font-face` inline dan
+  komponen grafik memakai atribut `style`. `'unsafe-eval'` dan `ws:` hanya ada di
+  mode dev. `NEXT_PUBLIC_API_BASE_URL` dan `MEDIA_PUBLIC_BASE_URL` dibaca di Edge
+  middleware, jadi keduanya **di-inline saat build** dan nilainya harus sama
+  dengan yang dipakai API (termasuk bila media dilayani CDN); mengubahnya saat
+  `next start` tidak mengubah CSP, panel harus di-build ulang. Header `x-nonce`
+  ikut diteruskan untuk komponen server yang kelak membacanya. Dokumen error
+  bawaan framework (di luar root layout) tidak mendapat nonce dan tetap
+  fail-closed. Konsekuensinya root layout memaksa `dynamic = 'force-dynamic'`
+  (nonce menuntut render per request), jadi panel tidak lagi punya rute
+  prerender statis.
 
 ### 3.3 Chat booking (FR-050)
 

@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { describe, expect, it } from 'vitest';
-import { middleware } from './middleware';
+import { config, middleware } from './middleware';
 
 function run(path = '/bookings'): ReturnType<typeof middleware> {
   return middleware(new NextRequest(new URL(path, 'http://localhost:3002')));
@@ -47,5 +47,19 @@ describe('admin middleware CSP', () => {
 
     expect(first).not.toBeNull();
     expect(first).not.toBe(second);
+  });
+
+  it('keeps api/static/favicon and RSC prefetches out of the matcher', () => {
+    const matcher = config.matcher[0];
+
+    // Whole-segment anchoring keeps `/apidocs` and `/apikeys` behind the CSP.
+    expect(matcher.source).toContain('api(?:/|$)');
+    expect(matcher.source).toContain('_next/static(?:/|$)');
+    expect(matcher.source).toContain('_next/image(?:/|$)');
+    expect(matcher.source).toContain('favicon\\.ico$');
+    expect(matcher.missing).toEqual([
+      { type: 'header', key: 'next-router-prefetch' },
+      { type: 'header', key: 'purpose', value: 'prefetch' }
+    ]);
   });
 });
