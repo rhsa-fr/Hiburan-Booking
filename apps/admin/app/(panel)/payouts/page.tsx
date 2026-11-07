@@ -790,7 +790,7 @@ export default function PayoutsPage() {
               </div>
 
               {detailQuery.data.status === 'paid' ? (
-                <p className="flex items-center gap-2 text-sm text-ok">
+                <p className="flex items-center gap-2 text-sm text-okInk">
                   <CheckCircle2 aria-hidden className="h-4 w-4" />
                   Dana sudah dicairkan
                   {detailQuery.data.paid_at

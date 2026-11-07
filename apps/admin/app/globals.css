@@ -92,19 +92,19 @@
   }
 
   ::selection {
-    background: #eefbd5;
-    color: #17210a;
+    background: var(--tl-accent-soft);
+    color: var(--tl-accent-ink);
   }
 
   input,
   select,
   textarea {
-    caret-color: #15171a;
+    caret-color: var(--tl-text-main);
   }
 
   * {
     scrollbar-width: thin;
-    scrollbar-color: #d8d6ce #ecebe6;
+    scrollbar-color: var(--tl-scroll-thumb) var(--tl-page);
   }
 
   *::-webkit-scrollbar {
@@ -113,17 +113,17 @@
   }
 
   *::-webkit-scrollbar-track {
-    background: #ecebe6;
+    background: var(--tl-page);
   }
 
   *::-webkit-scrollbar-thumb {
-    background: #d8d6ce;
-    border: 3px solid #ecebe6;
+    background: var(--tl-scroll-thumb);
+    border: 3px solid var(--tl-page);
     border-radius: 999px;
   }
 
   *::-webkit-scrollbar-thumb:hover {
-    background: #c6c3b9;
+    background: var(--tl-scroll-thumb-hover);
   }
 }
 

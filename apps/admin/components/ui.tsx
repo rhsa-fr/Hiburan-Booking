@@ -57,7 +57,7 @@ const BUTTON_VARIANT_CLASSES: Record<ButtonVariant, string> = {
   outline:
     'border border-border bg-card text-textMain hover:bg-subtle hover:border-textMuted/40 disabled:border-border disabled:text-textMuted',
   ghost:
-    'text-primary hover:bg-primarySoft active:bg-primarySoft/80 disabled:text-textMuted',
+    'text-accentText hover:bg-accentSoft active:bg-accentSoft/80 disabled:text-textMuted',
   danger:
     'bg-danger text-white hover:bg-danger/90 active:bg-danger/80 disabled:bg-border disabled:text-textMuted',
   sidebar:
@@ -671,7 +671,7 @@ export function CalendarGrid({
         aria-label={cell.ariaLabel}
         aria-pressed={cell.selected}
         title={cell.ariaLabel}
-        className={clsx(base, stateClass, 'focus-visible:outline-none')}
+        className={clsx(base, stateClass)}
       >
         {inner}
       </button>
@@ -1753,7 +1753,7 @@ export interface DonutSegment {
 
 const DONUT_COLORS: Record<DonutColor, string> = {
   primary: 'var(--tl-accent)',
-  soft: '#D9E3C9',
+  soft: 'var(--tl-accent-muted)',
   ok: 'var(--tl-ok)',
   danger: 'var(--tl-danger)',
   muted: 'var(--tl-text-muted)'
@@ -2549,7 +2549,7 @@ export function GlobalSearch({
         event.preventDefault();
         onSubmit();
       }}
-      className="flex min-h-12 items-center gap-2 rounded-field border border-border bg-surface px-3"
+      className="flex min-h-12 items-center gap-2 rounded-field border border-border bg-surface px-3 transition-colors focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/30"
     >
       <Search aria-hidden className="h-4 w-4 shrink-0 text-textMuted" />
       <input

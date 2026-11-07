@@ -86,10 +86,10 @@ function HealthRow({
         <p className="text-[15px] font-medium text-textMain">{label}</p>
         <p className="tnum text-lg font-bold text-textMain">{formatPercentFromBp(bp, 1)}</p>
       </div>
-      <Meter percent={bp / 100} tone={below ? 'primary' : 'ok'} className="mt-2.5" />
+      <Meter percent={bp / 100} tone={below ? 'danger' : 'ok'} className="mt-2.5" />
       <div className="mt-1.5 flex items-baseline justify-between gap-3 text-[13px]">
         <span className="text-textSecondary">{targetLabel}</span>
-        <span className={below ? 'font-semibold text-primary' : 'font-medium text-okInk'}>
+        <span className={below ? 'font-semibold text-danger' : 'font-medium text-okInk'}>
           {below ? 'Di bawah target' : 'Di atas target'}
         </span>
       </div>
