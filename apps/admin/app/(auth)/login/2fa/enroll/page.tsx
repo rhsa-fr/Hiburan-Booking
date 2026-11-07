@@ -166,7 +166,7 @@ export default function EnrollTwoFactorPage() {
       setPhase('blocked');
       return;
     }
-    saveToken(result.access_token);
+    saveToken(result.access_token, result.user.id);
     const primaryRole =
       result.user.roles.find((role) => role.startsWith('admin_')) ?? result.user.roles[0] ?? '';
     saveSession({

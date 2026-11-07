@@ -80,7 +80,7 @@ export default function TwoFactorPage() {
       setFormError('Akun ini tidak punya akses ke panel operasi.');
       return;
     }
-    saveToken(result.access_token);
+    saveToken(result.access_token, result.user.id);
     const primaryRole =
       result.user.roles.find((role) => role.startsWith('admin_')) ?? result.user.roles[0] ?? '';
     saveSession({

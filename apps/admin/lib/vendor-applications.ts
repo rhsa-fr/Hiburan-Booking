@@ -1,4 +1,4 @@
-import { apiFetch } from './api';
+import { apiFetch, refreshAccessToken } from './api';
 import { readToken } from './session';
 
 export type VendorApplicationStatus = 'draft' | 'submitted' | 'approved' | 'rejected';
@@ -60,19 +60,35 @@ export async function rejectVendorApplication(
 /**
  * The private KTP endpoint needs the bearer token, so it cannot be an `<a href>`.
  * Fetch the bytes, then hand the browser a short-lived object URL.
+ *
+ * Cookies wajib ikut terkirim dan token 15 menit bisa kedaluwarsa di tengah
+ * sesi, jadi 401 ditukar sekali dengan access token baru sebelum menyerah.
  */
 export async function openVendorApplicationKtp(id: string): Promise<void> {
   const base = (process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001').replace(
     /\/$/,
     ''
   );
-  const token = readToken();
-  const response = await fetch(
-    `${base}/v1/admin/vendor-applications/${encodeURIComponent(id)}/ktp`,
-    { headers: token ? { Authorization: `Bearer ${token}` } : {} }
-  );
-  if (!response.ok) {
+  const endpoint = `${base}/v1/admin/vendor-applications/${encodeURIComponent(id)}/ktp`;
+  const previousToken = readToken();
+  let response = await fetch(endpoint, {
+    headers: previousToken ? { Authorization: `Bearer ${previousToken}` } : {},
+    credentials: 'include'
+  });
+  if (response.status === 401 && previousToken) {
+    const refreshed = await refreshAccessToken(previousToken);
+    if (refreshed) {
+      response = await fetch(endpoint, {
+        headers: { Authorization: `Bearer ${refreshed}` },
+        credentials: 'include'
+      });
+    }
+  }
+  if (response.status === 403) {
     throw new Error('KTP tidak bisa dibuka. Pastikan kamu admin super.');
+  }
+  if (!response.ok) {
+    throw new Error(`KTP tidak bisa dibuka (${response.status}). Coba lagi.`);
   }
   const blob = await response.blob();
   const url = URL.createObjectURL(blob);

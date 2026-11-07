@@ -33,7 +33,7 @@ import {
 import type { NotificationItem, SidebarNavGroupModel } from '@/components/ui';
 import { RegionProvider, useRegion } from '@/components/workspace/region-context';
 import type { RegionId } from '@/components/workspace/region-context';
-import { getDashboard, getOperators } from '@/lib/api';
+import { getDashboard, getOperators, logoutSession } from '@/lib/api';
 import { clearSession, readSession, readToken } from '@/lib/session';
 import type { OperatorSession } from '@/lib/session';
 
@@ -154,6 +154,26 @@ function Shell({ children }: { children: ReactNode }) {
     if (session) setOperator(session);
   }, [router]);
 
+  // Refresh gagal di tab mana pun mengakhiri sesi seluruh browser. Token dibagi
+  // lewat localStorage, jadi tab lain yang menghapusnya juga harus ikut keluar.
+  useEffect(() => {
+    function handleSessionEnded() {
+      clearSession();
+      router.replace('/login');
+    }
+    function handleStorage(event: StorageEvent) {
+      if (event.key === 'tarlink.admin.token' && event.newValue === null) {
+        handleSessionEnded();
+      }
+    }
+    window.addEventListener('tarlink:session-ended', handleSessionEnded);
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      window.removeEventListener('tarlink:session-ended', handleSessionEnded);
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, [router]);
+
   useEffect(() => {
     setMobileOpen(false);
   }, [pathname]);
@@ -188,7 +208,13 @@ function Shell({ children }: { children: ReactNode }) {
     router.push(query ? `/bookings?q=${encodeURIComponent(query)}` : '/bookings');
   }
 
-  function logout() {
+  async function logout() {
+    try {
+      // Cabut sesi + cookie refresh di server sebelum membuang state lokal.
+      await logoutSession();
+    } catch {
+      // Jaringan gagal tidak boleh menahan operator di panel.
+    }
     clearSession();
     router.push('/login');
   }
