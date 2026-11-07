@@ -453,8 +453,10 @@ booking tersebut. `403 FORBIDDEN` bila pemanggil bukan peserta booking.
 ### `GET /bookings/:id/disputes`
 
 Daftar sengketa booking, urut `opened_at` terbaru. Boleh diakses pelanggan pemilik
-booking, vendor terkait (`vendor_owner` / `vendor_member` yang berwenang), dan admin
-(`admin_support` / `admin_finance` / `admin_super`). Pemanggil lain → `403 FORBIDDEN`.
+booking, vendor terkait (`vendor_owner` atau `vendor_member` aktif dengan
+`can_respond`), dan admin (`admin_support` / `admin_finance` / `admin_super`).
+Pemanggil lain → `404 NOT_FOUND`, sama seperti `GET /bookings/:id`, agar keberadaan
+booking tidak bocor.
 
 ```json
 {

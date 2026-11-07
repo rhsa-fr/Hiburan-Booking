@@ -1341,15 +1341,16 @@ export class BookingService {
    * active `can_respond` `vendor_members` row — may see the dispute history.
    * That matches the controller's `vendor_member` grant; a member cannot open a
    * dispute, but must be able to read the one their vendor is party to.
+   *
+   * Non-participants get NOT_FOUND, like `assertCanView` (§7.3): a 403 here
+   * would confirm that the booking exists. The write path (`openDispute`)
+   * keeps FORBIDDEN because there the caller already named their intent.
    */
   private async resolveDisputeReader(row: BookingRow, user: AuthUser): Promise<void> {
     if (row.customer_id === user.id) return;
     if (isAdmin(user)) return;
     if (await this.repo.isVendorResponder(row.vendor_id, user.id)) return;
-    throw new AppError(
-      'FORBIDDEN',
-      `Peran [${user.roles.join(', ')}] tidak berwenang membaca sengketa booking ini`
-    );
+    throw new AppError('NOT_FOUND', `Booking ${row.id} tidak ditemukan`);
   }
 
   private async assertResponder(vendorId: string, user: AuthUser): Promise<void> {

@@ -479,7 +479,7 @@ describe('BookingService.listBookingDisputes', () => {
     const { repo, service } = harness(confirmedRow());
 
     await expect(service.listBookingDisputes(BOOKING_ID, STRANGER)).rejects.toMatchObject({
-      code: 'FORBIDDEN'
+      code: 'NOT_FOUND'
     });
     expect(repo.listDisputes).not.toHaveBeenCalled();
   });
@@ -489,7 +489,7 @@ describe('BookingService.listBookingDisputes', () => {
     repo.isVendorResponder.mockResolvedValueOnce(false);
 
     await expect(service.listBookingDisputes(BOOKING_ID, VENDOR)).rejects.toMatchObject({
-      code: 'FORBIDDEN'
+      code: 'NOT_FOUND'
     });
     expect(repo.listDisputes).not.toHaveBeenCalled();
   });
@@ -507,7 +507,7 @@ describe('BookingService.listBookingDisputes', () => {
 
     await expect(
       service.listBookingDisputes(BOOKING_ID, DUAL_ROLE_VENDOR)
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(repo.listDisputes).not.toHaveBeenCalled();
   });
 
