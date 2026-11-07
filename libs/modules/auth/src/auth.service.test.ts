@@ -104,7 +104,9 @@ class FakeAuthRepository implements AuthRepository {
   readonly otpRequests: StoredOtpRequest[] = [];
   readonly users: StoredUser[] = [];
   readonly roles: Array<{ userId: string; role: Role }> = [];
-  readonly sessions: Array<NewSession & { revokedAt: Date | null }> = [];
+  /** `id` mirrors `sessions.id`: generated here, never equal to `jti`. */
+  readonly sessions: Array<NewSession & { id: string; revokedAt: Date | null }> = [];
+  private sessionSeq = 0;
   readonly loginAttempts: NewLoginAttempt[] = [];
   readonly passwordUpdatedAt = new Map<string, Date>();
   readonly deletionRequests: AccountDeletionRecord[] = [];
@@ -301,7 +303,10 @@ class FakeAuthRepository implements AuthRepository {
   }
 
   async insertSession(input: NewSession): Promise<void> {
-    this.sessions.push({ ...input, revokedAt: null });
+    // Postgres generates `sessions.id` from its own default; the fake must mint
+    // a distinct value so `parent_id` linking is exercised, not hidden by jti.
+    this.sessionSeq += 1;
+    this.sessions.push({ ...input, id: `session-row-${this.sessionSeq}`, revokedAt: null });
   }
 
   async findActiveSessionByJti(jti: string, now: Date): Promise<{ userId: string } | null> {
@@ -330,6 +335,7 @@ class FakeAuthRepository implements AuthRepository {
     const row = this.sessions.find((session) => session.refreshTokenHash === refreshTokenHash);
     if (!row) return null;
     return {
+      id: row.id,
       jti: row.jti,
       userId: row.userId,
       familyId: row.familyId,
@@ -1920,7 +1926,9 @@ describe('AuthService.loginWithGoogle', () => {
     });
     const { repository, service } = makeHarness({ googleVerifier: verifier });
 
-    const result = sessionOf(await service.loginWithGoogle({ id_token: 'google-id-token' }));
+    const result = sessionOf(
+      await service.loginWithGoogle({ id_token: 'google-id-token', consent: CONSENT })
+    );
     const claims = verifyAccessToken(result.access_token, SECRET);
 
     expect(verifier.calls).toEqual(['google-id-token']);
@@ -1958,6 +1966,107 @@ describe('AuthService.loginWithGoogle', () => {
     expect(repository.users[0]?.emailVerifiedAt).not.toBeNull();
     expect(result.user.id).toBe(USER_ID);
     expect(result.user.roles).toEqual(['customer']);
+  });
+
+  it('rejects a new Google account without policy consent', async () => {
+    const verifier = verifierWith({
+      sub: 'google-sub-no-consent',
+      email: GOOGLE_EMAIL,
+      emailVerified: true
+    });
+    const { repository, service } = makeHarness({ googleVerifier: verifier });
+
+    await expect(service.loginWithGoogle({ id_token: 'google-id-token' })).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: 'Persetujuan Syarat & Ketentuan serta Kebijakan Privasi wajib dicentang'
+    });
+
+    expect(repository.users).toHaveLength(0);
+    expect(repository.sessions).toHaveLength(0);
+    expect(repository.consents).toHaveLength(0);
+  });
+
+  it('rejects a new Google account with a stale policy version', async () => {
+    const verifier = verifierWith({
+      sub: 'google-sub-stale',
+      email: GOOGLE_EMAIL,
+      emailVerified: true
+    });
+    const { repository, service } = makeHarness({ googleVerifier: verifier });
+
+    await expect(
+      service.loginWithGoogle({
+        id_token: 'google-id-token',
+        consent: { tos_version_id: PRIVACY_VERSION_ID, privacy_version_id: PRIVACY_VERSION_ID }
+      })
+    ).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: 'Versi kebijakan sudah berubah. Muat ulang halaman pendaftaran.'
+    });
+
+    expect(repository.users).toHaveLength(0);
+    expect(repository.consents).toHaveLength(0);
+  });
+
+  it('records ToS and privacy consent for a new Google account', async () => {
+    const verifier = verifierWith({
+      sub: 'google-sub-with-consent',
+      email: GOOGLE_EMAIL,
+      emailVerified: true
+    });
+    const { repository, service } = makeHarness({ googleVerifier: verifier });
+
+    const result = sessionOf(
+      await service.loginWithGoogle({
+        id_token: 'google-id-token',
+        consent: CONSENT,
+        ip: '203.0.113.9',
+        userAgent: 'vitest'
+      })
+    );
+    const claims = verifyAccessToken(result.access_token, SECRET);
+
+    expect(result.user.roles).toEqual(['customer']);
+    expect(claims.sub).toBe(repository.users[0]?.id);
+    expect(repository.sessions).toHaveLength(1);
+    expect(repository.consents).toEqual([
+      {
+        policyCode: 'tos',
+        policyVersionId: TOS_VERSION_ID,
+        acceptedAt: expect.any(Date),
+        ip: '203.0.113.9',
+        userAgent: 'vitest'
+      },
+      {
+        policyCode: 'privacy',
+        policyVersionId: PRIVACY_VERSION_ID,
+        acceptedAt: expect.any(Date),
+        ip: '203.0.113.9',
+        userAgent: 'vitest'
+      }
+    ]);
+  });
+
+  it('logs in an existing Google account without consent', async () => {
+    const verifier = verifierWith({
+      sub: 'google-sub-repeat',
+      email: GOOGLE_EMAIL,
+      emailVerified: true
+    });
+    const { repository, service } = makeHarness({ googleVerifier: verifier });
+    addUser(repository, ['customer'], {
+      id: USER_ID,
+      email: GOOGLE_EMAIL,
+      phone: null,
+      googleSub: 'google-sub-repeat'
+    });
+
+    const result = sessionOf(await service.loginWithGoogle({ id_token: 'google-id-token' }));
+
+    expect(result.user.id).toBe(USER_ID);
+    expect(repository.users).toHaveLength(1);
+    expect(repository.consents).toHaveLength(0);
+    expect(repository.sessions).toHaveLength(1);
   });
 
   it('rejects an invalid ID token with UNAUTHENTICATED', async () => {
@@ -2157,6 +2266,7 @@ describe('AuthService.getProfile', () => {
 describe('AuthService.deleteAccount (FR-101)', () => {
   function seedSession(repository: FakeAuthRepository) {
     repository.sessions.push({
+      id: 'session-row-seed-1',
       jti: 'jti-delete-1',
       userId: USER_ID,
       issuedAt: new Date('2026-10-21T09:00:00.000Z'),
@@ -2524,6 +2634,14 @@ describe('AuthService refresh token + IP limits', () => {
     expect(refreshed.access_token).not.toBe(login.access_token);
     const active = repository.sessions.filter((session) => session.revokedAt === null);
     expect(active).toHaveLength(1);
+
+    // The child row must point at the old row's `id` (the FK target), not its
+    // jti, which is a different value and made PostgreSQL reject the rotation.
+    const oldSession = repository.sessions[0];
+    const newSession = active[0];
+    expect(oldSession?.id).not.toBe(oldSession?.jti);
+    expect(newSession?.parentId).toBe(oldSession?.id);
+    expect(newSession?.parentId).not.toBe(oldSession?.jti);
   });
 
   it('revokes the whole family when a rotated token is replayed', async () => {

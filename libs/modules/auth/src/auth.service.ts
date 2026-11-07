@@ -179,6 +179,11 @@ export interface RegisterInput {
 
 export interface GoogleLoginInput {
   readonly id_token: string;
+  /**
+   * FR-103: only consumed when this sign-in creates a new account; ignored for
+   * an account that already exists (Google sub or linked email).
+   */
+  readonly consent?: PolicyConsentInput;
   readonly ip?: string | null;
   readonly userAgent?: string | null;
 }
@@ -587,50 +592,9 @@ export class AuthService {
       throw new AppError('CONFLICT', 'Email atau nomor sudah terdaftar');
     }
 
-    if (!input.consent) {
-      throw new AppError(
-        'VALIDATION_ERROR',
-        'Persetujuan Syarat & Ketentuan serta Kebijakan Privasi wajib dicentang'
-      );
-    }
-
-    // Only the version that is active right now may be accepted. This stops a
-    // stale tab from recording consent to text the user no longer saw.
-    const [tos, privacy] = await Promise.all([
-      this.repository.findActivePolicyVersion('tos'),
-      this.repository.findActivePolicyVersion('privacy')
-    ]);
-    if (!tos || !privacy) {
-      throw new AppError('INTERNAL_ERROR', 'Kebijakan belum tersedia');
-    }
-    if (
-      input.consent.tos_version_id !== tos.id ||
-      input.consent.privacy_version_id !== privacy.id
-    ) {
-      throw new AppError(
-        'VALIDATION_ERROR',
-        'Versi kebijakan sudah berubah. Muat ulang halaman pendaftaran.'
-      );
-    }
-
     const now = this.now();
+    const consents = await this.buildConsents(input.consent, input.ip, input.userAgent, now);
     const passwordHash = await hashPassword(input.password);
-    const consents: NewUserConsent[] = [
-      {
-        policyCode: tos.code,
-        policyVersionId: tos.id,
-        acceptedAt: now,
-        ip: input.ip ?? null,
-        userAgent: input.userAgent ?? null
-      },
-      {
-        policyCode: privacy.code,
-        policyVersionId: privacy.id,
-        acceptedAt: now,
-        ip: input.ip ?? null,
-        userAgent: input.userAgent ?? null
-      }
-    ];
     const newUser: NewUser = {
       id: this.newId(),
       phone: phone ?? null,
@@ -653,6 +617,61 @@ export class AuthService {
   }
 
   /**
+   * FR-103: validates the accepted policy versions and turns them into rows for
+   * `createUser`. Only the version that is active right now may be accepted;
+   * this stops a stale tab or a stale Google sign-in page from recording consent
+   * to text the user no longer saw. Shared by registration and first-time Google
+   * sign-up so both write the same two rows (tos, then privacy).
+   */
+  private async buildConsents(
+    consent: PolicyConsentInput | undefined,
+    ip: string | null | undefined,
+    userAgent: string | null | undefined,
+    now: Date
+  ): Promise<NewUserConsent[]> {
+    if (!consent) {
+      throw new AppError(
+        'VALIDATION_ERROR',
+        'Persetujuan Syarat & Ketentuan serta Kebijakan Privasi wajib dicentang'
+      );
+    }
+
+    const [tos, privacy] = await Promise.all([
+      this.repository.findActivePolicyVersion('tos'),
+      this.repository.findActivePolicyVersion('privacy')
+    ]);
+    if (!tos || !privacy) {
+      throw new AppError('INTERNAL_ERROR', 'Kebijakan belum tersedia');
+    }
+    if (
+      consent.tos_version_id !== tos.id ||
+      consent.privacy_version_id !== privacy.id
+    ) {
+      throw new AppError(
+        'VALIDATION_ERROR',
+        'Versi kebijakan sudah berubah. Muat ulang halaman pendaftaran.'
+      );
+    }
+
+    return [
+      {
+        policyCode: tos.code,
+        policyVersionId: tos.id,
+        acceptedAt: now,
+        ip: ip ?? null,
+        userAgent: userAgent ?? null
+      },
+      {
+        policyCode: privacy.code,
+        policyVersionId: privacy.id,
+        acceptedAt: now,
+        ip: ip ?? null,
+        userAgent: userAgent ?? null
+      }
+    ];
+  }
+
+  /**
    * Google Sign-In. The ID token is verified server-side by the injected
    * verifier; this module never trusts claims decoded by the client.
    */
@@ -672,6 +691,15 @@ export class AuthService {
         await this.repository.linkGoogleAccount(existingByEmail.id, identity.sub, now);
         user = existingByEmail;
       } else {
+        // FR-103: a first-time Google sign-up is a registration, so the policy
+        // versions must be accepted before the account exists. Existing
+        // accounts (above) never reach this branch and need no consent.
+        const consents = await this.buildConsents(
+          input.consent,
+          input.ip ?? null,
+          input.userAgent ?? null,
+          now
+        );
         try {
           user = await this.repository.createUser({
             id: this.newId(),
@@ -681,7 +709,8 @@ export class AuthService {
             passwordHash: null,
             passwordUpdatedAt: null,
             googleSub: identity.sub,
-            emailVerifiedAt: now
+            emailVerifiedAt: now,
+            consents
           });
         } catch (err) {
           // Email/phone already used by an account we could not load (e.g.
@@ -1026,7 +1055,9 @@ export class AuthService {
     return this.issueSession(user, roles, now, {
       includeEmail: true,
       familyId: session.familyId,
-      parentId: session.jti
+      // `sessions.parent_id` is a FK to `sessions.id`; the jti is a different
+      // column, so linking to it violates the constraint on rotation.
+      parentId: session.id
     });
   }
 

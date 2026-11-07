@@ -17,13 +17,15 @@
  * - `countFailedTotpAttemptsByIp` counts only the given address.
  * - `insertAdminChallenge` keeps exactly one open challenge per user, and a
  *   second issuance replaces id/token/kind/expiry and resets `attempts`.
+ * - A rotated session links `parent_id` to the previous row's `sessions.id`
+ *   (the FK target), not to its `jti`.
  *
  * Every row it writes is prefixed with a per-run marker (`zz-auth-it-*`) so a
  * shared dev database never makes the assertions flaky, and every row is
  * removed in `afterAll`. Requires migrations 001..026 already applied; the
  * partial unique index from 026 is what the upsert relies on.
  */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { closePool } from '@tarlink/core/db';
@@ -260,5 +262,68 @@ describe.skipIf(!RUN_DB_TESTS)('PgAuthRepository 2FA queries against PostgreSQL'
     );
     expect(open.rows).toHaveLength(1);
     expect([first.id, second.id]).toContain(open.rows[0]?.id);
+  }, 30_000);
+
+  it('links a rotated session to the previous row id, not its jti', async () => {
+    expect(tempUserId).not.toBeNull();
+    const userId = tempUserId as string;
+    const refreshTtlMs = 30 * 24 * 60 * 60_000;
+    const familyId = randomUUID();
+
+    // `refresh_token_hash` is CHAR(64); sha256 hex keeps the value exactly 64.
+    const firstHash = createHash('sha256').update(`${RUN}-refresh-1`).digest('hex');
+    const firstJti = randomUUID();
+    const firstIssuedAt = new Date();
+    const firstRefreshExpiresAt = new Date(firstIssuedAt.getTime() + refreshTtlMs);
+
+    await repository.insertSession({
+      jti: firstJti,
+      userId,
+      issuedAt: firstIssuedAt,
+      expiresAt: firstRefreshExpiresAt,
+      userAgent: 'zz-auth-it',
+      ip: null,
+      refreshTokenHash: firstHash,
+      refreshExpiresAt: firstRefreshExpiresAt,
+      familyId,
+      parentId: null
+    });
+
+    // Same call sequence as `AuthService.refreshWithToken`.
+    const session = await repository.findSessionByRefreshHash(firstHash);
+    if (!session) throw new Error('session lookup returned null after insert');
+    expect(session.jti).toBe(firstJti);
+    // `sessions.id` is database-generated, so it must differ from the jti.
+    expect(session.id).not.toBe(session.jti);
+
+    expect(await repository.markSessionRotated(session.jti, new Date())).toBe(true);
+
+    const secondHash = createHash('sha256').update(`${RUN}-refresh-2`).digest('hex');
+    const secondJti = randomUUID();
+    const secondIssuedAt = new Date();
+    const secondRefreshExpiresAt = new Date(secondIssuedAt.getTime() + refreshTtlMs);
+
+    // Before the fix `parentId` was the jti, so PostgreSQL rejected this insert
+    // with 23503 (sessions_parent_id_fkey) instead of rotating the session.
+    await repository.insertSession({
+      jti: secondJti,
+      userId,
+      issuedAt: secondIssuedAt,
+      expiresAt: secondRefreshExpiresAt,
+      userAgent: 'zz-auth-it',
+      ip: null,
+      refreshTokenHash: secondHash,
+      refreshExpiresAt: secondRefreshExpiresAt,
+      familyId,
+      parentId: session.id
+    });
+
+    const { rows } = await pool.query<{ id: string; parent_id: string | null }>(
+      'SELECT id, parent_id FROM sessions WHERE jti = $1',
+      [secondJti]
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.id).not.toBe(session.id);
+    expect(rows[0]?.parent_id).toBe(session.id);
   }, 30_000);
 });
