@@ -128,16 +128,18 @@ vendor unggah → vendor_media (status=pending) → admin approve → kolom publ
   yang dicabut langsung ditolak. 2FA admin (FR-128) dan mode cookie HttpOnly untuk
   panel sudah ada: `refresh_token` panel hidup di cookie `tarlink_rt`
   (`HttpOnly`, `SameSite=Strict`, `Path=/v1/auth`), bukan di storage JavaScript.
-- Panel mengirim CSP enforced (`default-src 'self'`, allowlist origin API, origin
-  media dari `MEDIA_PUBLIC_BASE_URL`, dan Google Identity Services,
-  `frame-ancestors 'none'`) plus `X-Frame-Options: DENY`; `'unsafe-eval'` dan `ws:`
-  hanya ada di mode dev. `script-src` masih memakai `'unsafe-inline'` karena Next
-  belum memakai nonce lewat middleware — ini utang teknis yang harus ditutup
-  sebelum panel dianggap tahan XSS. Nonce belum dipasang karena CSP saat ini
-  statis di `headers()`: CSP ber-nonce harus dibuat per-request di `middleware.ts`,
-  dan Next hanya menyuntikkan nonce ke rute yang dirender dinamis. Mengaktifkannya
-  berarti memaksa seluruh rute panel dinamis (kehilangan prerender); keputusan itu
-  belum diambil.
+- Panel mengirim CSP enforced per request dari `apps/admin/middleware.ts`
+  (string-nya satu sumber di `apps/admin/lib/csp.ts`): `default-src 'self'`,
+  `script-src 'self' 'nonce-<per-request>' 'strict-dynamic'
+  https://accounts.google.com`, allowlist origin API + `MEDIA_PUBLIC_BASE_URL`
+  untuk `img-src`/`connect-src`, `frame-ancestors 'none'`, plus
+  `X-Frame-Options: DENY`. Tidak ada `'unsafe-inline'` di `script-src`; nonce
+  dibuat tiap request dan ikut di header request supaya Next menempelkannya ke
+  `<script>` miliknya. `style-src` tetap `'unsafe-inline'` karena next/font dan
+  Tailwind menulis style inline. `'unsafe-eval'` dan `ws:` hanya ada di mode
+  dev. Konsekuensinya root layout memaksa `dynamic = 'force-dynamic'` (nonce
+  menuntut render per request), jadi panel tidak lagi punya rute prerender
+  statis.
 
 ### 3.3 Chat booking (FR-050)
 
@@ -325,6 +327,14 @@ sengketa, audit, pengaturan, wilayah (`regions`, FR-125), pengajuan vendor
 
 Aturan: panel tidak menghitung uang sendiri; semua angka dari `GET /admin/*`.
 
+Tampilan panel punya bahasa visual sendiri, terpisah dari aplikasi pelanggan
+(ADR 0012 di vault): kertas hangat `#ECEBE6`, kartu putih `#FFFFFF` bergaris rambut
+`#ECECEB`, sidebar hampir hitam `#171816`, aksi utama gelap `#15171A`, aksen kapur
+`#C8F751` yang hanya dipakai sebagai isian (teks di atas kapur memakai `#17210A`),
+Inter lewat `next/font`, dan `lucide-react` stroke 1.6. Token tinggal di
+`apps/admin/tailwind.config.ts` + `apps/admin/app/globals.css`; halaman memakai kelas
+semantik, bukan hex. Aplikasi pelanggan tetap Graphite Lime (ADR 0008).
+
 Lane verifikasi panel:
 
 - `npm run typecheck:admin` — kode produksi saja; `apps/admin/tsconfig.json`
@@ -336,10 +346,12 @@ Lane verifikasi panel:
   `**/*.test.tsx` di panel; `npm -w apps/admin test` menjalankan Vitest yang sama
   dari workspace (mengandalkan `vitest` yang di-hoist dari root), sedangkan lane
   typecheck test hanya ada di `npm run test:admin`.
-- `npm run verify:admin` — header CSP + keamanan dan hidrasi `/login` lewat Chrome
-  headless (CDP, tanpa dependency); panel harus berjalan lebih dulu. Alur login +
-  2FA, viewer KTP blob, refresh dan logout lintas tab diuji manual di Chrome
-  headless pada 2026-11-07.
+- `npm run verify:admin` — header CSP (nonce per request, tanpa
+  `'unsafe-inline'`/`'unsafe-eval'` di `script-src`, nonce berbeda antar request)
+  + header keamanan dan hidrasi `/login` lewat Chrome headless (CDP, tanpa
+  dependency); panel harus berjalan lebih dulu. Alur login + 2FA, viewer KTP
+  blob, refresh dan logout lintas tab diuji manual di Chrome headless pada
+  2026-11-07.
 
 ## 9. Aplikasi Flutter (pelanggan + portal vendor)
 
