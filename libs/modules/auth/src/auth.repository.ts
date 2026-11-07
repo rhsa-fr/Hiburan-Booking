@@ -221,8 +221,11 @@ export interface AuthRepository {
   countFailedLoginAttemptsByIp(ip: string, since: Date): Promise<number>;
   /**
    * Number of failed TOTP logins for `email` created at/after `since`, counted
-   * across every challenge. An empty email means "unknown", so the email
-   * predicate is dropped and the whole window is counted.
+   * across every challenge. An empty email counts only the attempts recorded
+   * without an email — a bounded bucket for accounts that have none — never
+   * another account's failures. Residual: email-less accounts share that
+   * bucket because `login_attempts` has no `user_id` column; adding one would
+   * need a migration.
    */
   countFailedTotpAttempts(email: string, since: Date): Promise<number>;
   /** Number of failed TOTP logins from `ip` created at/after `since`. */
@@ -649,13 +652,32 @@ export class PgAuthRepository implements AuthRepository {
   }
 
   async countFailedTotpAttempts(email: string, since: Date): Promise<number> {
+    // Two branches instead of `($1 = '' OR lower(email) = lower($1))`: the OR
+    // form drops the email predicate for an empty email and counts every
+    // account's failures, while each branch here keeps `lower(email)` first so
+    // `login_attempts_email_idx` stays usable.
+    if (email.length === 0) {
+      // Bucket for accounts without an email: only rows stored with an empty
+      // email. They share it because `login_attempts` has no `user_id` column.
+      const rows = await query<{ count: number }>(
+        `SELECT COUNT(*)::int AS count
+           FROM login_attempts
+          WHERE succeeded = false
+            AND stage = 'totp'
+            AND created_at >= $1
+            AND lower(email) = ''`,
+        [since]
+      );
+      return rows[0]?.count ?? 0;
+    }
+
     const rows = await query<{ count: number }>(
       `SELECT COUNT(*)::int AS count
          FROM login_attempts
-        WHERE succeeded = false
+        WHERE lower(email) = lower($1)
+          AND succeeded = false
           AND stage = 'totp'
-          AND created_at >= $2
-          AND ($1 = '' OR lower(email) = lower($1))`,
+          AND created_at >= $2`,
       [email, since]
     );
     return rows[0]?.count ?? 0;

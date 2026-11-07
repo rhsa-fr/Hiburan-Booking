@@ -275,7 +275,9 @@ class FakeAuthRepository implements AuthRepository {
         !row.succeeded &&
         (row.stage ?? 'password') === 'totp' &&
         row.createdAt >= since &&
-        (needle.length === 0 || row.email.toLowerCase() === needle)
+        // Mirrors the repository: an empty needle matches only rows stored
+        // without an email, never other accounts' failures.
+        row.email.toLowerCase() === needle
     ).length;
   }
 
@@ -1090,6 +1092,16 @@ describe('AuthService admin 2FA (FR-128)', () => {
     }
   }
 
+  /**
+   * Simulates an account that has no email: `recordTotpAttempt` then stores
+   * `''` and the counters bucket by that empty value.
+   */
+  function setAdminEmail(repository: FakeAuthRepository, email: string | null): void {
+    const admin = repository.users.find((candidate) => candidate.id === ADMIN_ID);
+    if (!admin) throw new Error('expected the test admin to exist');
+    admin.email = email;
+  }
+
   it('AC5.1 answers mfa_setup_required and issues no session for an unenrolled admin', async () => {
     const { repository, service } = makeHarness();
     await addAdminUser(repository);
@@ -1199,6 +1211,118 @@ describe('AuthService admin 2FA (FR-128)', () => {
     ).rejects.toMatchObject({ code: 'RATE_LIMITED' });
 
     expect(repository.challenges).toHaveLength(1);
+    expect(repository.sessions).toHaveLength(0);
+  });
+
+  it('keeps an email-less account and a named account in separate TOTP budgets', async () => {
+    const harness = makeHarness();
+    const { repository, service } = harness;
+    const secondAdminId = '66666666-6666-4666-8666-666666666666';
+    const secondAdminEmail = 'a@example.test';
+    const secondAdminPassword = 'rahasia-admin-lain';
+
+    await addAdminUser(repository);
+    enableTwoFactor(repository, ADMIN_ID);
+    addUser(repository, ['admin_super'], {
+      id: secondAdminId,
+      phone: '629111222555',
+      email: secondAdminEmail,
+      passwordHash: await hashPassword(secondAdminPassword)
+    });
+    enableTwoFactor(repository, secondAdminId);
+
+    const valid = generateTotpCode(TEST_TOTP_SECRET, harness.now());
+    const wrong = valid === '000000' ? '000001' : '000000';
+
+    // Two failures while the account has no email land in the empty bucket.
+    const token = await openChallenge(harness);
+    setAdminEmail(repository, null);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      expect(await wrongCodeResult(service, token, wrong)).toBe('UNAUTHENTICATED');
+    }
+    expect(
+      repository.loginAttempts.filter((row) => row.stage === 'totp' && row.email === '')
+    ).toHaveLength(2);
+    setAdminEmail(repository, ADMIN_EMAIL);
+
+    // Those two belong to the empty bucket only: the named account still has
+    // its own full budget, which `spendTotpBudget` asserts by locking exactly
+    // on the tenth failure.
+    await spendTotpBudget(harness, {
+      email: secondAdminEmail,
+      password: secondAdminPassword
+    });
+    expect(
+      repository.loginAttempts.filter(
+        (row) => row.stage === 'totp' && row.email.toLowerCase() === secondAdminEmail
+      ).length
+    ).toBe(TOTP_FAILURE_MAX);
+    // ...and its failures never landed in the empty bucket.
+    expect(
+      repository.loginAttempts.filter(
+        (row) => row.stage === 'totp' && !row.succeeded && row.email === ''
+      )
+    ).toHaveLength(2);
+
+    const emailLess = await openChallenge(harness);
+    setAdminEmail(repository, null);
+    // The right code still logs in: ten failures for another account are not
+    // the email-less account's failures.
+    await expect(
+      service.verifyTwoFactorCode({
+        challenge_token: emailLess,
+        code: generateTotpCode(TEST_TOTP_SECRET, harness.now())
+      })
+    ).resolves.toMatchObject({ user: { roles: ['admin_super'] } });
+    expect(repository.sessions).toHaveLength(1);
+  });
+
+  it('still locks an account that has no email after ten failures', async () => {
+    const harness = makeHarness();
+    const { repository, service } = harness;
+    await addAdminUser(repository);
+    enableTwoFactor(repository, ADMIN_ID);
+
+    const valid = generateTotpCode(TEST_TOTP_SECRET, harness.now());
+    const wrong = valid === '000000' ? '000001' : '000000';
+
+    // Six guesses spend the first ticket's cap while the account has no email,
+    // so every failure is recorded with an empty email.
+    const first = await openChallenge(harness);
+    setAdminEmail(repository, null);
+    for (let attempt = 1; attempt <= TOTP_CHALLENGE_MAX_ATTEMPTS; attempt += 1) {
+      expect(await wrongCodeResult(service, first, wrong)).toBe(
+        attempt === TOTP_CHALLENGE_MAX_ATTEMPTS ? 'RATE_LIMITED' : 'UNAUTHENTICATED'
+      );
+    }
+
+    // Four more on a fresh ticket spend the empty bucket's window budget.
+    setAdminEmail(repository, ADMIN_EMAIL);
+    const second = await openChallenge(harness);
+    setAdminEmail(repository, null);
+    const remaining = TOTP_FAILURE_MAX - TOTP_CHALLENGE_MAX_ATTEMPTS;
+    for (let attempt = 1; attempt <= remaining; attempt += 1) {
+      expect(await wrongCodeResult(service, second, wrong)).toBe(
+        attempt === remaining ? 'RATE_LIMITED' : 'UNAUTHENTICATED'
+      );
+    }
+    expect(
+      repository.loginAttempts.filter((row) => row.stage === 'totp' && row.email === '')
+    ).toHaveLength(TOTP_FAILURE_MAX);
+
+    // The empty bucket is spent too: a fresh ticket refuses even the right code.
+    setAdminEmail(repository, ADMIN_EMAIL);
+    const third = await openChallenge(harness);
+    setAdminEmail(repository, null);
+    await expect(
+      service.verifyTwoFactorCode({
+        challenge_token: third,
+        code: generateTotpCode(TEST_TOTP_SECRET, harness.now())
+      })
+    ).rejects.toMatchObject({
+      code: 'RATE_LIMITED',
+      message: expect.stringContaining('Coba lagi nanti')
+    });
     expect(repository.sessions).toHaveLength(0);
   });
 

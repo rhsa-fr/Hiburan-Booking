@@ -1166,9 +1166,9 @@ export class AuthService {
   }
 
   /**
-   * True when the window-wide TOTP failure budget is spent for the email or the
-   * IP. Both counters are checked so one host cannot spread guesses over many
-   * accounts and one account cannot be guessed from many hosts.
+   * True when the TOTP failure budget is spent for the email or the IP. Both
+   * counters are checked so one host cannot spread guesses over many accounts
+   * and one account cannot be guessed from many hosts.
    */
   private async totpFailureCapReached(
     email: string | null,
@@ -1177,8 +1177,8 @@ export class AuthService {
   ): Promise<boolean> {
     const windowStart = new Date(now.getTime() - TOTP_FAILURE_WINDOW_SECONDS * 1000);
     const [byEmail, byIp] = await Promise.all([
-      // An unknown email falls back to the whole window: over-counting only
-      // tightens the lockout, it never lets a guess through.
+      // An account without an email counts only the attempts recorded without
+      // an email (a bounded bucket), never another account's failures.
       this.repository.countFailedTotpAttempts(email ?? '', windowStart),
       ip ? this.repository.countFailedTotpAttemptsByIp(ip, windowStart) : Promise.resolve(0)
     ]);
