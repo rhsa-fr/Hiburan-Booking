@@ -17,6 +17,13 @@ const jakarta = Plus_Jakarta_Sans({
   fallback: ['system-ui', 'Segoe UI', 'sans-serif']
 });
 
+/**
+ * CSP panel memakai nonce per request (apps/admin/middleware.ts), dan Next hanya
+ * menempelkan nonce ke <script>-nya saat rute dirender dinamis. Karena itu
+ * seluruh rute panel dipaksa dinamis; prerender statis memang dilepas.
+ */
+export const dynamic = 'force-dynamic';
+
 export const metadata: Metadata = {
   title: {
     default: 'Tarlink Admin',

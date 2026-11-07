@@ -168,7 +168,9 @@ Sudah diperbaiki (jangan dikembalikan tanpa keputusan tertulis):
 - Pencarian vendor memakai index trigram (`pg_trgm`).
 - `dev_code` OTP butuh `OTP_DEV_MODE=true` dan `NODE_ENV != production`.
 - Refresh token panjang (30 hari) + rotasi + deteksi reuse; job `cleanup-auth`.
-- Panel admin mengirim CSP enforced + `X-Frame-Options: DENY`; `/auth/refresh`
+- Panel admin mengirim CSP enforced per request (nonce di `middleware.ts`, tanpa
+  `'unsafe-inline'` di `script-src`, seluruh rute `force-dynamic`) +
+  `X-Frame-Options: DENY`; `/auth/refresh`
   membatasi kegagalan per IP (in-memory per proses) dan cookie `tarlink_rt` yang
   rusak dihapus pada refresh/logout.
 - E-wallet ditolak eksplisit (400), bukan menghasilkan VA palsu.
