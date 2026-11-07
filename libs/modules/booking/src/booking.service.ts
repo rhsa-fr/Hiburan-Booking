@@ -1336,20 +1336,25 @@ export class BookingService {
   }
 
   /**
-   * FR-056 read path (GET /bookings/:id/disputes). Reading is wider than
-   * writing: the customer, admins, and any vendor responder — the owner or an
-   * active `can_respond` `vendor_members` row — may see the dispute history.
-   * That matches the controller's `vendor_member` grant; a member cannot open a
-   * dispute, but must be able to read the one their vendor is party to.
+   * FR-056 read path (GET /bookings/:id/disputes). Read access mirrors
+   * `assertCanView`: the customer, admins, and the vendor owner or ANY active
+   * `vendor_members` row — `can_respond` is not required. Otherwise a member
+   * with `can_respond = false` could read `GET /bookings/:id` but get 404 on
+   * its disputes, which is exactly the inconsistency this predicate fixes.
    *
-   * Non-participants get NOT_FOUND, like `assertCanView` (§7.3): a 403 here
-   * would confirm that the booking exists. The write path (`openDispute`)
-   * keeps FORBIDDEN because there the caller already named their intent.
+   * The write path stays stricter: `openDispute` calls `resolveDisputeActor`,
+   * which admits only the customer or the vendor's actual owner and throws
+   * FORBIDDEN for everyone else; vendor actions that mutate the booking go
+   * through `assertResponder` (`isVendorResponder`), which still requires
+   * `can_respond`.
+   *
+   * Non-participants still get NOT_FOUND, like `assertCanView` (§7.3): a 403
+   * here would confirm that the booking exists.
    */
   private async resolveDisputeReader(row: BookingRow, user: AuthUser): Promise<void> {
     if (row.customer_id === user.id) return;
     if (isAdmin(user)) return;
-    if (await this.repo.isVendorResponder(row.vendor_id, user.id)) return;
+    if (await this.repo.canViewBookingAsVendor(row.id, user.id)) return;
     throw new AppError('NOT_FOUND', `Booking ${row.id} tidak ditemukan`);
   }
 

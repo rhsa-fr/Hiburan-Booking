@@ -23,6 +23,10 @@ const VENDOR_ID = '22222222-2222-4222-8222-222222222222';
 const VENDOR_USER_ID = '55555555-5555-4555-8555-555555555555';
 const OTHER_VENDOR_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const MEMBER_USER_ID = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+/** Active `vendor_members` row with `can_respond = false`. */
+const READ_ONLY_MEMBER_ID = '14141414-1414-4414-8414-141414141414';
+/** Carries the `vendor_member` role but has no `vendor_members` row. */
+const NON_MEMBER_ID = '15151515-1515-4515-8515-151515151515';
 const OTHER_VENDOR_OWNER_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
 const CUSTOMER_ID = '77777777-7777-4777-8777-777777777777';
 const STRANGER_ID = '88888888-8888-4888-8888-888888888888';
@@ -128,6 +132,17 @@ function harness(initial: BookingRow, disputes: DisputeRow[] = [disputeRow()]) {
     isVendorResponder: vi.fn(
       async (vendorId: string, userId: string) =>
         vendorId === VENDOR_ID && userId === VENDOR_USER_ID
+    ),
+    // Mirrors `BookingRepository.canViewBookingAsVendor`: the vendor owner OR
+    // any active `vendor_members` row, with no `can_respond` requirement.
+    canViewBookingAsVendor: vi.fn(
+      async (bookingId: string, userId: string) =>
+        bookingId === row.id &&
+        row.vendor_id === VENDOR_ID &&
+        (userId === VENDOR_USER_ID ||
+          userId === MEMBER_USER_ID ||
+          userId === READ_ONLY_MEMBER_ID ||
+          userId === OTHER_VENDOR_OWNER_ID)
     ),
     countOpenDisputes: vi.fn(async () => 0),
     updateStatus: vi.fn(
@@ -484,9 +499,9 @@ describe('BookingService.listBookingDisputes', () => {
     expect(repo.listDisputes).not.toHaveBeenCalled();
   });
 
-  it('rejects a vendor who cannot respond for the vendor', async () => {
+  it('rejects a vendor the repository denies view access to', async () => {
     const { repo, service } = harness(confirmedRow());
-    repo.isVendorResponder.mockResolvedValueOnce(false);
+    repo.canViewBookingAsVendor.mockResolvedValueOnce(false);
 
     await expect(service.listBookingDisputes(BOOKING_ID, VENDOR)).rejects.toMatchObject({
       code: 'NOT_FOUND'
@@ -511,26 +526,42 @@ describe('BookingService.listBookingDisputes', () => {
     expect(repo.listDisputes).not.toHaveBeenCalled();
   });
 
-  it('lets an active can_respond vendor_member read the disputes', async () => {
+  it('lets an active vendor_member read the disputes', async () => {
     const { repo, service } = harness(confirmedRow());
-    repo.isVendorResponder.mockResolvedValue(true);
 
     const list = await service.listBookingDisputes(BOOKING_ID, DUAL_ROLE_VENDOR_MEMBER);
 
     expect(list).toHaveLength(1);
-    expect(repo.isVendorResponder).toHaveBeenCalledWith(VENDOR_ID, MEMBER_USER_ID);
+    expect(repo.canViewBookingAsVendor).toHaveBeenCalledWith(BOOKING_ID, MEMBER_USER_ID);
+  });
+
+  it('lets an active vendor_member without can_respond read the disputes', async () => {
+    const { repo, service } = harness(confirmedRow());
+    const readOnlyMember: AuthUser = { id: READ_ONLY_MEMBER_ID, roles: ['vendor_member'] };
+
+    const list = await service.listBookingDisputes(BOOKING_ID, readOnlyMember);
+
+    expect(list).toHaveLength(1);
+    expect(repo.canViewBookingAsVendor).toHaveBeenCalledWith(BOOKING_ID, READ_ONLY_MEMBER_ID);
+    // The read path must not consult the responder predicate at all.
+    expect(repo.isVendorResponder).not.toHaveBeenCalled();
+  });
+
+  it('still rejects a user with no vendor membership at all', async () => {
+    const { repo, service } = harness(confirmedRow());
+    const nonMember: AuthUser = { id: NON_MEMBER_ID, roles: ['vendor_member'] };
+
+    await expect(
+      service.listBookingDisputes(BOOKING_ID, nonMember)
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(repo.canViewBookingAsVendor).toHaveBeenCalledWith(BOOKING_ID, NON_MEMBER_ID);
+    expect(repo.listDisputes).not.toHaveBeenCalled();
   });
 
   it('lets an owner of vendor A read vendor B disputes through the member path', async () => {
     const { repo, service } = harness(confirmedRow());
-    // Reading only needs a responder relationship: ownership of another vendor
-    // neither grants nor blocks it.
-    repo.isVendorResponder.mockImplementation(
-      async (vendorId: string, userId: string) =>
-        vendorId === VENDOR_ID && userId === OTHER_VENDOR_OWNER_ID
-    );
-    repo.isVendorOwner.mockResolvedValue(false);
-
+    // Reading only needs the owner/active-member relationship: owning another
+    // vendor neither grants nor blocks it.
     const list = await service.listBookingDisputes(BOOKING_ID, OWNER_OF_A_MEMBER_OF_B);
 
     expect(list).toHaveLength(1);
