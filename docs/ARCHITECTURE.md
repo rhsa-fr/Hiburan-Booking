@@ -257,6 +257,10 @@ pemilik konten → content_report_appeals (pending) → admin support/super
 `gateway_fee_expense`, `gateway_fee_absorbed`, `vendor_bad_debt_expense`.
 
 Setiap akun punya tipe (`asset`, `liability`, `revenue`, `expense`, `equity`).
+Seed SQL memuat 13 akun; kode saat ini hanya mem-posting 11 di antaranya.
+`tax_payable` dan `vendor_bad_debt_expense` sengaja disediakan untuk PPh dan
+piutang tak tertagih, tetapi belum dipakai oleh service mana pun — jangan
+menganggapnya bagian dari alur aktif.
 
 ### Contoh: DP diterima (`dp_received`)
 Pelanggan membayar DP Rp1.500.000. Dana masuk ke rekening PJP, **bukan** rekening
