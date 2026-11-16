@@ -3,8 +3,24 @@ export { NotificationsService } from './notifications.service';
 export { NotificationsRepository } from './notifications.repository';
 export type { NotificationRow } from './notifications.repository';
 export { NotificationsController } from './notifications.controller';
-export { planNotification } from './templates';
-export type { NotificationAudience, NotificationPlan } from './templates';
+export {
+  planAppealDecisionNotification,
+  planEmailNotification,
+  planNotification,
+  planReportResolvedNotification,
+  planReportSlaNotification,
+  planTakedownNotification,
+  reportAppealDecisionDedupeKey,
+  reportResolvedDedupeKey,
+  reportSlaDedupeKey,
+  reportTakedownDedupeKey
+} from './templates';
+export type {
+  EmailNotificationPlan,
+  NotificationAudience,
+  NotificationPlan,
+  ReportNotice
+} from './templates';
 export { LIST_NOTIFICATIONS_QUERY } from './notifications.contracts';
 export type {
   ListNotificationsQuery,

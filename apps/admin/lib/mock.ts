@@ -20,7 +20,11 @@ import type {
   JournalLine,
   LedgerData,
   Operator,
+  OpsAlerts,
   Paginated,
+  ReportAppeal,
+  ReportAppealPage,
+  AppealStatus,
   Payment,
   PaymentKindSummary,
   PaymentMixSlice,
@@ -1756,4 +1760,113 @@ export function mockUnsuspendVendor(id: string): SuspendVendorResult {
 }
 
 export { ACCOUNT_NAMES as MOCK_ACCOUNT_NAMES };
+
+/** Deterministic readiness snapshot for `NEXT_PUBLIC_USE_MOCK=true`. */
+export function mockGetOpsAlerts(): OpsAlerts {  return {
+    // Freshness is the point of this panel, so the mock reports "now" even
+    // though the rest of the mock world uses a frozen clock.
+    generated_at: new Date().toISOString(),
+    status: 'critical',
+    alerts: [
+      {
+        key: 'content_reports',
+        severity: 'critical',
+        title: 'Laporan konten lewat SLA',
+        detail: '2 laporan · terlama lewat 30 jam',
+        hint: 'Putuskan laporan di antrean moderasi. Takedown menyembunyikan konten, bukan menghapusnya.',
+        href: '/reports',
+        count: 2,
+        oldest_hours: 30
+      },
+      {
+        key: 'disputes',
+        severity: 'critical',
+        title: 'Sengketa lewat SLA',
+        detail: '1 sengketa · terlama lewat 6 jam',
+        hint: 'Selesaikan sengketa. Keputusan memengaruhi dana booking yang sedang ditahan.',
+        href: '/disputes',
+        count: 1,
+        oldest_hours: 6
+      },
+      {
+        key: 'outbox',
+        severity: 'warning',
+        title: 'Pesan outbox gagal',
+        detail: '1 pesan · tertua 3 jam lalu',
+        hint: 'Relay outbox mencoba ulang otomatis. Bila menetap, periksa last_error di database.',
+        href: '/ops',
+        count: 1,
+        oldest_hours: 3
+      }
+    ],
+    metrics: {
+      content_reports: { count: 2, oldest_hours: 30 },
+      disputes: { count: 1, oldest_hours: 6 },
+      reconciliation_diffs: { count: 0, oldest_hours: null },
+      reconciliation_runs: { count: 0, oldest_hours: null },
+      payouts: { count: 0, oldest_hours: null },
+      outbox: { count: 1, oldest_hours: 3 },
+      email: { count: 0, oldest_hours: null }
+    }
+  };
+}
+
+/** Banding takedown mock: satu antrean pending yang bisa diputuskan. */
+let mockAppeals: ReportAppeal[] = [
+  {
+    id: 'mock-appeal-1',
+    report_id: 'mock-report-1',
+    appellant_id: 'mock-customer-1',
+    reason:
+      'Ulasan ini pengalaman saya sendiri setelah acara dan tidak melanggar hak cipta siapa pun.',
+    evidence_url: null,
+    // Mode mock tidak menyimpan berkas, jadi tombol "Lihat berkas bukti" tidak tampil.
+    has_evidence_file: false,
+    status: 'pending',
+    decision_note: null,
+    decided_by: null,
+    decided_at: null,
+    created_at: '2026-10-20T15:00:00+07:00',
+    updated_at: '2026-10-20T15:00:00+07:00',
+    target_type: 'review',
+    target_id: 'mock-review-1',
+    report_resolution: 'content_removed',
+    report_resolved_at: '2026-10-19T15:00:00+07:00'
+  }
+];
+
+export function mockGetReportAppeals(params: {
+  status?: AppealStatus;
+  page?: number;
+  page_size?: number;
+} = {}): ReportAppealPage {
+  const items = params.status
+    ? mockAppeals.filter((appeal) => appeal.status === params.status)
+    : mockAppeals;
+  return {
+    items,
+    total: items.length,
+    page: params.page ?? 1,
+    page_size: params.page_size ?? 20
+  };
+}
+
+export function mockResolveReportAppeal(
+  id: string,
+  input: { status: 'accepted' | 'rejected'; note: string }
+): ReportAppeal {
+  const appeal = mockAppeals.find((item) => item.id === id);
+  if (!appeal) throw new ApiError('Banding tidak ditemukan', 404);
+  if (appeal.status !== 'pending') throw new ApiError('Banding sudah diputuskan', 409);
+  const updated: ReportAppeal = {
+    ...appeal,
+    status: input.status,
+    decision_note: input.note,
+    decided_by: 'mock-admin-1',
+    decided_at: MOCK_NOW,
+    updated_at: MOCK_NOW
+  };
+  mockAppeals = mockAppeals.map((item) => (item.id === id ? updated : item));
+  return updated;
+}
 

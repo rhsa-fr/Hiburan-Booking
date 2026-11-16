@@ -10,7 +10,10 @@ import {
   mockGetLedger,
   mockGetMediaQueue,
   mockGetOperators,
+  mockGetOpsAlerts,
   mockGetPayments,
+  mockGetReportAppeals,
+  mockResolveReportAppeal,
   mockGetReleaseQueue,
   mockGetSettings,
   mockGetVendor,
@@ -34,6 +37,7 @@ import type {
   DisputeOverview,
   LedgerData,
   Operator,
+  OpsAlerts,
   Paginated,
   Booking,
   PackageRow,
@@ -43,6 +47,9 @@ import type {
   ReleasePreview,
   ReleaseQueue,
   ReleaseResult,
+  ReportAppeal,
+  ReportAppealPage,
+  AppealStatus,
   ResolveDisputeInput,
   ResolveDisputeResult,
   SettleBookingInput,
@@ -437,6 +444,40 @@ function idempotencyHeaders(): Record<string, string> {
   return { 'Idempotency-Key': crypto.randomUUID() };
 }
 
+/**
+ * Binary variant of `apiFetch` for private files (bukti banding, FR-124).
+ *
+ * Sama seperti `apiFetch`: refresh token 15 menit ditukar sekali pada 401. Yang
+ * berbeda hanya pembacaan body — `response.blob()`, bukan `json()`. Mode mock
+ * tidak punya berkas, jadi menjawab 404 agar UI menampilkan pesan, bukan file palsu.
+ */
+export async function apiFetchBlob(path: string): Promise<Blob> {
+  if (isMockMode()) {
+    await sleep(MOCK_LATENCY_MS);
+    throw new ApiError('Bukti berkas tidak tersedia di mode mock.', 404);
+  }
+
+  const normalised = path.replace(/^\/api\/v1/, '/v1');
+  const previousToken = readToken();
+  let response = await sendRequest(normalised, {}, previousToken);
+
+  if (response.status === 401) {
+    if (!previousToken) {
+      endSession();
+    } else {
+      const refreshed = await refreshAccessToken(previousToken);
+      if (refreshed) {
+        response = await sendRequest(normalised, {}, refreshed);
+      }
+    }
+  }
+
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return response.blob();
+}
+
 /* -------------------------------------------------------------------------- */
 /* Auth                                                                        */
 /* -------------------------------------------------------------------------- */
@@ -734,6 +775,27 @@ function mockRoute(path: string, init?: RequestInit): unknown {
   if (method === 'GET' && pathname === '/admin/dashboard') {
     return mockGetDashboard();
   }
+  if (method === 'GET' && pathname === '/admin/ops/alerts') {
+    return mockGetOpsAlerts();
+  }
+  if (method === 'GET' && pathname === '/admin/report-appeals') {
+    const status = url.searchParams.get('status');
+    return mockGetReportAppeals({
+      status: status === 'accepted' || status === 'rejected' || status === 'pending'
+        ? status
+        : undefined,
+      page: Number.parseInt(url.searchParams.get('page') ?? '1', 10) || 1,
+      page_size: Number.parseInt(url.searchParams.get('page_size') ?? '20', 10) || 20
+    });
+  }
+  const appealResolveMatch = pathname.match(/^\/admin\/report-appeals\/([^/]+)\/resolve$/);
+  if (method === 'POST' && appealResolveMatch) {
+    const status = readString(body, 'status');
+    return mockResolveReportAppeal(decodeURIComponent(appealResolveMatch[1]), {
+      status: status === 'accepted' ? 'accepted' : 'rejected',
+      note: readString(body, 'note')
+    });
+  }
   if (method === 'GET' && pathname === '/admin/bookings') {
     return mockGetBookings({
       status: url.searchParams.get('status') ?? '',
@@ -894,6 +956,11 @@ function mockRoute(path: string, init?: RequestInit): unknown {
 
 export function getDashboard(): Promise<DashboardSummary> {
   return apiFetch<DashboardSummary>('/api/v1/admin/dashboard');
+}
+
+/** Ringkasan antrean operasional (FR-131/FR-123 pendukung, read-only). */
+export function getOpsAlerts(): Promise<OpsAlerts> {
+  return apiFetch<OpsAlerts>('/api/v1/admin/ops/alerts');
 }
 
 export function getBookings(filters: BookingFilters): Promise<Paginated<Booking>> {
@@ -1279,6 +1346,9 @@ export type ReconciliationClassification =
 
 export type ReconciliationSeverity = 'info' | 'warning' | 'critical';
 
+/** FR-131 fase 2: keputusan admin atas satu temuan. */
+export type ReconciliationResolution = 'accepted' | 'ignored' | 'referred' | 'corrected';
+
 /** `POST/GET /v1/admin/reconciliation/runs` — money is an integer rupiah number. */
 export interface ReconciliationRunSummary {
   run_id: string;
@@ -1307,11 +1377,15 @@ export interface ReconciliationDiff {
   delta_idr: number | null;
   detail: Record<string, unknown>;
   due_at: string | null;
+  resolution: ReconciliationResolution | null;
+  resolution_note: string | null;
   resolved_at: string | null;
 }
 
 export interface ReconciliationRunDetail extends ReconciliationRunSummary {
   diffs: ReconciliationDiff[];
+  /** Temuan yang belum diputuskan; `diff_count` menghitung semua temuan. */
+  open_diff_count: number;
 }
 
 export interface ReconciliationRunPage {
@@ -1353,4 +1427,136 @@ export function runReconciliation(
     method: 'POST',
     body: JSON.stringify(input)
   });
+}
+
+/**
+ * Keputusan final per temuan. Panggilan kedua untuk temuan yang sama dijawab
+ * `409 CONFLICT` server, jadi catatan peninjau pertama tidak pernah tertimpa.
+ */
+export function resolveReconciliationDiff(
+  diffId: string,
+  input: { resolution: ReconciliationResolution; note: string }
+): Promise<ReconciliationDiff> {
+  return apiFetch<ReconciliationDiff>(
+    `/v1/admin/reconciliation/diffs/${encodeURIComponent(diffId)}/resolve`,
+    { method: 'POST', body: JSON.stringify(input) }
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Laporan konten (FR-123 / FR-124)                                           */
+/* -------------------------------------------------------------------------- */
+
+export type AdminReportTargetType = 'vendor' | 'review' | 'chat_message' | 'vendor_media';
+export type AdminReportReason =
+  | 'spam'
+  | 'harassment'
+  | 'fraud'
+  | 'illegal'
+  | 'copyright'
+  | 'impersonation'
+  | 'other';
+export type AdminReportStatus = 'open' | 'reviewing' | 'resolved' | 'rejected';
+/** `pending` = open + reviewing (filter antrean, bukan status tersimpan). */
+export type AdminReportQueueStatus = 'pending' | AdminReportStatus;
+export type AdminReportAction =
+  | 'no_action'
+  | 'content_removed'
+  | 'content_restored'
+  | 'user_warned';
+
+export interface AdminReport {
+  id: string;
+  reporter_id: string;
+  target_type: AdminReportTargetType;
+  target_id: string;
+  booking_id: string | null;
+  reason: AdminReportReason;
+  detail: string;
+  evidence_url: string | null;
+  status: AdminReportStatus;
+  resolution: AdminReportAction | null;
+  resolution_note: string | null;
+  resolved_by: string | null;
+  resolved_at: string | null;
+  sla_due_at: string;
+  overdue: boolean;
+  escalated_at: string | null;
+  escalated: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminReportQueue {
+  items: AdminReport[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export function getReportQueue(
+  params: {
+    status?: AdminReportQueueStatus;
+    reason?: AdminReportReason;
+    target_type?: AdminReportTargetType;
+    overdue?: boolean;
+    page?: number;
+    page_size?: number;
+  } = {}
+): Promise<AdminReportQueue> {
+  const search = new URLSearchParams();
+  if (params.status) search.set('status', params.status);
+  if (params.reason) search.set('reason', params.reason);
+  if (params.target_type) search.set('target_type', params.target_type);
+  if (params.overdue) search.set('overdue', 'true');
+  if (params.page) search.set('page', String(params.page));
+  if (params.page_size) search.set('page_size', String(params.page_size));
+  const suffix = search.toString() ? `?${search.toString()}` : '';
+  return apiFetch<AdminReportQueue>(`/v1/admin/reports${suffix}`);
+}
+
+export function resolveReport(
+  id: string,
+  input: { action: AdminReportAction; note: string }
+): Promise<AdminReport> {
+  return apiFetch<AdminReport>(`/v1/admin/reports/${encodeURIComponent(id)}/resolve`, {
+    method: 'POST',
+    body: JSON.stringify(input)
+  });
+}
+
+/* -------------------------------------------------------------------------- */
+/* Banding takedown (FR-124)                                                  */
+/* -------------------------------------------------------------------------- */
+
+export function getReportAppeals(
+  params: { status?: AppealStatus; page?: number; page_size?: number } = {}
+): Promise<ReportAppealPage> {
+  const search = new URLSearchParams();
+  if (params.status) search.set('status', params.status);
+  if (params.page) search.set('page', String(params.page));
+  if (params.page_size) search.set('page_size', String(params.page_size));
+  const suffix = search.toString() ? `?${search.toString()}` : '';
+  return apiFetch<ReportAppealPage>(`/api/v1/admin/report-appeals${suffix}`);
+}
+
+export function resolveReportAppeal(
+  id: string,
+  input: { status: 'accepted' | 'rejected'; note: string }
+): Promise<ReportAppeal> {
+  return apiFetch<ReportAppeal>(
+    `/api/v1/admin/report-appeals/${encodeURIComponent(id)}/resolve`,
+    {
+      method: 'POST',
+      body: JSON.stringify(input)
+    }
+  );
+}
+
+/**
+ * Bukti banding berupa berkas (FR-124). Endpoint-nya privat dan ber-guard, jadi
+ * panel mengambil byte lewat `apiFetchBlob` dan membukanya sebagai object URL.
+ */
+export function getAppealEvidence(id: string): Promise<Blob> {
+  return apiFetchBlob(`/api/v1/admin/report-appeals/${encodeURIComponent(id)}/evidence`);
 }

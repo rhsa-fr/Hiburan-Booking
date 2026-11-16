@@ -65,20 +65,37 @@ export class ChatRepository {
     return result.rows[0] ?? null;
   }
 
+  /**
+   * Riwayat chat untuk satu pembaca.
+   *
+   * Dua filter moderasi diterapkan di SQL, bukan di klien:
+   * - `hidden_at IS NULL` — pesan yang diturunkan admin (FR-124) tidak muncul;
+   * - `NOT EXISTS (user_blocks …)` — pesan dari pihak yang diblokir pembaca
+   *   tidak dikirim sama sekali (FR-142). Ditaruh di query supaya paginasi
+   *   tetap benar: menyaring setelah LIMIT akan membuat halaman bolong.
+   */
   async listMessages(
     bookingId: string,
+    viewerId: string,
     options: ChatHistoryOptions
   ): Promise<ChatMessageRow[]> {
     const result = await this.pool.query<ChatMessageRow>(
       `SELECT ${COLUMNS}
-         FROM chat_messages
-        WHERE booking_id = $1
-          AND ($2::timestamptz IS NULL
-               OR (created_at, id) < ($2::timestamptz, $3::uuid))
-        ORDER BY created_at DESC, id DESC
-        LIMIT $4`,
+         FROM chat_messages m
+        WHERE m.booking_id = $1
+          AND m.hidden_at IS NULL
+          AND NOT EXISTS (
+                SELECT 1 FROM user_blocks ub
+                 WHERE ub.blocker_id = $2::uuid
+                   AND ub.blocked_id = m.sender_id
+              )
+          AND ($3::timestamptz IS NULL
+               OR (m.created_at, m.id) < ($3::timestamptz, $4::uuid))
+        ORDER BY m.created_at DESC, m.id DESC
+        LIMIT $5`,
       [
         bookingId,
+        viewerId,
         options.beforeCreatedAt,
         options.beforeId,
         options.limit

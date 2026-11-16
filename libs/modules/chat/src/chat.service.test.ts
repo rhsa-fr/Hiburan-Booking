@@ -164,7 +164,7 @@ describe('ChatService.list', () => {
 
     expect(page.items.map((item) => item.id)).toEqual([middle.id, newest.id]);
     expect(page.next_before).toBe(encodeChatCursor(middle));
-    expect(repository.listMessages).toHaveBeenCalledWith(BOOKING_ID, {
+    expect(repository.listMessages).toHaveBeenCalledWith(BOOKING_ID, CUSTOMER_ID, {
       beforeCreatedAt: null,
       beforeId: null,
       limit: 3
@@ -184,7 +184,7 @@ describe('ChatService.list', () => {
       { limit: 50, before: encodeChatCursor(cursorRow) }
     );
 
-    expect(repository.listMessages).toHaveBeenCalledWith(BOOKING_ID, {
+    expect(repository.listMessages).toHaveBeenCalledWith(BOOKING_ID, CUSTOMER_ID, {
       beforeCreatedAt: cursorRow.created_at,
       beforeId: cursorRow.id,
       limit: 51

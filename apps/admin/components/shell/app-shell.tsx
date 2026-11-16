@@ -2,10 +2,13 @@
 
 import { useQuery } from '@tanstack/react-query';
 import {
+  Activity,
   Banknote,
   BookOpen,
   CalendarDays,
   FileCheck2,
+  Flag,
+  Gavel,
   Image as ImageIcon,
   LayoutDashboard,
   MapPin,
@@ -54,6 +57,7 @@ const NAV_GROUPS: SidebarNavGroupModel[] = [
     label: 'UTAMA',
     items: [
       { id: 'dashboard', label: 'Dashboard', href: '/', icon: <LayoutDashboard className="h-[18px] w-[18px]" /> },
+      { id: 'ops', label: 'Operasional', href: '/ops', icon: <Activity className="h-[18px] w-[18px]" /> },
       { id: 'bookings', label: 'Booking', href: '/bookings', icon: <CalendarDays className="h-[18px] w-[18px]" /> },
       { id: 'vendors', label: 'Vendor', href: '/vendors', icon: <Store className="h-[18px] w-[18px]" /> },
       {
@@ -63,6 +67,8 @@ const NAV_GROUPS: SidebarNavGroupModel[] = [
         icon: <FileCheck2 className="h-[18px] w-[18px]" />
       },
       { id: 'moderation', label: 'Moderasi', href: '/moderation', icon: <ImageIcon className="h-[18px] w-[18px]" /> },
+      { id: 'reports', label: 'Laporan', href: '/reports', icon: <Flag className="h-[18px] w-[18px]" /> },
+      { id: 'appeals', label: 'Banding', href: '/appeals', icon: <Gavel className="h-[18px] w-[18px]" /> },
       { id: 'release', label: 'Release', href: '/release', icon: <Wallet className="h-[18px] w-[18px]" /> },
       { id: 'payouts', label: 'Payout', href: '/payouts', icon: <Banknote className="h-[18px] w-[18px]" /> }
     ]
@@ -98,6 +104,8 @@ const NAV_GROUPS: SidebarNavGroupModel[] = [
 ];
 
 const SECTION_LABELS: Array<[string, string]> = [
+  ['/ops', 'Operasional'],
+  ['/appeals', 'Laporan'],
   ['/moderation', 'Vendor'],
   ['/applications', 'Vendor'],
   ['/ledger', 'Transaksi'],
