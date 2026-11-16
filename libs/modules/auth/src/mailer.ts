@@ -6,6 +6,7 @@
  * `HttpMailer` posts to a generic provider endpoint configured by env.
  */
 import { AppError } from '@tarlink/core/errors';
+import { HttpEmailTransport, type EmailTransport } from '@tarlink/platform/email';
 
 export interface OtpEmail {
   readonly to: string;
@@ -25,28 +26,23 @@ export class LoggingMailer implements Mailer {
 }
 
 export class HttpMailer implements Mailer {
-  constructor(
-    private readonly url: string,
-    private readonly apiKey: string | null,
-    private readonly from: string
-  ) {}
+  private readonly transport: EmailTransport;
+
+  constructor(url: string, apiKey: string | null, from: string) {
+    // Shared transport (FR-051): the OTP email and booking notifications post
+    // the same provider payload, so the HTTP/timeout logic lives in one place.
+    this.transport = new HttpEmailTransport(url, apiKey, from);
+  }
 
   async sendOtp(input: OtpEmail): Promise<void> {
-    const response = await fetch(this.url, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        ...(this.apiKey ? { authorization: `Bearer ${this.apiKey}` } : {})
-      },
-      body: JSON.stringify({
-        from: this.from,
+    try {
+      await this.transport.sendEmail({
         to: input.to,
         subject: 'Kode OTP Tarlink',
         text: `Kode OTP kamu: ${input.code}. Berlaku ${Math.floor(input.ttlSeconds / 60)} menit.`
-      })
-    });
-
-    if (!response.ok) {
+      });
+    } catch {
+      // Provider errors are not user-facing details; keep the API contract.
       throw new AppError('UPSTREAM_ERROR', 'Email OTP gagal dikirim');
     }
   }

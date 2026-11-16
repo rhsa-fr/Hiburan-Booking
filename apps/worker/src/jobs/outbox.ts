@@ -25,6 +25,32 @@ export class LoggingMessageSink implements MessageSink {
   }
 }
 
+/**
+ * Fan-out for independent delivery channels (in-app + email).
+ *
+ * Every sink is attempted even when an earlier one throws: a dead email
+ * provider must not stop the in-app row from being written. The combined
+ * failure is rethrown afterwards so the message is retried; sinks that already
+ * succeeded are idempotent and skip on that retry.
+ */
+export class CompositeMessageSink implements MessageSink {
+  constructor(private readonly sinks: readonly MessageSink[]) {}
+
+  async send(message: OutboxMessage): Promise<void> {
+    const failures: string[] = [];
+    for (const sink of this.sinks) {
+      try {
+        await sink.send(message);
+      } catch (err) {
+        failures.push(errorMessage(err));
+      }
+    }
+    if (failures.length > 0) {
+      throw new Error(failures.join(' | '));
+    }
+  }
+}
+
 // Real columns (001_core.sql): there is no `published_at` and no `dispatched_at`.
 // Delivery success is `status='sent'` + `sent_at`; `failed` stays retryable.
 const SELECT_DUE_SQL = `

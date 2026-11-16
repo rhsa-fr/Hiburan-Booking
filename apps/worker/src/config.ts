@@ -6,6 +6,15 @@ export interface WorkerConfig {
   WORKER_BATCH: number;
   /** 0 = run forever. Positive values stop after N ticks (smoke tests / cron). */
   WORKER_MAX_TICKS: number;
+  /**
+   * `production` makes a missing email provider fail closed instead of
+   * pretending the message was delivered. Defaults to development.
+   */
+  NODE_ENV: string;
+  /** Outbound email (FR-051). Unset outside production = messages are logged. */
+  EMAIL_API_URL?: string;
+  EMAIL_API_KEY?: string;
+  EMAIL_FROM?: string;
 }
 
 function readInt(name: string, raw: string | undefined, fallback: number, min: number): number {
@@ -36,9 +45,18 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv = process.env): WorkerCo
     DATABASE_URL: databaseUrl,
     WORKER_TICK_MS: readInt('WORKER_TICK_MS', env.WORKER_TICK_MS, 15_000, 1),
     WORKER_BATCH: readInt('WORKER_BATCH', env.WORKER_BATCH, 50, 1),
-    WORKER_MAX_TICKS: readInt('WORKER_MAX_TICKS', env.WORKER_MAX_TICKS, 0, 0)
+    WORKER_MAX_TICKS: readInt('WORKER_MAX_TICKS', env.WORKER_MAX_TICKS, 0, 0),
+    NODE_ENV: env.NODE_ENV?.trim() || 'development',
+    EMAIL_API_URL: optional(env.EMAIL_API_URL),
+    EMAIL_API_KEY: optional(env.EMAIL_API_KEY),
+    EMAIL_FROM: optional(env.EMAIL_FROM)
   };
   return cached;
+}
+
+function optional(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
 }
 
 /** `postgres://user:pass@host:5432/db` -> `postgres://host:5432/db` (never log credentials). */
