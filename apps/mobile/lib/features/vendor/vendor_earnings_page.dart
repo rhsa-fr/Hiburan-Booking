@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../app/app.dart';
 import '../../app/routes.dart';
@@ -28,6 +29,7 @@ class _VendorEarningsPageState extends State<VendorEarningsPage> {
   Map<String, dynamic>? _bankAccount;
   List<Map<String, dynamic>> _payouts = [];
   List<Map<String, dynamic>> _settled = [];
+  bool _exporting = false;
 
   @override
   void initState() {
@@ -140,6 +142,52 @@ class _VendorEarningsPageState extends State<VendorEarningsPage> {
   Future<void> _openBankAccounts() async {
     await Navigator.of(context).pushNamed(Routes.vendorBankAccount);
     if (mounted) await _load(silent: true);
+  }
+
+  /// FR-126: monthly CSV whose totals come from the release ledger entries.
+  /// The response is rendered as a preview because the mobile app has no file
+  /// chooser dependency; "Salin CSV" puts the exact bytes on the clipboard.
+  Future<void> _exportCsv() async {
+    if (_exporting) return;
+
+    setState(() => _exporting = true);
+    try {
+      final raw = await AppScope.of(context).api.get(
+        '/vendor/earnings/export',
+        query: {'format': 'json'},
+      );
+      final payload = raw is Map
+          ? raw.cast<String, dynamic>()
+          : <String, dynamic>{};
+      if (!mounted) return;
+
+      final copied = await showModalBottomSheet<bool>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: VendorColors.cardWhite,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(14)),
+        ),
+        builder: (_) => _EarningsExportSheet(payload: payload),
+      );
+      if (copied == true && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('CSV disalin ke papan klip.')),
+        );
+      }
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(apiMessage(error))));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Gagal menyiapkan ekspor: $error')));
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
   }
 
   @override
@@ -316,6 +364,24 @@ class _VendorEarningsPageState extends State<VendorEarningsPage> {
             label: 'Dana dilepas',
             trailing: '$_settledTotal transaksi',
           ),
+          SizedBox(
+            width: double.infinity,
+            child: VendorButton(
+              label: _exporting
+                  ? 'Menyiapkan laporan…'
+                  : 'Ekspor CSV bulan ini',
+              icon: Icons.file_download_outlined,
+              kind: VendorButtonKind.secondary,
+              onPressed: _exporting ? null : _exportCsv,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'CSV memuat seluruh transaksi bulan berjalan — bukan hanya 20 '
+            'terbaru — dan angkanya diambil dari jurnal ledger.',
+            style: vendorText(size: 11, color: VendorColors.muted, height: 1.5),
+          ),
+          const SizedBox(height: VendorSp.sm),
           if (_settled.isEmpty)
             const VendorEmpty(
               title: 'Belum ada riwayat pencairan',
@@ -633,6 +699,172 @@ class _SettledRow extends StatelessWidget {
               const SizedBox(height: 4),
               const VendorPill(label: 'Cair', tone: VendorPillTone.ok),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// FR-126 preview. Shows the totals from the ledger and lets the vendor copy
+/// the exact CSV bytes (no file-picker dependency in the mobile allowlist).
+class _EarningsExportSheet extends StatelessWidget {
+  const _EarningsExportSheet({required this.payload});
+
+  final Map<String, dynamic> payload;
+
+  static int _amount(Map<String, dynamic> source, String key) {
+    final value = source[key];
+    return value is num ? value.toInt() : 0;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final period = payload['period'] is Map
+        ? (payload['period'] as Map).cast<String, dynamic>()
+        : const <String, dynamic>{};
+    final totals = payload['totals'] is Map
+        ? (payload['totals'] as Map).cast<String, dynamic>()
+        : const <String, dynamic>{};
+    final rowCount = _amount(payload, 'row_count');
+    final csv = payload['csv']?.toString() ?? '';
+    final filename =
+        payload['filename']?.toString() ?? 'pendapatan-vendor.csv';
+    final clawback = _amount(totals, 'clawback_idr');
+
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          VendorSp.lg,
+          VendorSp.sm,
+          VendorSp.lg,
+          VendorSp.lg + MediaQuery.viewInsetsOf(context).bottom,
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Laporan pendapatan',
+                      style: vendorText(size: 18, weight: FontWeight.w800),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    icon: const Icon(Icons.close_rounded, size: 20),
+                    color: VendorColors.muted,
+                    tooltip: 'Tutup',
+                  ),
+                ],
+              ),
+              Text(
+                '${period['from'] ?? '-'} – ${period['to'] ?? '-'} · '
+                '$rowCount transaksi',
+                style: vendorText(size: 11.5, color: VendorColors.muted),
+              ),
+              const SizedBox(height: VendorSp.md),
+              _ExportAmountRow(
+                'GMV (nilai transaksi)',
+                _amount(totals, 'gmv_idr'),
+              ),
+              _ExportAmountRow(
+                'Komisi platform',
+                _amount(totals, 'commission_idr'),
+              ),
+              _ExportAmountRow(
+                'Biaya layanan',
+                _amount(totals, 'service_fee_idr'),
+              ),
+              _ExportAmountRow(
+                'Pendapatan vendor',
+                _amount(totals, 'vendor_entitlement_idr'),
+              ),
+              if (clawback > 0)
+                _ExportAmountRow('Clawback', clawback),
+              const Divider(height: VendorSp.lg, color: VendorColors.lineSoft),
+              _ExportAmountRow(
+                'Pendapatan bersih',
+                _amount(totals, 'net_vendor_idr'),
+                strong: true,
+              ),
+              _ExportAmountRow(
+                'Pencairan tercatat',
+                _amount(totals, 'payout_idr'),
+              ),
+              const SizedBox(height: VendorSp.md),
+              Text(
+                'Kolom uang berasal dari jurnal release (GMV, komisi, biaya '
+                'layanan, pendapatan vendor); clawback dari jurnal '
+                'clawback_recognized. Baris TOTAL adalah penjumlahan baris '
+                'yang sama, jadi selisihnya Rp0 terhadap ledger.',
+                style: vendorText(
+                  size: 11,
+                  color: VendorColors.muted,
+                  height: 1.5,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                filename,
+                style: vendorText(size: 10.5, color: VendorColors.mutedSoft),
+              ),
+              const SizedBox(height: VendorSp.md),
+              SizedBox(
+                width: double.infinity,
+                child: VendorButton(
+                  label: 'Salin CSV',
+                  icon: Icons.copy_all_rounded,
+                  onPressed: csv.isEmpty
+                      ? null
+                      : () async {
+                          await Clipboard.setData(ClipboardData(text: csv));
+                          if (context.mounted) Navigator.pop(context, true);
+                        },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ExportAmountRow extends StatelessWidget {
+  const _ExportAmountRow(this.label, this.amount, {this.strong = false});
+
+  final String label;
+  final int amount;
+  final bool strong;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: vendorText(
+                size: 12.5,
+                weight: strong ? FontWeight.w700 : FontWeight.w400,
+                color: strong ? VendorColors.ink : VendorColors.muted,
+              ),
+            ),
+          ),
+          const SizedBox(width: VendorSp.sm),
+          Text(
+            rupiahTight(amount),
+            style: vendorText(
+              size: strong ? 14 : 12.5,
+              weight: strong ? FontWeight.w800 : FontWeight.w700,
+              color: VendorColors.ink,
+            ),
           ),
         ],
       ),
