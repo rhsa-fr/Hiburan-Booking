@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../app/app.dart';
 import '../../app/theme.dart';
@@ -25,9 +26,41 @@ const _reasonLabels = {
   'other': 'Lainnya',
 };
 
+/// Batas server: bukti banding disimpan sebagai gambar, divalidasi dari magic
+/// bytes di backend. Klien hanya menyaring ukuran supaya unggahan tidak
+/// dipotong di tengah jalan.
+const int maxAppealEvidenceBytes = 5 * 1024 * 1024;
+
+/// Berkas yang sudah dipilih pengguna, sebelum dikirim ke server.
+class AppealEvidencePick {
+  const AppealEvidencePick({required this.filename, required this.bytes});
+
+  final String filename;
+  final List<int> bytes;
+}
+
+/// Dipisah dari widget supaya test bisa mengganti galeri dengan berkas palsu.
+typedef AppealEvidencePicker = Future<AppealEvidencePick?> Function();
+
+Future<AppealEvidencePick?> pickAppealEvidenceFromGallery() async {
+  final picked = await ImagePicker().pickImage(
+    source: ImageSource.gallery,
+    maxWidth: 1600,
+    imageQuality: 80,
+  );
+  if (picked == null) return null;
+  return AppealEvidencePick(
+    filename: picked.name,
+    bytes: await picked.readAsBytes(),
+  );
+}
+
 /// FR-124: daftar konten milik pengguna yang diturunkan + pengajuan banding.
 class AppealsPage extends StatefulWidget {
-  const AppealsPage({super.key});
+  const AppealsPage({super.key, this.pickEvidence = pickAppealEvidenceFromGallery});
+
+  /// Galeri default; test mengganti ini dengan berkas palsu.
+  final AppealEvidencePicker pickEvidence;
 
   @override
   State<AppealsPage> createState() => _AppealsPageState();
@@ -37,6 +70,7 @@ class _AppealsPageState extends State<AppealsPage> {
   List<OwnedTakedown> _items = const [];
   bool _loading = true;
   String? _error;
+  String? _uploadingReportId;
 
   @override
   void didChangeDependencies() {
@@ -107,6 +141,50 @@ class _AppealsPageState extends State<AppealsPage> {
     await _load();
   }
 
+  /// Melampirkan satu berkas bukti privat ke banding yang masih `pending`.
+  Future<void> _attachEvidence(OwnedTakedown item) async {
+    if (_uploadingReportId != null) return;
+    final api = AppScope.of(context).api;
+    AppealEvidencePick? picked;
+    try {
+      picked = await widget.pickEvidence();
+    } catch (_) {
+      if (!mounted) return;
+      _showMessage('Tidak bisa membuka galeri. Coba lagi.');
+      return;
+    }
+    if (picked == null || !mounted) return;
+    if (picked.bytes.length > maxAppealEvidenceBytes) {
+      _showMessage('Ukuran gambar maksimal 5 MB.');
+      return;
+    }
+
+    setState(() => _uploadingReportId = item.reportId);
+    try {
+      await api.uploadFile(
+        '/reports/${item.reportId}/appeal/evidence',
+        filename: picked.filename,
+        bytes: picked.bytes,
+      );
+      if (!mounted) return;
+      _showMessage(
+        'Bukti berkas terlampir. Hanya kamu dan admin yang bisa melihatnya.',
+      );
+      await _load();
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      _showMessage(apiMessage(error));
+    } finally {
+      if (mounted) setState(() => _uploadingReportId = null);
+    }
+  }
+
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -137,7 +215,12 @@ class _AppealsPageState extends State<AppealsPage> {
                   const SectionHeader(title: 'Konten yang diturunkan'),
                   const SizedBox(height: Sp.md),
                   for (final item in _items) ...[
-                    _TakedownCard(item: item, onAppeal: _appeal),
+                    _TakedownCard(
+                      item: item,
+                      onAppeal: _appeal,
+                      onAttachEvidence: _attachEvidence,
+                      uploading: _uploadingReportId == item.reportId,
+                    ),
                     const SizedBox(height: Sp.md),
                   ],
                 ],
@@ -148,10 +231,17 @@ class _AppealsPageState extends State<AppealsPage> {
 }
 
 class _TakedownCard extends StatelessWidget {
-  const _TakedownCard({required this.item, required this.onAppeal});
+  const _TakedownCard({
+    required this.item,
+    required this.onAppeal,
+    required this.onAttachEvidence,
+    required this.uploading,
+  });
 
   final OwnedTakedown item;
   final Future<void> Function(OwnedTakedown) onAppeal;
+  final Future<void> Function(OwnedTakedown) onAttachEvidence;
+  final bool uploading;
 
   @override
   Widget build(BuildContext context) {
@@ -206,6 +296,41 @@ class _TakedownCard extends StatelessWidget {
                     'Banding sedang ditinjau admin. Kamu akan menerima notifikasi.',
                 style: text.bodyMedium,
               ),
+              if (status == 'pending') ...[
+                const SizedBox(height: Sp.md),
+                Text(
+                  item.hasEvidenceFile
+                      ? 'Bukti berkas: terlampir.'
+                      : 'Belum ada bukti berkas. Bukti hanya terlihat olehmu dan admin.',
+                  style: text.bodyMedium?.copyWith(color: AppColors.inkMuted),
+                ),
+                const SizedBox(height: Sp.sm),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: uploading ? null : () => onAttachEvidence(item),
+                    icon: uploading
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.attach_file, size: 18),
+                    label: Text(
+                      uploading
+                          ? 'Mengunggah…'
+                          : item.hasEvidenceFile
+                          ? 'Ganti bukti berkas'
+                          : 'Lampirkan bukti berkas',
+                    ),
+                  ),
+                ),
+                const SizedBox(height: Sp.xs),
+                Text(
+                  'JPG, PNG, atau WebP · maksimal 5 MB.',
+                  style: text.bodySmall?.copyWith(color: AppColors.inkMuted),
+                ),
+              ],
             ] else if (deadlinePassed) ...[
               const SizedBox(height: Sp.sm),
               Text(
@@ -306,8 +431,9 @@ class _AppealSheetState extends State<_AppealSheet> {
             Text('Ajukan banding', style: text.titleLarge),
             const SizedBox(height: Sp.xs),
             Text(
-              'Jelaskan mengapa konten ini tidak melanggar. Sertakan bukti '
-              'kepemilikan atau tautan pendukung bila ada.',
+              'Jelaskan mengapa konten ini tidak melanggar. Sertakan tautan '
+              'pendukung bila ada; berkas gambar bisa dilampirkan setelah '
+              'banding terkirim.',
               style: text.bodyMedium?.copyWith(color: AppColors.inkMuted),
             ),
             const SizedBox(height: Sp.lg),

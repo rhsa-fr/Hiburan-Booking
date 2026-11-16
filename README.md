@@ -294,8 +294,9 @@ Yang masih terbuka:
   ditambah notifikasi pelapor saat laporan diputuskan, eskalasi SLA otomatis ke
   admin (`030`), **banding pemilik konten** (migrasi `031`, panel `/appeals`), dan
   **bukti banding berupa berkas privat** (migrasi `033`: unggah/baca pemilik +
-  baca admin ber-guard, terenkripsi AES-256-GCM, tipe dari magic bytes). Yang belum
-  ada: tombol unggah bukti di mobile, dan auto-suspend untuk pelanggaran berulang.
+  baca admin ber-guard, terenkripsi AES-256-GCM, tipe dari magic bytes; tombol
+  unggah tersedia di mobile `Banding konten` dan lihat di panel). Yang belum:
+  auto-suspend untuk pelanggaran berulang.
   Multi-vendor (FR-113) hanya kolom `parent_event_id` tanpa pemakaian TypeScript.
   Clawback pasca-release (FR-122) punya builder jurnal tetapi belum dipanggil
   service/endpoint mana pun.

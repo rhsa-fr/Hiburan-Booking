@@ -16,6 +16,7 @@ const _reportId = '6a0b2711-93cf-4adc-a3e5-8ca44f577d4e';
 Map<String, dynamic> _takedown({
   String? appealStatus,
   String? decisionNote,
+  bool hasEvidenceFile = false,
 }) => {
   'report_id': _reportId,
   'target_type': 'review',
@@ -28,6 +29,7 @@ Map<String, dynamic> _takedown({
   'appeal_created_at': appealStatus == null ? null : '2026-11-08T03:00:00.000Z',
   'appeal_decided_at': appealStatus == null ? null : '2026-11-08T04:00:00.000Z',
   'appeal_decision_note': decisionNote,
+  'appeal_has_evidence_file': hasEvidenceFile,
 };
 
 http.Response _json(Object body, [int status = 200]) => http.Response(
@@ -38,8 +40,9 @@ http.Response _json(Object body, [int status = 200]) => http.Response(
 
 Future<void> _pump(
   WidgetTester tester,
-  Future<http.Response> Function(http.Request) handler,
-) async {
+  Future<http.Response> Function(http.Request) handler, {
+  AppealEvidencePicker? pickEvidence,
+}) async {
   final session = Session();
   final api = ApiClient(
     session: session,
@@ -58,7 +61,12 @@ Future<void> _pump(
     AppScope(
       session: session,
       api: api,
-      child: MaterialApp(theme: buildTheme(), home: const AppealsPage()),
+      child: MaterialApp(
+        theme: buildTheme(),
+        home: AppealsPage(
+          pickEvidence: pickEvidence ?? () async => null,
+        ),
+      ),
     ),
   );
   await tester.pump();
@@ -119,6 +127,65 @@ void main() {
     expect(find.textContaining('Banding terkirim'), findsOneWidget);
   });
 
+  testWidgets('melampirkan bukti berkas untuk banding pending', (tester) async {
+    var uploaded = false;
+    String? uploadPath;
+    String? contentType;
+    await _pump(
+      tester,
+      (request) async {
+        if (request.url.path.endsWith('/reports/against-me')) {
+          return _json({
+            'data': {
+              'items': [
+                _takedown(
+                  appealStatus: 'pending',
+                  hasEvidenceFile: uploaded,
+                ),
+              ],
+              'total': 1,
+              'page': 1,
+              'page_size': 50,
+            },
+          });
+        }
+        if (request.method == 'POST' &&
+            request.url.path.endsWith(
+              '/reports/$_reportId/appeal/evidence',
+            )) {
+          uploadPath = request.url.path;
+          contentType = request.headers['content-type'];
+          uploaded = true;
+          return _json({
+            'data': {
+              'id': '5abd251c-d5aa-461b-bf9b-e510d38032bd',
+              'report_id': _reportId,
+              'status': 'pending',
+              'has_evidence_file': true,
+            },
+          }, 201);
+        }
+        return _json({'error': {'code': 'NOT_FOUND', 'message': 'x'}}, 404);
+      },
+      pickEvidence: () async => const AppealEvidencePick(
+        filename: 'bukti.png',
+        bytes: <int>[137, 80, 78, 71],
+      ),
+    );
+
+    expect(find.text('Lampirkan bukti berkas'), findsOneWidget);
+    await tester.tap(find.text('Lampirkan bukti berkas'));
+    await tester.pump();
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 30));
+    }
+
+    expect(uploadPath, endsWith('/reports/$_reportId/appeal/evidence'));
+    expect(contentType, startsWith('multipart/form-data'));
+    expect(find.text('Bukti berkas: terlampir.'), findsOneWidget);
+    expect(find.text('Ganti bukti berkas'), findsOneWidget);
+  });
+
   testWidgets('banding yang sudah diputuskan menampilkan catatan', (
     tester,
   ) async {
@@ -144,5 +211,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Ajukan banding'), findsNothing);
+    expect(find.text('Lampirkan bukti berkas'), findsNothing);
+    expect(find.text('Ganti bukti berkas'), findsNothing);
   });
 }

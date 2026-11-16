@@ -293,8 +293,9 @@ Sudah diperbaiki (jangan dikembalikan tanpa keputusan tertulis):
   sudah ada (migrasi `033`): `POST/GET /v1/reports/:id/appeal/evidence` untuk pemilik
   (hanya saat `pending`) dan `GET /v1/admin/report-appeals/:id/evidence` untuk admin,
   disimpan terenkripsi di `PRIVATE_UPLOAD_DIR`, tipe dari magic bytes, maks 5 MB, dan
-  setiap pembacaan admin diaudit. UI unggah di mobile belum dibuat (panel sudah punya
-  tombol "Lihat berkas bukti").
+  setiap pembacaan admin diaudit. Mobile punya tombol **Lampirkan bukti berkas**
+  di layar `Banding konten` (Profil → `Routes.appeals`) untuk banding `pending`;
+  panel sudah punya tombol "Lihat berkas bukti".
 - Pengingat acara (FR-052, migrasi `032`): worker `booking_reminders` (`lockKey 74112`)
   memilih booking `confirmed`/`in_progress` yang `events.start_date`-nya sama dengan
   H-7, H-1, atau hari-H (tanggal WIB, bukan UTC) lalu menulis satu `outbox_messages`
@@ -324,9 +325,9 @@ Masih terbuka:
 - Moderasi UGC (FR-123/124/142) sudah ada, termasuk notifikasi pelapor, eskalasi
   SLA (migrasi `030`), banding takedown (migrasi `031`, panel `/appeals` + layar
   mobile `Banding konten`), dan bukti berkas privat (migrasi `033`, terenkripsi,
-  endpoint pemilik + admin, baca admin diaudit). Yang **belum**: tombol unggah di
-  mobile (endpoint sudah ada); pelapor belum bisa melihat laporan orang lain
-  (memang disengaja).
+  endpoint pemilik + admin, baca admin diaudit, unggah dari mobile dan lihat dari
+  panel). Pelapor belum bisa melihat laporan orang lain (memang disengaja), dan
+  auto-suspend pelanggaran berulang tetap belum dibuat.
 - 2FA admin sudah ada (FR-128, migrasi `025`+`026`): TOTP terenkripsi, backup code,
   reset `admin_super`. Panel memakai cookie `tarlink_rt` HttpOnly untuk refresh token;
   access token tetap 15 menit dan disegarkan otomatis. `TOTP_ENCRYPTION_KEY` wajib di

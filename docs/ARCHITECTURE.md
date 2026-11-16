@@ -599,13 +599,13 @@ dan tindak lanjut rekonsiliasi — SLA + keputusan admin + worker harian
 (FR-131 fase 2, migrasi `029`), ringkasan kesiapan operasional
 (`GET /admin/ops/alerts` + panel `/ops`), banding takedown (FR-124,
 migrasi `031` + panel `/appeals`), serta bukti berkas banding privat (migrasi `033`,
-API + panel; tombol unggah di mobile belum ada).
+API + panel + tombol unggah di mobile; JPG/PNG/WebP maks 5 MB).
 
 Yang masih terbuka (lihat [AGENTS.md § Batasan](../AGENTS.md#batasan-yang-diketahui)):
 push FCM (FR-052 — pengingat H-7/H-1/hari-H sendiri sudah dikirim lewat email/in-app),
 chat foto/lokasi dan penyaringan kontak (FR-135),
-picker peta lokasi acara, UI check-in berbasis GPS, tombol unggah berkas bukti banding
-di mobile, multi-vendor (FR-113), clawback otomatis (FR-122), serta sisa FR-131 (lane
+picker peta lokasi acara, UI check-in berbasis GPS, multi-vendor (FR-113), clawback
+otomatis (FR-122), serta sisa FR-131 (lane
 `payout`/`refund` dan run terhadap data gateway nyata). SLA `due_at`, aksi resolve,
 dan **worker harian** sudah ada (migrasi `029`, job `reconcile_daily`), tanpa
 memposting jurnal. Provider WhatsApp/SMS
