@@ -15,12 +15,14 @@
  * Yang dibuat:
  *   - pelanggan : rina.ayu@tarlink.id, qa.b2.520274@tarlink.id
  *   - vendor    : vendor@tarlink.id (owner)
- *   - 3 vendor approved+active + paket + kalender 60 hari
+ *   - 6 vendor approved+active + satu paket full-day + kalender 60 hari
+ *   - foto panggung asli (Wikimedia Commons/Unsplash) yang disajikan lewat /v1/media
  *   - booking BK-261021-34E0 dan BK-261028-33D9 (confirmed + DP lunas)
  *   - satu notifikasi in-app belum dibaca untuk rina.ayu
  */
 import { randomBytes, scryptSync } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
+import { copyFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { Pool } from 'pg';
 
@@ -42,6 +44,13 @@ const VENDOR_ACCOUNT = {
   name: 'Dedi Kurniawan'
 };
 
+const FULL_DAY_PACKAGE = {
+  name: 'Paket Full Day 12 Jam',
+  duration: 720
+};
+
+const UNSPLASH_LICENSE = 'Foto demo: Unsplash, lisensi Unsplash (bebas pakai)';
+
 const VENDORS = [
   {
     slug: 'tarling-sinar-remaja',
@@ -55,10 +64,52 @@ const VENDORS = [
       'Personel lengkap dengan sound system dan panggung.',
     category: 'tarling',
     extraCategory: 'organ-tunggal',
-    packages: [
-      { name: 'Paket Lengkap 6 Jam', price: 5_000_000, duration: 360, personnel: 8 },
-      { name: 'Paket Hemat 3 Jam', price: 2_750_000, duration: 180, personnel: 6 }
-    ]
+    packages: [{ ...FULL_DAY_PACKAGE, price: 5_000_000, personnel: 10 }],
+    media: {
+      banner: {
+        source: 'tarling-stage.jpg',
+        key: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc.jpg',
+        license: 'CC BY 3.0 - Sakurai Midori, Wikimedia Commons'
+      },
+      avatar: {
+        source: 'tarling-2.jpg',
+        key: '22222222-2222-4222-8222-222222222222.jpg',
+        license: UNSPLASH_LICENSE
+      },
+      gallery: [
+        {
+          source: 'tarling-2.jpg',
+          key: '22222222-2222-4222-8222-222222222222.jpg',
+          license: UNSPLASH_LICENSE
+        }
+      ]
+    }
+  },
+  {
+    slug: 'putra-dermayu-tarling',
+    displayName: 'Putra Dermayu Tarling Group',
+    legalName: 'Putra Dermayu',
+    regionCode: '3212',
+    address: 'Jl. Dermayu No. 5, Indramayu',
+    location: [108.33, -6.34],
+    description:
+      'Grup tarling putra daerah Dermayu untuk hajatan dan acara keluarga.',
+    category: 'tarling',
+    extraCategory: null,
+    packages: [{ ...FULL_DAY_PACKAGE, price: 6_000_000, personnel: 12 }],
+    media: {
+      banner: {
+        source: 'campursari.jpg',
+        key: 'ffffffff-ffff-4fff-8fff-ffffffffffff.jpg',
+        license: 'CC BY 4.0 - Komengskuy, Wikimedia Commons'
+      },
+      avatar: {
+        source: 'tarling-2.jpg',
+        key: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee.jpg',
+        license: UNSPLASH_LICENSE
+      },
+      gallery: []
+    }
   },
   {
     slug: 'organ-tunggal-barokah',
@@ -71,10 +122,26 @@ const VENDORS = [
       'Organ tunggal dengan penyanyi dan MC untuk acara pernikahan dan syukuran.',
     category: 'organ-tunggal',
     extraCategory: null,
-    packages: [
-      { name: 'Paket Lengkap 6 Jam', price: 5_000_000, duration: 360, personnel: 7 },
-      { name: 'Paket Malam 4 Jam', price: 3_200_000, duration: 240, personnel: 5 }
-    ]
+    packages: [{ ...FULL_DAY_PACKAGE, price: 5_500_000, personnel: 8 }],
+    media: {
+      banner: {
+        source: 'organ-band.png',
+        key: '33333333-3333-4333-8333-333333333333.png',
+        license: 'CC0 — Simon Høeg Jensen, Wikimedia Commons'
+      },
+      avatar: {
+        source: 'organ-singer.jpg',
+        key: '44444444-4444-4444-8444-444444444444.jpg',
+        license: 'CC BY 2.0 — Mahbob Yusof, Wikimedia Commons'
+      },
+      gallery: [
+        {
+          source: 'organ-singer.jpg',
+          key: '44444444-4444-4444-8444-444444444444.jpg',
+          license: 'CC BY 2.0 — Mahbob Yusof, Wikimedia Commons'
+        }
+      ]
+    }
   },
   {
     slug: 'sanggar-seni-sekar-arum',
@@ -87,10 +154,125 @@ const VENDORS = [
       'Sanggar seni tradisi: tari jaipong, kuda lumping, dan karawitan.',
     category: 'seni-tradisi',
     extraCategory: 'pendukung-acara',
-    packages: [
-      { name: 'Paket Lengkap 6 Jam', price: 5_000_000, duration: 360, personnel: 12 },
-      { name: 'Paket Pentas 2 Jam', price: 2_500_000, duration: 120, personnel: 10 }
-    ]
+    packages: [{ ...FULL_DAY_PACKAGE, price: 4_500_000, personnel: 12 }],
+    media: {
+      banner: {
+        source: 'tari-cirebon.jpg',
+        key: '12121212-1212-4212-8212-121212121212.jpg',
+        license: 'CC BY-SA 4.0 - Rifki AW, Wikimedia Commons'
+      },
+      avatar: {
+        source: 'jaipong.jpg',
+        key: '13131313-1313-4313-8313-131313131313.jpg',
+        license: 'CC BY-SA 3.0 - Gunawan Kartapranata, Wikimedia Commons'
+      },
+      gallery: [
+        {
+          source: 'jaipong.jpg',
+          key: '13131313-1313-4313-8313-131313131313.jpg',
+          license: 'CC BY-SA 3.0 - Gunawan Kartapranata, Wikimedia Commons'
+        }
+      ]
+    }
+  },
+  {
+    slug: 'wayang-kulit-ki-surya',
+    displayName: 'Wayang Kulit Ki Surya',
+    legalName: 'Sanggar Dalang Surya',
+    regionCode: '3212',
+    address: 'Jl. Raya Losarang No. 21, Indramayu',
+    location: [108.25, -6.38],
+    description:
+      'Pagelaran wayang kulit semalam suntuk dengan dalang dan sinden ' +
+      'untuk hajatan, syukuran, dan ruwatan.',
+    category: 'seni-tradisi',
+    extraCategory: null,
+    packages: [{ ...FULL_DAY_PACKAGE, price: 4_000_000, personnel: 6 }],
+    media: {
+      banner: {
+        source: 'wayang-1.jpg',
+        key: '77777777-7777-4777-8777-777777777777.jpg',
+        license: 'CC BY-SA 4.0 — FaizAttariqi, Wikimedia Commons'
+      },
+      avatar: {
+        source: 'wayang-2.jpg',
+        key: '88888888-8888-4888-8888-888888888888.jpg',
+        license: 'CC BY-SA 4.0 — Candra Firmansyah, Wikimedia Commons'
+      },
+      gallery: [
+        {
+          source: 'wayang-2.jpg',
+          key: '88888888-8888-4888-8888-888888888888.jpg',
+          license: 'CC BY-SA 4.0 — Candra Firmansyah, Wikimedia Commons'
+        }
+      ]
+    }
+  },
+  {
+    slug: 'sandiwara-rakyat-dermayu',
+    displayName: 'Sandiwara Rakyat Dermayu',
+    legalName: 'Komunitas Sandiwara Dermayu',
+    regionCode: '3212',
+    address: 'Jl. Cimanuk No. 8, Indramayu',
+    location: [108.32, -6.33],
+    description:
+      'Sandiwara tradisional Indramayu dengan pemain dan gamelan untuk ' +
+      'hiburan rakyat, hajatan, dan acara desa.',
+    category: 'seni-tradisi',
+    extraCategory: null,
+    packages: [{ ...FULL_DAY_PACKAGE, price: 3_500_000, personnel: 12 }],
+    media: {
+      banner: {
+        source: 'sandiwara-1.jpg',
+        key: '99999999-9999-4999-8999-999999999999.jpg',
+        license: 'CC BY-SA 4.0 — Media Indramayu, Wikimedia Commons'
+      },
+      avatar: {
+        source: 'sandiwara-2.jpg',
+        key: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jpg',
+        license: 'CC BY-SA 4.0 — Media Indramayu, Wikimedia Commons'
+      },
+      gallery: [
+        {
+          source: 'sandiwara-2.jpg',
+          key: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jpg',
+          license: 'CC BY-SA 4.0 — Media Indramayu, Wikimedia Commons'
+        }
+      ]
+    }
+  },
+  {
+    slug: 'singa-depok-putra-betawi',
+    displayName: 'Singa Depok Putra Betawi',
+    legalName: 'Sanggar Singa Depok',
+    regionCode: '3276',
+    address: 'Jl. Margonda Raya No. 10, Kota Depok',
+    location: [106.83, -6.4],
+    description:
+      'Pertunjukan singa depok dengan pemain, musik, dan kostum untuk ' +
+      'pawai, hajatan, dan acara budaya.',
+    category: 'seni-tradisi',
+    extraCategory: 'pendukung-acara',
+    packages: [{ ...FULL_DAY_PACKAGE, price: 3_000_000, personnel: 14 }],
+    media: {
+      banner: {
+        source: 'singa-depok.jpg',
+        key: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.jpg',
+        license: 'CC BY-SA 4.0 — Wandy payz, Wikimedia Commons'
+      },
+      avatar: {
+        source: 'singa-depok.jpg',
+        key: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.jpg',
+        license: 'CC BY-SA 4.0 — Wandy payz, Wikimedia Commons'
+      },
+      gallery: [
+        {
+          source: 'singa-depok.jpg',
+          key: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.jpg',
+          license: 'CC BY-SA 4.0 — Wandy payz, Wikimedia Commons'
+        }
+      ]
+    }
   }
 ];
 
@@ -100,7 +282,7 @@ const BOOKINGS = [
     eventCode: 'EV-DEMO-34E0',
     customerEmail: 'rina.ayu@tarlink.id',
     vendorSlug: 'organ-tunggal-barokah',
-    packageName: 'Paket Lengkap 6 Jam',
+    packageName: 'Paket Full Day 12 Jam',
     title: 'Hajatan Pernikahan Rina & Bayu',
     venueName: 'Kediaman Keluarga Ayu',
     venueAddress: 'Jl. Raya Indramayu No. 12, rumah pagar hijau',
@@ -113,7 +295,7 @@ const BOOKINGS = [
     eventCode: 'EV-DEMO-33D9',
     customerEmail: 'rina.ayu@tarlink.id',
     vendorSlug: 'tarling-sinar-remaja',
-    packageName: 'Paket Lengkap 6 Jam',
+    packageName: 'Paket Full Day 12 Jam',
     title: 'Syukuran Khitanan Adik Rina',
     venueName: 'Rumah Keluarga Ayu',
     venueAddress: 'Jl. Pantura No. 45, Indramayu',
@@ -292,6 +474,78 @@ async function replaceVendorCategories(client, vendorId, slugs) {
        VALUES ($1, $2, $3)
        ON CONFLICT (vendor_id, category_id) DO UPDATE SET is_primary = EXCLUDED.is_primary`,
       [vendorId, categoryId, index === 0]
+    );
+  }
+}
+
+const SEED_MEDIA_DIR = path.resolve(process.cwd(), 'scripts/seed-media');
+
+function uploadDir() {
+  return path.resolve(process.cwd(), process.env.UPLOAD_DIR ?? 'storage/uploads');
+}
+
+function mediaBaseUrl() {
+  return (process.env.SEED_MEDIA_BASE_URL ?? 'http://localhost:3001').replace(/\/$/, '');
+}
+
+function publicMediaUrl(key) {
+  return `${mediaBaseUrl()}/v1/media/${key}`;
+}
+
+async function ensureSeedRegions(client) {
+  await client.query(
+    `INSERT INTO regions (code, name, level, parent_code, is_active)
+     VALUES ('3276', 'Kota Depok', 'city', '32', true)
+     ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name, is_active = true`
+  );
+}
+
+/**
+ * Foto demo asli (Wikimedia Commons/Unsplash) disalin ke UPLOAD_DIR dengan nama
+ * UUID agar bisa disajikan `GET /v1/media/:filename`. Baris `vendor_media`
+ * ditandai approved supaya konsisten dengan moderasi media, lalu kolom publik
+ * vendor diisi dari URL yang sama.
+ */
+async function seedVendorMedia(client, vendorId, ownerId, media) {
+  if (!media?.banner || !media?.avatar) return;
+  const root = uploadDir();
+  await mkdir(root, { recursive: true });
+
+  const entries = [
+    { ...media.banner, kind: 'banner' },
+    { ...media.avatar, kind: 'avatar' },
+    ...(media.gallery ?? []).map((item) => ({ ...item, kind: 'gallery' }))
+  ];
+  for (const entry of entries) {
+    await copyFile(path.join(SEED_MEDIA_DIR, entry.source), path.join(root, entry.key));
+  }
+
+  await client.query(
+    `UPDATE vendors
+        SET avatar_url = $2,
+            banner_url = $3,
+            photo_urls = $4::text[],
+            video_url = NULL
+      WHERE id = $1`,
+    [
+      vendorId,
+      publicMediaUrl(media.avatar.key),
+      publicMediaUrl(media.banner.key),
+      (media.gallery ?? []).map((item) => publicMediaUrl(item.key))
+    ]
+  );
+
+  await client.query(
+    `DELETE FROM vendor_media WHERE vendor_id = $1 AND review_note = 'seed-demo'`,
+    [vendorId]
+  );
+  for (const entry of entries) {
+    await client.query(
+      `INSERT INTO vendor_media
+         (vendor_id, kind, url, storage_key, license_statement, status,
+          submitted_by, reviewed_by, reviewed_at, review_note)
+       VALUES ($1, $2::media_kind, $3, $4, $5, 'approved', $6, $6, now(), 'seed-demo')`,
+      [vendorId, entry.kind, publicMediaUrl(entry.key), entry.key, entry.license, ownerId]
     );
   }
 }
@@ -553,6 +807,7 @@ async function main() {
 
   try {
     await client.query('BEGIN');
+    await ensureSeedRegions(client);
 
     const customers = new Map();
     for (const customer of CUSTOMERS) {
@@ -576,6 +831,7 @@ async function main() {
 
       const categories = [vendorSpec.category, vendorSpec.extraCategory].filter(Boolean);
       await replaceVendorCategories(client, vendorId, categories);
+      await seedVendorMedia(client, vendorId, ownerId, vendorSpec.media);
 
       const packages = [];
       for (const [pkgIndex, pkg] of vendorSpec.packages.entries()) {
@@ -584,6 +840,16 @@ async function main() {
         const createdAt = new Date(Date.now() - (VENDORS.length - index) * 60_000 + pkgIndex * 1_000);
         const id = await upsertPackage(client, vendorId, pkg, createdAt);
         packages.push({ ...pkg, id });
+      }
+
+      // Satu vendor = satu grup dengan satu paket full-day. Paket lama dari
+      // seed versi sebelumnya dinonaktifkan, bukan dihapus (ada FK booking).
+      if (vendorSpec.packages[0]) {
+        await client.query(
+          `UPDATE packages SET is_active = false
+            WHERE vendor_id = $1 AND name <> $2`,
+          [vendorId, vendorSpec.packages[0].name]
+        );
       }
 
       await fillCalendar(client, vendorId, ownerId);
