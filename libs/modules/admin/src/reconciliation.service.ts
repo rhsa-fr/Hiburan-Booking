@@ -22,6 +22,7 @@ import {
   ReconciliationRepository,
   type ReconClassification,
   type ReconDiffRow,
+  type ReconResolution,
   type ReconRunRow,
   type ReconRunStatus,
   type ReconSeverity
@@ -56,11 +57,15 @@ export interface ReconciliationDiffView {
   delta_idr: number | null;
   detail: Record<string, unknown>;
   due_at: string | null;
+  resolution: ReconResolution | null;
+  resolution_note: string | null;
   resolved_at: string | null;
 }
 
 export interface ReconciliationRunDetail extends ReconciliationRunSummary {
   diffs: ReconciliationDiffView[];
+  /** Findings still awaiting a decision; `diff_count` counts all findings. */
+  open_diff_count: number;
 }
 
 export interface ReconciliationRunList {
@@ -82,6 +87,29 @@ export interface ListRunsQuery {
   page?: number;
   page_size?: number;
 }
+
+export interface ResolveDiffCommand {
+  diffId: string;
+  resolution: string;
+  note: string;
+  actorId: string;
+  actorRole: string;
+  requestId: string | null;
+}
+
+export const RECON_RESOLUTIONS: readonly ReconResolution[] = [
+  'accepted',
+  'ignored',
+  'referred',
+  'corrected'
+];
+
+const RESOLUTION_NOTES: Readonly<Record<ReconResolution, string>> = {
+  accepted: 'selisih diterima dan didokumentasikan',
+  ignored: 'bukan temuan nyata',
+  referred: 'diteruskan ke finance/provider',
+  corrected: 'dibetulkan di luar modul rekonsiliasi'
+};
 
 const PROVIDERS: readonly ReconciliationProvider[] = ['midtrans', 'pjp'];
 const MAX_PAGE_SIZE = 100;
@@ -180,8 +208,29 @@ function toDiffView(row: ReconDiffRow): ReconciliationDiffView {
     delta_idr: row.delta_idr === null ? null : idrToJson(row.delta_idr, 'delta_idr'),
     detail: row.detail,
     due_at: row.due_at === null ? null : row.due_at.toISOString(),
+    resolution: row.resolution,
+    resolution_note: row.resolution_note,
     resolved_at: row.resolved_at === null ? null : row.resolved_at.toISOString()
   };
+}
+
+function parseResolution(value: string): ReconResolution {
+  const found = RECON_RESOLUTIONS.find((candidate) => candidate === value);
+  if (!found) {
+    throw new AppError(
+      'VALIDATION_ERROR',
+      `resolution harus salah satu dari: ${RECON_RESOLUTIONS.join(', ')}`
+    );
+  }
+  return found;
+}
+
+function parseNote(value: string): string {
+  const note = value.trim();
+  if (note.length < 5 || note.length > 1000) {
+    throw new AppError('VALIDATION_ERROR', 'Catatan penyelesaian harus 5-1000 karakter');
+  }
+  return note;
 }
 
 @Injectable()
@@ -204,6 +253,7 @@ export class ReconciliationService {
     const matched = matchPaymentDay(gateway, ledger);
     const diffCount = countFindings(matched.diffs);
     const status: 'balanced' | 'discrepancy' = diffCount === 0 ? 'balanced' : 'discrepancy';
+    const slaHours = await this.repository.getSlaHours();
 
     return withTransaction(async (client) => {
       const inserted = await this.repository.insertRun(client, {
@@ -216,7 +266,8 @@ export class ReconciliationService {
         diffCount,
         matchedCount: matched.matchedCount,
         checkedCount: matched.checkedCount,
-        actorId: input.actorId
+        actorId: input.actorId,
+        triggerSource: 'admin'
       });
 
       if (!inserted) {
@@ -228,7 +279,7 @@ export class ReconciliationService {
         return toSummary(concurrent);
       }
 
-      await this.repository.insertDiffs(client, inserted.id, matched.diffs);
+      await this.repository.insertDiffs(client, inserted.id, matched.diffs, slaHours);
       await this.repository.insertAudit(client, {
         actorId: input.actorId,
         actorRole: input.actorRole,
@@ -274,6 +325,73 @@ export class ReconciliationService {
     const run = await this.repository.getRun(id);
     if (!run) throw new AppError('NOT_FOUND', 'Run rekonsiliasi tidak ditemukan');
     const diffs = await this.repository.listDiffs(run.id);
-    return { ...toSummary(run), diffs: diffs.map(toDiffView) };
+    return {
+      ...toSummary(run),
+      diffs: diffs.map(toDiffView),
+      // `matched` rows are evidence, not findings: only the rest can be resolved.
+      open_diff_count: diffs.filter(
+        (diff) => diff.classification !== 'matched' && diff.resolved_at === null
+      ).length
+    };
+  }
+
+  /**
+   * FR-131 phase 2: record the decision for one finding.
+   *
+   * The module stays read-only over money: resolving only fills
+   * `resolution`/`resolved_by`/`resolved_at` and writes one audit row. A second
+   * call for the same finding is a `CONFLICT` — the first reviewer's note is
+   * never overwritten.
+   */
+  async resolveDiff(command: ResolveDiffCommand): Promise<ReconciliationDiffView> {
+    const resolution = parseResolution(command.resolution);
+    const note = parseNote(command.note);
+
+    const existing = await this.repository.findDiff(command.diffId);
+    if (!existing) throw new AppError('NOT_FOUND', 'Temuan rekonsiliasi tidak ditemukan');
+    if (existing.classification === 'matched') {
+      throw new AppError('VALIDATION_ERROR', 'Baris yang cocok bukan temuan dan tidak perlu diputuskan');
+    }
+    if (existing.resolved_at !== null) {
+      throw new AppError('CONFLICT', 'Temuan rekonsiliasi sudah diselesaikan');
+    }
+
+    return withTransaction(async (client) => {
+      const resolved = await this.repository.resolveDiff(client, command.diffId, {
+        resolution,
+        note,
+        actorId: command.actorId
+      });
+      if (!resolved) {
+        // A concurrent admin resolved it between the read and the update.
+        throw new AppError('CONFLICT', 'Temuan rekonsiliasi sudah diselesaikan');
+      }
+
+      await this.repository.insertAudit(client, {
+        actorId: command.actorId,
+        actorRole: command.actorRole,
+        action: 'reconciliation.diff_resolve',
+        entityType: 'reconciliation_diff',
+        entityId: resolved.id,
+        beforeState: {
+          run_id: existing.run_id,
+          classification: existing.classification,
+          external_id: existing.external_id,
+          resolved_at: null
+        },
+        afterState: {
+          run_id: resolved.run_id,
+          classification: resolved.classification,
+          external_id: resolved.external_id,
+          resolution,
+          resolution_note: note,
+          due_at: resolved.due_at === null ? null : resolved.due_at.toISOString(),
+          summary: RESOLUTION_NOTES[resolution]
+        },
+        requestId: command.requestId
+      });
+
+      return toDiffView(resolved);
+    });
   }
 }

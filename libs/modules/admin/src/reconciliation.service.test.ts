@@ -66,7 +66,10 @@ function createFake(gateway: ReconLine[], ledger: ReconLine[]) {
     }),
     listRuns: vi.fn(async () => ({ items: runs, total: runs.length })),
     getRun: vi.fn(async (id: string) => runs.find((row) => row.id === id) ?? null),
-    listDiffs: vi.fn(async () => [] as ReconDiffRow[])
+    listDiffs: vi.fn(async () => [] as ReconDiffRow[]),
+    getSlaHours: vi.fn(async () => 24),
+    findDiff: vi.fn(async (_id: string) => null as ReconDiffRow | null),
+    resolveDiff: vi.fn(async () => null as ReconDiffRow | null)
   };
 
   const service = new ReconciliationService(
@@ -241,6 +244,8 @@ describe('ReconciliationService.detail', () => {
         delta_idr: '200000',
         detail: {},
         due_at: null,
+        resolution: null,
+        resolution_note: null,
         resolved_at: null,
         created_at: new Date('2026-11-06T00:00:01.000Z')
       }
@@ -249,6 +254,7 @@ describe('ReconciliationService.detail', () => {
     const detail = await service.detail('00000000-0000-0000-0000-000000000001');
 
     expect(detail.run_id).toBe('run-1');
+    expect(detail.open_diff_count).toBe(1);
     expect(detail.diffs).toEqual([
       {
         id: 'diff-1',
@@ -260,6 +266,8 @@ describe('ReconciliationService.detail', () => {
         delta_idr: 200_000,
         detail: {},
         due_at: null,
+        resolution: null,
+        resolution_note: null,
         resolved_at: null
       }
     ]);
@@ -271,5 +279,143 @@ describe('ReconciliationService.detail', () => {
     await expect(
       service.detail('00000000-0000-0000-0000-000000000002')
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+});
+
+function diffRow(overrides: Partial<ReconDiffRow> = {}): ReconDiffRow {
+  return {
+    id: '11111111-1111-1111-1111-111111111111',
+    run_id: 'run-1',
+    classification: 'missing_in_ledger',
+    severity: 'critical',
+    external_id: 'order-9',
+    gateway_amount_idr: '1200000',
+    ledger_amount_idr: null,
+    delta_idr: '1200000',
+    detail: {},
+    due_at: new Date('2026-11-07T00:00:00.000Z'),
+    resolution: null,
+    resolution_note: null,
+    resolved_at: null,
+    created_at: new Date('2026-11-06T00:00:01.000Z'),
+    ...overrides
+  };
+}
+
+const RESOLVE_INPUT = {
+  diffId: '11111111-1111-1111-1111-111111111111',
+  resolution: 'accepted',
+  note: 'Selisih diterima, bukti transfer dilampirkan.',
+  actorId: 'admin-1',
+  actorRole: 'admin_finance',
+  requestId: 'req-2'
+};
+
+describe('ReconciliationService.resolveDiff', () => {
+  it('records the decision, the reviewer, and one audit row', async () => {
+    const { service, repository, audits } = createFake([], []);
+    repository.findDiff.mockResolvedValueOnce(diffRow());
+    repository.resolveDiff.mockResolvedValueOnce(
+      diffRow({
+        resolution: 'accepted',
+        resolution_note: RESOLVE_INPUT.note,
+        resolved_at: new Date('2026-11-06T03:00:00.000Z')
+      })
+    );
+
+    const result = await service.resolveDiff(RESOLVE_INPUT);
+
+    expect(result).toMatchObject({
+      id: RESOLVE_INPUT.diffId,
+      classification: 'missing_in_ledger',
+      resolution: 'accepted',
+      resolution_note: RESOLVE_INPUT.note,
+      resolved_at: '2026-11-06T03:00:00.000Z'
+    });
+    expect(repository.resolveDiff).toHaveBeenCalledWith(
+      expect.anything(),
+      RESOLVE_INPUT.diffId,
+      {
+        resolution: 'accepted',
+        note: RESOLVE_INPUT.note,
+        actorId: 'admin-1'
+      }
+    );
+    expect(audits).toHaveLength(1);
+    expect(audits[0]).toMatchObject({
+      action: 'reconciliation.diff_resolve',
+      entityType: 'reconciliation_diff',
+      entityId: RESOLVE_INPUT.diffId,
+      actorId: 'admin-1',
+      actorRole: 'admin_finance',
+      requestId: 'req-2',
+      beforeState: { run_id: 'run-1', resolved_at: null }
+    });
+    expect(audits[0]?.afterState).toMatchObject({
+      resolution: 'accepted',
+      resolution_note: RESOLVE_INPUT.note
+    });
+    // Update and audit share the transaction client from withTransaction.
+    expect(repository.resolveDiff.mock.calls[0]?.[0]).toBe(
+      repository.insertAudit.mock.calls[0]?.[0]
+    );
+  });
+
+  it('rejects a note shorter than 5 characters before touching the database', async () => {
+    const { service, repository } = createFake([], []);
+
+    await expect(service.resolveDiff({ ...RESOLVE_INPUT, note: '  ok  ' })).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR'
+    });
+    expect(repository.findDiff).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unknown resolution', async () => {
+    const { service, repository } = createFake([], []);
+
+    await expect(
+      service.resolveDiff({ ...RESOLVE_INPUT, resolution: 'delete_everything' })
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    expect(repository.findDiff).not.toHaveBeenCalled();
+  });
+
+  it('throws NOT_FOUND for an unknown finding', async () => {
+    const { service, repository } = createFake([], []);
+    repository.findDiff.mockResolvedValueOnce(null);
+
+    await expect(service.resolveDiff(RESOLVE_INPUT)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(repository.resolveDiff).not.toHaveBeenCalled();
+  });
+
+  it('refuses to overwrite an already resolved finding', async () => {
+    const { service, repository } = createFake([], []);
+    repository.findDiff.mockResolvedValueOnce(
+      diffRow({
+        resolution: 'ignored',
+        resolution_note: 'Bukan temuan nyata.',
+        resolved_at: new Date('2026-11-06T03:00:00.000Z')
+      })
+    );
+
+    await expect(service.resolveDiff(RESOLVE_INPUT)).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(repository.resolveDiff).not.toHaveBeenCalled();
+  });
+
+  it('rejects a matched row because it is not a finding', async () => {
+    const { service, repository } = createFake([], []);
+    repository.findDiff.mockResolvedValueOnce(diffRow({ classification: 'matched', severity: 'info' }));
+
+    await expect(service.resolveDiff(RESOLVE_INPUT)).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR'
+    });
+    expect(repository.resolveDiff).not.toHaveBeenCalled();
+  });
+
+  it('reports CONFLICT when another admin wins the race', async () => {
+    const { service, repository } = createFake([], []);
+    repository.findDiff.mockResolvedValueOnce(diffRow());
+    repository.resolveDiff.mockResolvedValueOnce(null);
+
+    await expect(service.resolveDiff(RESOLVE_INPUT)).rejects.toMatchObject({ code: 'CONFLICT' });
   });
 });

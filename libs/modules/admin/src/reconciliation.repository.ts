@@ -32,10 +32,10 @@
  * A webhook that crosses midnight WIB is reported as a boundary finding
  * instead of being silently moved to another day.
  */
-import { Injectable } from '@nestjs/common';
-import type { PoolClient } from 'pg';
-import { query } from '@tarlink/core/db';
+import type { PoolClient, QueryResultRow } from 'pg';
+import { query, withTransaction } from '@tarlink/core/db';
 import type { ReconDiff, ReconLine } from './reconciliation.match';
+import { matchPaymentDay } from './reconciliation.match';
 
 export type ReconRunStatus = 'running' | 'balanced' | 'discrepancy' | 'failed';
 export type ReconClassification =
@@ -47,6 +47,7 @@ export type ReconClassification =
   | 'fee_mismatch'
   | 'unverified';
 export type ReconSeverity = 'info' | 'warning' | 'critical';
+export type ReconResolution = 'accepted' | 'ignored' | 'referred' | 'corrected';
 
 export type ReconRunRow = {
   id: string;
@@ -80,6 +81,8 @@ export type ReconDiffRow = {
   delta_idr: string | null;
   detail: Record<string, unknown>;
   due_at: Date | null;
+  resolution: ReconResolution | null;
+  resolution_note: string | null;
   resolved_at: Date | null;
   created_at: Date;
 };
@@ -94,6 +97,14 @@ export interface InsertRunInput {
   diffCount: number;
   matchedCount: number;
   checkedCount: number;
+  actorId: string | null;
+  /** `admin` for a manual run; `worker` for the daily scheduler. */
+  triggerSource: 'admin' | 'worker' | 'manual';
+}
+
+export interface ResolveDiffInput {
+  resolution: ReconResolution;
+  note: string;
   actorId: string;
 }
 
@@ -111,6 +122,48 @@ export interface AuditEntry {
 export interface RunListResult {
   items: ReconRunRow[];
   total: number;
+}
+
+/**
+ * Minimal database port. The API injects the request-wide core pool; the worker
+ * injects its own pool so it never has to load the API env schema (JWT etc.).
+ */
+export interface ReconDatabase {
+  query<T extends QueryResultRow = QueryResultRow>(
+    text: string,
+    params?: readonly unknown[]
+  ): Promise<T[]>;
+  withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T>;
+}
+
+const CORE_DB: ReconDatabase = { query, withTransaction };
+
+export interface RunDayInput {
+  provider: string;
+  reportDate: string;
+  triggerSource: 'admin' | 'worker' | 'manual';
+  requestId: string | null;
+}
+
+export interface RunDayResult {
+  run: ReconRunRow;
+  /** False when the run for that (provider, report_date) already existed. */
+  created: boolean;
+}
+
+/** Next calendar date, computed in UTC so DST never shifts a date. */
+function nextReportDate(value: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) throw new Error('report_date harus berformat YYYY-MM-DD');
+  const next = new Date(
+    Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + 1)
+  );
+  return next.toISOString().slice(0, 10);
+}
+
+/** Findings exclude `matched` rows, which are evidence rather than deltas. */
+function countFindings(diffs: readonly ReconDiff[]): number {
+  return diffs.filter((diff) => diff.classification !== 'matched').length;
 }
 
 /**
@@ -209,6 +262,13 @@ LIMIT $1 OFFSET $2
 
 const COUNT_RUNS_SQL = `SELECT count(*)::int AS total FROM reconciliation_runs`;
 
+const LATEST_RUN_DATE_SQL = `
+SELECT max(report_date)::text AS report_date
+  FROM reconciliation_runs
+ WHERE provider = $1
+   AND scope = 'payment'
+`;
+
 const INSERT_RUN_SQL = `
 INSERT INTO reconciliation_runs
   (provider, scope, report_date, status, report_source,
@@ -219,7 +279,7 @@ VALUES
   ($1, 'payment', $2::date, $3::recon_run_status, 'webhook_events',
    $4::bigint, $5::bigint, $6::bigint,
    $7, $8, $9,
-   $10::uuid, 'admin', now(), now())
+   $10::uuid, $11, now(), now())
 ON CONFLICT (provider, scope, report_date) DO NOTHING
 RETURNING ${RUN_COLUMNS}
 `;
@@ -236,6 +296,8 @@ SELECT
   delta_idr,
   detail,
   due_at,
+  resolution,
+  resolution_note,
   resolved_at,
   created_at
 FROM reconciliation_diffs
@@ -247,14 +309,147 @@ ORDER BY
   created_at
 `;
 
-@Injectable()
+const GET_DIFF_SQL = `
+SELECT
+  id,
+  run_id,
+  classification,
+  severity,
+  external_id,
+  gateway_amount_idr,
+  ledger_amount_idr,
+  delta_idr,
+  detail,
+  due_at,
+  resolution,
+  resolution_note,
+  resolved_at,
+  created_at
+FROM reconciliation_diffs
+WHERE id = $1::uuid
+`;
+
+/**
+ * Resolve is a one-way decision: the `resolved_at IS NULL` predicate makes a
+ * second call return no row, so the service can answer `CONFLICT` instead of
+ * silently overwriting the first reviewer's note.
+ */
+const RESOLVE_DIFF_SQL = `
+UPDATE reconciliation_diffs
+   SET resolution = $2,
+       resolution_note = $3,
+       resolved_by = $4::uuid,
+       resolved_at = now()
+ WHERE id = $1::uuid
+   AND resolved_at IS NULL
+RETURNING
+  id,
+  run_id,
+  classification,
+  severity,
+  external_id,
+  gateway_amount_idr,
+  ledger_amount_idr,
+  delta_idr,
+  detail,
+  due_at,
+  resolution,
+  resolution_note,
+  resolved_at,
+  created_at
+`;
+
+/** SLA temuan; nilai di luar 1..168 jam jatuh ke default 24 jam. */
+const RECON_SLA_HOURS_SQL = `
+SELECT (value#>>'{}')::int AS hours
+  FROM platform_settings
+ WHERE key = 'recon_sla_hours'
+`;
+
 export class ReconciliationRepository {
+  constructor(private readonly db: ReconDatabase = CORE_DB) {}
+
+  /**
+   * Computes and stores one day without an HTTP request (daily worker).
+   *
+   * Shares the matcher and SQL with the admin service, but owns its transaction
+   * because the worker has no request context. Idempotent through the UNIQUE
+   * key: an existing run is returned with `created: false` and nothing is
+   * written.
+   */
+  async runDay(input: RunDayInput): Promise<RunDayResult> {
+    const existing = await this.findRunByKey(input.provider, input.reportDate);
+    if (existing) return { run: existing, created: false };
+
+    const to = nextReportDate(input.reportDate);
+    const [gateway, ledger] = await Promise.all([
+      this.findGatewayPaymentLines(input.provider, input.reportDate, to),
+      this.findPaidPaymentLines(input.provider, input.reportDate, to)
+    ]);
+    const matched = matchPaymentDay(gateway, ledger);
+    const diffCount = countFindings(matched.diffs);
+    const status: 'balanced' | 'discrepancy' = diffCount === 0 ? 'balanced' : 'discrepancy';
+    const slaHours = await this.getSlaHours();
+
+    return this.db.withTransaction(async (client) => {
+      const inserted = await this.insertRun(client, {
+        provider: input.provider,
+        reportDate: input.reportDate,
+        status,
+        gatewayTotalIdr: matched.gatewayTotalIdr,
+        ledgerTotalIdr: matched.ledgerTotalIdr,
+        diffIdr: matched.diffIdr,
+        diffCount,
+        matchedCount: matched.matchedCount,
+        checkedCount: matched.checkedCount,
+        actorId: null,
+        triggerSource: input.triggerSource
+      });
+      if (!inserted) {
+        const concurrent = await this.findRunByKey(input.provider, input.reportDate, client);
+        if (!concurrent) {
+          throw new Error('Run rekonsiliasi gagal disimpan');
+        }
+        return { run: concurrent, created: false };
+      }
+
+      await this.insertDiffs(client, inserted.id, matched.diffs, slaHours);
+      await this.insertAudit(client, {
+        actorId: null,
+        actorRole: null,
+        action:
+          input.triggerSource === 'worker'
+            ? 'reconciliation.run_daily'
+            : 'reconciliation.run',
+        entityType: 'reconciliation_run',
+        entityId: inserted.id,
+        beforeState: null,
+        afterState: {
+          provider: input.provider,
+          scope: 'payment',
+          report_date: input.reportDate,
+          status,
+          trigger_source: input.triggerSource,
+          checked_count: matched.checkedCount,
+          matched_count: matched.matchedCount,
+          diff_count: diffCount,
+          gateway_total_idr: matched.gatewayTotalIdr.toString(),
+          ledger_total_idr: matched.ledgerTotalIdr.toString(),
+          diff_idr: matched.diffIdr.toString()
+        },
+        requestId: input.requestId
+      });
+
+      return { run: inserted, created: true };
+    });
+  }
+
   async findGatewayPaymentLines(
     provider: string,
     from: string,
     to: string
   ): Promise<ReconLine[]> {
-    const rows = await query<{ external_id: string; amount_idr: string }>(GATEWAY_LINES_SQL, [
+    const rows = await this.db.query<{ external_id: string; amount_idr: string }>(GATEWAY_LINES_SQL, [
       provider,
       from,
       to
@@ -266,7 +461,7 @@ export class ReconciliationRepository {
   }
 
   async findPaidPaymentLines(provider: string, from: string, to: string): Promise<ReconLine[]> {
-    const rows = await query<{ external_id: string; amount_idr: string }>(LEDGER_LINES_SQL, [
+    const rows = await this.db.query<{ external_id: string; amount_idr: string }>(LEDGER_LINES_SQL, [
       provider,
       from,
       to
@@ -285,7 +480,7 @@ export class ReconciliationRepository {
     const params = [provider, reportDate];
     const rows = client
       ? (await client.query<ReconRunRow>(FIND_RUN_SQL, params)).rows
-      : await query<ReconRunRow>(FIND_RUN_SQL, params);
+      : await this.db.query<ReconRunRow>(FIND_RUN_SQL, params);
     return rows[0] ?? null;
   }
 
@@ -304,7 +499,8 @@ export class ReconciliationRepository {
       input.diffCount,
       input.matchedCount,
       input.checkedCount,
-      input.actorId
+      input.actorId,
+      input.triggerSource
     ]);
     return result.rows[0] ?? null;
   }
@@ -315,11 +511,15 @@ export class ReconciliationRepository {
    * (run_id, classification, external_id) constraint when a key has more than
    * one extra occurrence: the first duplicate row carries the evidence, the
    * summary counts stay per classification from the matcher.
+   *
+   * `due_at` is fixed at insert time (`now() + slaHours`), so the SLA does not
+   * drift if the setting is changed after the run.
    */
   async insertDiffs(
     client: PoolClient,
     runId: string,
-    diffs: readonly ReconDiff[]
+    diffs: readonly ReconDiff[],
+    slaHours: number
   ): Promise<void> {
     if (diffs.length === 0) return;
 
@@ -327,6 +527,9 @@ export class ReconciliationRepository {
     for (let start = 0; start < diffs.length; start += CHUNK_SIZE) {
       const chunk = diffs.slice(start, start + CHUNK_SIZE);
       const values: unknown[] = [];
+      // One shared SLA parameter after every per-tuple field block; embedding it
+      // per tuple would shift the injective parameter numbering.
+      const slaParam = chunk.length * 8 + 1;
       const tuples = chunk.map((diff, index) => {
         const base = index * 8;
         values.push(
@@ -339,16 +542,16 @@ export class ReconciliationRepository {
           diff.deltaIdr.toString(),
           JSON.stringify(diff.detail)
         );
-        return `($${base + 1}::uuid, $${base + 2}::recon_classification, $${base + 3}::recon_severity, $${base + 4}, $${base + 5}::bigint, $${base + 6}::bigint, $${base + 7}::bigint, $${base + 8}::jsonb)`;
+        return `($${base + 1}::uuid, $${base + 2}::recon_classification, $${base + 3}::recon_severity, $${base + 4}, $${base + 5}::bigint, $${base + 6}::bigint, $${base + 7}::bigint, $${base + 8}::jsonb, CASE WHEN $${base + 2}::recon_classification = 'matched'::recon_classification THEN NULL ELSE now() + ($${slaParam}::int * interval '1 hour') END)`;
       });
 
       await client.query(
         `INSERT INTO reconciliation_diffs
            (run_id, classification, severity, external_id,
-            gateway_amount_idr, ledger_amount_idr, delta_idr, detail)
+            gateway_amount_idr, ledger_amount_idr, delta_idr, detail, due_at)
          VALUES ${tuples.join(', ')}
          ON CONFLICT (run_id, classification, external_id) DO NOTHING`,
-        values
+        [...values, slaHours]
       );
     }
   }
@@ -375,18 +578,57 @@ export class ReconciliationRepository {
 
   async listRuns(params: { limit: number; offset: number }): Promise<RunListResult> {
     const [items, totals] = await Promise.all([
-      query<ReconRunRow>(LIST_RUNS_SQL, [params.limit, params.offset]),
-      query<{ total: number }>(COUNT_RUNS_SQL)
+      this.db.query<ReconRunRow>(LIST_RUNS_SQL, [params.limit, params.offset]),
+      this.db.query<{ total: number }>(COUNT_RUNS_SQL)
     ]);
     return { items, total: totals[0]?.total ?? 0 };
   }
 
   async getRun(id: string): Promise<ReconRunRow | null> {
-    const rows = await query<ReconRunRow>(GET_RUN_SQL, [id]);
+    const rows = await this.db.query<ReconRunRow>(GET_RUN_SQL, [id]);
     return rows[0] ?? null;
   }
 
+  /** Latest report date already reconciled for a provider (null = never). */
+  async findLatestReportDate(provider: string): Promise<string | null> {
+    const rows = await this.db.query<{ report_date: string | null }>(LATEST_RUN_DATE_SQL, [
+      provider
+    ]);
+    return rows[0]?.report_date ?? null;
+  }
+
   async listDiffs(runId: string): Promise<ReconDiffRow[]> {
-    return query<ReconDiffRow>(LIST_DIFFS_SQL, [runId]);
+    return this.db.query<ReconDiffRow>(LIST_DIFFS_SQL, [runId]);
+  }
+
+  async getSlaHours(): Promise<number> {
+    const rows = await this.db.query<{ hours: number }>(RECON_SLA_HOURS_SQL);
+    const hours = rows[0]?.hours;
+    return typeof hours === 'number' && Number.isInteger(hours) && hours >= 1 && hours <= 168
+      ? hours
+      : 24;
+  }
+
+  async findDiff(id: string): Promise<ReconDiffRow | null> {
+    const rows = await this.db.query<ReconDiffRow>(GET_DIFF_SQL, [id]);
+    return rows[0] ?? null;
+  }
+
+  /**
+   * Returns `null` when the finding was already resolved (the `WHERE` cannot
+   * match), which the service reports as `CONFLICT`.
+   */
+  async resolveDiff(
+    client: PoolClient,
+    id: string,
+    input: ResolveDiffInput
+  ): Promise<ReconDiffRow | null> {
+    const result = await client.query<ReconDiffRow>(RESOLVE_DIFF_SQL, [
+      id,
+      input.resolution,
+      input.note,
+      input.actorId
+    ]);
+    return result.rows[0] ?? null;
   }
 }

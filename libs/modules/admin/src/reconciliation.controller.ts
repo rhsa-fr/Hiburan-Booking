@@ -26,6 +26,8 @@ import { AppError } from '@tarlink/core/errors';
 import { AuthGuard, Roles, RolesGuard, type AuthenticatedRequest } from '@tarlink/platform/auth';
 import {
   ReconciliationService,
+  RECON_RESOLUTIONS,
+  type ReconciliationDiffView,
   type ReconciliationRunDetail,
   type ReconciliationRunList,
   type ReconciliationRunSummary
@@ -44,6 +46,14 @@ const LIST_QUERY = z
     page_size: z.coerce.number().int().min(1).max(100).optional()
   })
   .passthrough();
+
+/** Phase 2: the decision is final per finding; note is required by the DB CHECK. */
+const RESOLVE_BODY = z
+  .object({
+    resolution: z.enum(RECON_RESOLUTIONS as [string, ...string[]]),
+    note: z.string().trim().min(5).max(1000)
+  })
+  .strict();
 
 /** `audit_logs.actor_role` for money routes: finance wins when both are held. */
 function financeActor(request: AuthenticatedRequest): {
@@ -108,5 +118,41 @@ export class ReconciliationController {
       throw new AppError('VALIDATION_ERROR', 'ID run rekonsiliasi tidak valid');
     }
     return this.reconciliation.detail(id);
+  }
+
+  /**
+   * FR-131 phase 2. Finance/super only (class-level guard). `Idempotency-Key`
+   * is accepted for symmetry with other money routes, but the operation is
+   * naturally single-shot: a repeat returns `409 CONFLICT`.
+   */
+  @Post('diffs/:id/resolve')
+  @HttpCode(200)
+  async resolveDiff(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Headers('idempotency-key') _idempotencyKey: string | undefined,
+    @Headers('x-request-id') requestId: string | undefined,
+    @Req() request: AuthenticatedRequest
+  ): Promise<ReconciliationDiffView> {
+    if (!UUID_PATTERN.test(id)) {
+      throw new AppError('VALIDATION_ERROR', 'ID temuan rekonsiliasi tidak valid');
+    }
+    const parsed = RESOLVE_BODY.safeParse(body);
+    if (!parsed.success) {
+      throw new AppError(
+        'VALIDATION_ERROR',
+        'Keputusan rekonsiliasi tidak valid',
+        parsed.error.issues
+      );
+    }
+    const actor = financeActor(request);
+    return this.reconciliation.resolveDiff({
+      diffId: id,
+      resolution: parsed.data.resolution,
+      note: parsed.data.note,
+      actorId: actor.id,
+      actorRole: actor.role,
+      requestId: requestId ?? null
+    });
   }
 }
