@@ -26,7 +26,7 @@ Repositori ini berisi **API**, **panel admin**, **worker**, **library domain**, 
 | Consent ToS + Privasi (FR-103) | `user_consents` append-only per versi; register wajib mengirim versi aktif | `POST /v1/auth/register`, `GET /v1/policies/:code` |
 | Toggle wilayah (FR-125) | Wilayah nonaktif hilang dari katalog & formulir vendor; panel `/regions` | `GET/PATCH /v1/admin/regions` |
 | Ledger double-entry | 1420 test lulus (1313 backend + 62 worker + 45 panel), 8 skip; mobile 47 | `npm test` |
-| Skema DB | migrasi `001`-`033` diterapkan; berikutnya `034` | `npm run migrate` |
+| Skema DB | migrasi `001`-`034` diterapkan; berikutnya `035` | `npm run migrate` |
 | Operasional | Liveness `/v1/health`, readiness `/v1/health/ready` (503 saat DB mati, dipakai HEALTHCHECK), rate limit 10 laporan/jam/user, cleanup challenge 2FA di worker | `GET /v1/health/ready`; job `cleanup_auth` |
 | Kesiapan operasional | Panel `/ops` + banner dashboard merangkum tujuh antrean yang lewat SLA, gagal kirim, atau macet; read-only, agregat, semua peran admin | `GET /v1/admin/ops/alerts` |
 | Deploy produksi | `Dockerfile` 4 target, `docker-compose.prod.yml`, preflight, backup/restore, CI GitHub Actions | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) |
@@ -50,7 +50,7 @@ Repositori ini berisi **API**, **panel admin**, **worker**, **library domain**, 
 | `apps/worker` | Job: `expire-unpaid`, `expire-unresponsive`, `expire-holds`, `auto-complete`, `auto-release`, `payout-reconcile`, `reconcile-daily`, `escalate-reports`, `booking-reminders`, `outbox`, `cleanup-auth`, `cleanup-media` |
 | `libs/modules/*` | Domain: `auth`, `booking`, `chat`, `payment`, `payout`, `ledger`, `catalog`, `calendar`, `admin`, `moderation`, `notifications`, `vendor-onboarding`, `vendor-portal` |
 | `libs/platform/*` | Fondasi: auth (JWT + `jti`), clock, crypto (AES-256-GCM), email (transport transaksional), idempotensi, outbox, pricing, rate-limit. DB/config/money ada di `apps/api/src/core/` |
-| `db/migrations` | Skema PostgreSQL `001`-`033` diterapkan; berikutnya `034` |
+| `db/migrations` | Skema PostgreSQL `001`-`034` diterapkan; berikutnya `035` |
 | `scripts/` | Migrasi, seed, smoke test, webhook PJP, probe browser |
 | `opendesain/` | Ekspor HTML acuan desain pelanggan & vendor (bukan aplikasi) — lihat [docs/DESIGN-REFERENCES.md](docs/DESIGN-REFERENCES.md) |
 | `docs/` | PRD, tech design, UX flow, brief legal, SOP, arsitektur, API |
@@ -298,8 +298,11 @@ Yang masih terbuka:
   unggah tersedia di mobile `Banding konten` dan lihat di panel). Yang belum:
   auto-suspend untuk pelanggaran berulang.
   Multi-vendor (FR-113) hanya kolom `parent_event_id` tanpa pemakaian TypeScript.
-  Clawback pasca-release (FR-122) punya builder jurnal tetapi belum dipanggil
-  service/endpoint mana pun.
+- Clawback pasca-pencairan (FR-122, migrasi `034`) sudah aktif: klaim maksimal
+  30 hari setelah release, hanya bila payout sudah dibayar, wajib dua admin
+  berbeda. Jurnal `clawback_recognized` + `clawback_paid` meninggalkan saldo
+  `vendor_payable` negatif yang memotong payout berikutnya; panel `/disputes`
+  punya alur ajukan/setujui/tolak.
 - `policy_versions` untuk `tos` dan `privacy` masih **placeholder** bertanda
   `"status":"draft"`; teks final harus diganti lewat migrasi baru. Consent dicatat pada
   registrasi email+password **dan** pembuatan akun baru lewat Google (`consent` wajib).

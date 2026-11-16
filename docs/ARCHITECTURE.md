@@ -80,7 +80,7 @@ Settlement tidak punya tabel sendiri: statusnya hidup di `bookings.settlement_st
 Pelunasan manual maupun online (Midtrans) dicatat sebagai baris `payments` berjenis `settlement`; migrasi 007
 menjaga hanya satu baris `pending`/`paid` per booking.
 
-Migrasi: `db/migrations/001_core.sql` → `033_appeal_evidence_files.sql`. Migrasi 002 menambah
+Migrasi: `db/migrations/001_core.sql` → `034_dispute_clawbacks.sql`. Migrasi 002 menambah
 add-on dan snapshot istilah, 003 auth, 004 password admin + `login_attempts`, 005
 Google, 006 metode pembayaran manual, 007 keunikan pelunasan, 008 kategori katalog +
 tabel favorit, 009 kolom media vendor/paket, 010 guard idempotensi booking
@@ -102,8 +102,9 @@ per kanal/pesan/penerima untuk email FR-051), 029 tindak lanjut rekonsiliasi
 (`reconciliation_diffs.resolution` + CHECK konsistensi resolved_at), 030 eskalasi
 SLA laporan konten (`content_reports.escalated_at` + index), 031 banding takedown
 (`content_report_appeals`), 032 index `events.start_date` untuk pengingat H-7/H-1/hari-H,
-033 bukti berkas banding privat (`content_report_appeals.evidence_file_path`).
-Nomor berikutnya: `034`.
+033 bukti berkas banding privat (`content_report_appeals.evidence_file_path`),
+034 clawback pasca-pencairan (`dispute_clawbacks` + enum `dispute_resolution.clawback`).
+Nomor berikutnya: `035`.
 
 ### 3.1 Moderasi media
 
@@ -603,13 +604,15 @@ dan tindak lanjut rekonsiliasi — SLA + keputusan admin + worker harian
 (FR-131 fase 2, migrasi `029`), ringkasan kesiapan operasional
 (`GET /admin/ops/alerts` + panel `/ops`), banding takedown (FR-124,
 migrasi `031` + panel `/appeals`), serta bukti berkas banding privat (migrasi `033`,
-API + panel + tombol unggah di mobile; JPG/PNG/WebP maks 5 MB).
+API + panel + tombol unggah di mobile; JPG/PNG/WebP maks 5 MB), dan clawback
+pasca-pencairan (FR-122, migrasi `034`; maker-checker, jurnal
+`clawback_recognized`/`clawback_paid`, settlement `clawed_back`).
 
 Yang masih terbuka (lihat [AGENTS.md § Batasan](../AGENTS.md#batasan-yang-diketahui)):
 push FCM (FR-052 — pengingat H-7/H-1/hari-H sendiri sudah dikirim lewat email/in-app),
 chat foto/lokasi dan penyaringan kontak (FR-135),
-picker peta lokasi acara, UI check-in berbasis GPS, multi-vendor (FR-113), clawback
-otomatis (FR-122), serta sisa FR-131 (lane
+picker peta lokasi acara, UI check-in berbasis GPS, multi-vendor (FR-113), serta sisa
+FR-131 (lane
 `payout`/`refund` dan run terhadap data gateway nyata). SLA `due_at`, aksi resolve,
 dan **worker harian** sudah ada (migrasi `029`, job `reconcile_daily`), tanpa
 memposting jurnal. Provider WhatsApp/SMS

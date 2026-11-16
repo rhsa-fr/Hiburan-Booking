@@ -1044,6 +1044,9 @@ Semua butuh peran `admin`/`operator`.
 | GET | `/admin/payments` | Daftar pembayaran |
 | GET | `/admin/disputes` | Sengketa |
 | POST | `/admin/disputes/:id/resolve` | Putusan sengketa (lihat di bawah) |
+| POST | `/admin/disputes/:id/clawback` | Ajukan clawback pasca-pencairan (FR-122) |
+| POST | `/admin/disputes/:id/clawback/approve` | Setujui clawback (admin lain) |
+| POST | `/admin/disputes/:id/clawback/reject` | Tolak pengajuan clawback |
 | GET | `/admin/audit` | Audit log |
 | GET | `/admin/operators` | Akun operator |
 | GET | `/admin/regions` | Daftar wilayah + jumlah vendor aktif (FR-125) |
@@ -1308,6 +1311,42 @@ putusan memicu refund.
 Respons memuat `status`, `resolution`, `resolution_amount_idr`,
 `customer_share_idr`, `vendor_share_idr`, dan `journal_entry_id`/`refund_id`
 bila ada.
+
+### Clawback pasca-pencairan (FR-122)
+
+Hanya untuk booking yang payout-nya **sudah dicairkan** dan sengketa dibuka
+maksimal 30 hari setelah `released_at`. Dua langkah, wajib admin berbeda:
+
+1. `POST /admin/disputes/:id/clawback` — `admin_finance`/`admin_super` mengajukan.
+
+   ```json
+   { "amount_idr": 1600000, "note": "Bukti baru menunjukkan vendor tidak hadir." }
+   ```
+
+   `amount_idr` wajib bilangan bulat > 0 dan tidak boleh melebihi dana yang
+   pernah dicairkan ke vendor (kredit `vendor_payable` pada jurnal `release`).
+   Langkah ini **tidak** memindahkan uang.
+
+2. `POST /admin/disputes/:id/clawback/approve` — admin **lain** menyetujui.
+
+   ```json
+   { "note": "Bukti valid; clawback penuh disetujui." }
+   ```
+
+   Dalam satu transaksi: jurnal `clawback_recognized` + `clawback_paid`
+   (vendor_payable negatif, `dispute_reserve` netral, kas platform keluar),
+   `bookings.settlement_status = 'clawed_back'`, `clawback_recovered_at`,
+   riwayat `dispute.resolved_clawback`, sengketa `resolved` dengan
+   `resolution = 'clawback'` + `approved_by`, audit, dan notifikasi.
+   Penyetuju sama dengan pengaju dijawab `403 FORBIDDEN`.
+
+3. `POST /admin/disputes/:id/clawback/reject` — menolak/menarik pengajuan;
+   sengketa tetap terbuka untuk putusan lain.
+
+`GET /admin/disputes` menyertakan objek `clawback` (`id`, `status`,
+`amount_idr`, `request_note`, `requested_by_name`, `requested_at`) atau `null`.
+Saldo `vendor_payable` yang negatif otomatis memotong payout berikutnya karena
+payout membaca saldo ledger.
 
 ### `GET/PUT /admin/vendors/:id/categories`
 

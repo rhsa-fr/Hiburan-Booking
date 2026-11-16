@@ -171,7 +171,7 @@ dibuat oleh npm 11, dan `node:22` membawa npm 10 yang menolak lock ini.
 4. `flutter analyze` + `flutter test`, lalu screenshot 390×844.
 
 **Migrasi DB**
-1. Nomor urut berikutnya di `db/migrations` (terakhir `033`, berikutnya `034`).
+1. Nomor urut berikutnya di `db/migrations` (terakhir `034_dispute_clawbacks.sql`, berikutnya `035`).
 2. Idempoten bila memungkinkan; sediakan jalur koreksi ke depan, bukan `DROP` data.
 3. Jalankan `npm run migrate:dry` sebelum `npm run migrate`.
 
@@ -319,9 +319,14 @@ Masih terbuka:
 - Rekonsiliasi fase 2: SLA + aksi resolve + **worker harian** sudah ada (migrasi
   `029`, job `reconcile_daily`). Yang belum: lane `payout`/`refund` dan run
   terhadap data gateway nyata (sumber masih `webhook_events`).
-- Multi-vendor (FR-113) hanya kolom `events.parent_event_id` tanpa pemakaian TypeScript;
-  clawback pasca-release (FR-122) punya `buildClawbackEntries` tetapi belum dipanggil
-  service/endpoint.
+- Multi-vendor (FR-113) hanya kolom `events.parent_event_id` tanpa pemakaian TypeScript.
+- Clawback pasca-pencairan (FR-122, migrasi `034`): klaim maksimal 30 hari setelah
+  `released_at`, hanya bila payout sudah `paid`; pengajuan dan persetujuan wajib
+  admin berbeda (`dispute_clawbacks`, `403` bila menyetujui sendiri). Menyetujui
+  memposting `clawback_recognized` + `clawback_paid`, mengubah settlement ke
+  `clawed_back`, menutup sengketa `resolution = 'clawback'`, dan meninggalkan
+  `vendor_payable` negatif yang otomatis memotong payout berikutnya. Panel
+  `/disputes` punya opsi ajukan + tombol Setujui/Tolak.
 - Moderasi UGC (FR-123/124/142) sudah ada, termasuk notifikasi pelapor, eskalasi
   SLA (migrasi `030`), banding takedown (migrasi `031`, panel `/appeals` + layar
   mobile `Banding konten`), dan bukti berkas privat (migrasi `033`, terenkripsi,
