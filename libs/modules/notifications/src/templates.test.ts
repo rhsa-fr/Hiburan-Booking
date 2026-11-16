@@ -62,6 +62,10 @@ describe('planNotification — disputes', () => {
     ['refund_full', 'BK-261105-0001: refund diputuskan. Dana dikembalikan sesuai keputusan admin.'],
     ['refund_partial', 'BK-261105-0001: refund diputuskan. Dana dikembalikan sesuai keputusan admin.'],
     ['release_to_vendor', 'BK-261105-0001: dana diteruskan ke vendor.'],
+    [
+      'clawback',
+      'BK-261105-0001: clawback diputuskan. Dana ditarik kembali dari vendor dan dikembalikan ke pelanggan.'
+    ],
     ['reject', 'BK-261105-0001: sengketa ditolak.'],
     ['no_action', 'BK-261105-0001: sengketa ditolak.']
   ])('reports the %s outcome to both sides', (resolution, body) => {

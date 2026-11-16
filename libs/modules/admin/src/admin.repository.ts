@@ -22,6 +22,7 @@ import type {
   BookingRow,
   DailyRow,
   DisputeRow,
+  DisputeClawbackRow,
   HealthRow,
   JournalEntryRow,
   JournalLineRow,
@@ -274,13 +275,22 @@ const DISPUTE_SELECT = `
          d.vendor_share_idr,
          v.display_name AS vendor_name,
          ereg.name AS city,
-         COALESCE(cu.name, cu.phone) AS customer_name
+         COALESCE(cu.name, cu.phone) AS customer_name,
+         c.id AS clawback_id,
+         c.status AS clawback_status,
+         c.amount_idr AS clawback_amount_idr,
+         c.request_note AS clawback_request_note,
+         c.requested_by AS clawback_requested_by,
+         COALESCE(ru.name, ru.phone) AS clawback_requested_by_name,
+         c.requested_at AS clawback_requested_at
     FROM disputes d
     JOIN bookings b ON b.id = d.booking_id
     JOIN vendors v ON v.id = b.vendor_id
     JOIN users cu ON cu.id = b.customer_id
     JOIN events e ON e.id = b.event_id
     JOIN regions ereg ON ereg.code = e.region_code
+    LEFT JOIN dispute_clawbacks c ON c.dispute_id = d.id
+    LEFT JOIN users ru ON ru.id = c.requested_by
 `;
 
 const LOCK_DISPUTE_SQL = `${DISPUTE_SELECT} WHERE d.id = $1::uuid FOR UPDATE OF d`;
@@ -344,6 +354,105 @@ UPDATE bookings
        updated_at = now()
  WHERE id = $1::uuid
    AND settlement_status = 'disputed'
+RETURNING id
+`;
+
+/* ------------------------------------------------- FR-122 clawback (maker-checker) */
+
+/**
+ * Amount the vendor actually received for the booking: the credit line posted
+ * to `vendor_payable` by the release entry. It is the ceiling for a clawback —
+ * the platform can never recover more than it paid out for that booking.
+ */
+const RELEASED_VENDOR_AMOUNT_SQL = `
+SELECT COALESCE(sum(jl.credit_idr), 0)::text AS amount_idr
+  FROM journal_entries je
+  JOIN journal_lines jl ON jl.journal_entry_id = je.id
+ WHERE je.booking_id = $1::uuid
+   AND je.event_type = 'release'
+   AND jl.account_code = 'vendor_payable'
+`;
+
+/** A clawback is post-release only: there must be a settled payout covering it. */
+const PAID_PAYOUT_EXISTS_SQL = `
+SELECT 1 AS found
+  FROM payouts p
+  JOIN payout_items pi ON pi.payout_id = p.id
+ WHERE pi.booking_id = $1::uuid
+   AND pi.voided_at IS NULL
+   AND p.status = 'paid'
+ LIMIT 1
+`;
+
+const CLAWBACK_COLUMNS = `
+  id,
+  dispute_id,
+  booking_id,
+  vendor_id,
+  amount_idr::text AS amount_idr,
+  status,
+  request_note,
+  requested_by,
+  requested_at,
+  decision_note,
+  decided_by,
+  decided_at,
+  journal_entry_id
+`;
+
+const FIND_CLAWBACK_SQL = `
+SELECT ${CLAWBACK_COLUMNS}
+  FROM dispute_clawbacks
+ WHERE dispute_id = $1::uuid
+`;
+
+const LOCK_CLAWBACK_SQL = `${FIND_CLAWBACK_SQL} FOR UPDATE`;
+
+const INSERT_CLAWBACK_SQL = `
+INSERT INTO dispute_clawbacks
+  (dispute_id, booking_id, vendor_id, amount_idr, request_note, requested_by)
+VALUES ($1::uuid, $2::uuid, $3::uuid, $4::bigint, $5, $6::uuid)
+ON CONFLICT (dispute_id) DO NOTHING
+RETURNING ${CLAWBACK_COLUMNS}
+`;
+
+const DECIDE_CLAWBACK_SQL = `
+UPDATE dispute_clawbacks
+   SET status = $2,
+       decision_note = $3,
+       decided_by = $4::uuid,
+       decided_at = now(),
+       journal_entry_id = COALESCE($5::uuid, journal_entry_id)
+ WHERE id = $1::uuid
+   AND status = 'requested'
+RETURNING ${CLAWBACK_COLUMNS}
+`;
+
+const MARK_BOOKING_CLAWED_BACK_SQL = `
+UPDATE bookings
+   SET settlement_status = 'clawed_back',
+       clawback_recovered_at = $2,
+       row_version = row_version + 1,
+       updated_at = now()
+ WHERE id = $1::uuid
+   AND settlement_status = 'disputed'
+RETURNING id
+`;
+
+const MARK_DISPUTE_CLAWBACK_SQL = `
+UPDATE disputes
+   SET status = 'resolved',
+       resolution = 'clawback',
+       resolution_amount_idr = $2::bigint,
+       customer_share_idr = $2::bigint,
+       vendor_share_idr = 0,
+       resolved_at = now(),
+       resolved_by = $3::uuid,
+       approved_by = $4::uuid,
+       resolution_note = $5,
+       updated_at = now()
+ WHERE id = $1::uuid
+   AND status IN ('open','investigating','awaiting_evidence')
 RETURNING id
 `;
 
@@ -798,7 +907,7 @@ export class AdminRepository {
       bookingId: string;
       bookingCode: string;
       status: 'rejected' | 'resolved';
-      resolution: 'refund_full' | 'refund_partial' | 'release_to_vendor' | 'reject' | 'no_action';
+      resolution: 'refund_full' | 'refund_partial' | 'release_to_vendor' | 'reject' | 'no_action' | 'clawback';
     }
   ): Promise<void> {
     await client.query(ENQUEUE_DISPUTE_RESOLVED_SQL, [
@@ -824,6 +933,105 @@ export class AdminRepository {
     ]);
     if (result.rows.length === 0) {
       throw new AppError('CONFLICT', 'Status settlement booking sudah berubah.');
+    }
+  }
+
+  /* ------------------------------------------------------- FR-122 clawback */
+
+  /** Ceiling for a clawback: the amount credited to the vendor at release. */
+  async releasedVendorAmountIdr(bookingId: string): Promise<bigint> {
+    const rows = await query<{ amount_idr: string }>(RELEASED_VENDOR_AMOUNT_SQL, [bookingId]);
+    return BigInt(rows[0]?.amount_idr ?? '0');
+  }
+
+  /** Post-release only: at least one paid, non-voided payout item must exist. */
+  async hasPaidPayout(bookingId: string): Promise<boolean> {
+    const rows = await query<{ found: number }>(PAID_PAYOUT_EXISTS_SQL, [bookingId]);
+    return rows.length > 0;
+  }
+
+  async findClawbackByDispute(
+    client: PoolClient,
+    disputeId: string,
+    options: { forUpdate?: boolean } = {}
+  ): Promise<DisputeClawbackRow | null> {
+    const result = await client.query<DisputeClawbackRow>(
+      options.forUpdate ? LOCK_CLAWBACK_SQL : FIND_CLAWBACK_SQL,
+      [disputeId]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async insertClawback(
+    client: PoolClient,
+    input: {
+      disputeId: string;
+      bookingId: string;
+      vendorId: string;
+      amountIdr: bigint;
+      requestNote: string;
+      requestedBy: string;
+    }
+  ): Promise<DisputeClawbackRow | null> {
+    const result = await client.query<DisputeClawbackRow>(INSERT_CLAWBACK_SQL, [
+      input.disputeId,
+      input.bookingId,
+      input.vendorId,
+      input.amountIdr.toString(),
+      input.requestNote,
+      input.requestedBy
+    ]);
+    return result.rows[0] ?? null;
+  }
+
+  async decideClawback(
+    client: PoolClient,
+    input: {
+      clawbackId: string;
+      status: 'approved' | 'rejected';
+      decisionNote: string;
+      decidedBy: string;
+      journalEntryId: string | null;
+    }
+  ): Promise<DisputeClawbackRow | null> {
+    const result = await client.query<DisputeClawbackRow>(DECIDE_CLAWBACK_SQL, [
+      input.clawbackId,
+      input.status,
+      input.decisionNote,
+      input.decidedBy,
+      input.journalEntryId
+    ]);
+    return result.rows[0] ?? null;
+  }
+
+  async markBookingClawedBack(
+    client: PoolClient,
+    bookingId: string,
+    recoveredAt: Date
+  ): Promise<boolean> {
+    const result = await client.query(MARK_BOOKING_CLAWED_BACK_SQL, [bookingId, recoveredAt]);
+    return result.rows.length > 0;
+  }
+
+  async markDisputeClawbackResolved(
+    client: PoolClient,
+    input: {
+      disputeId: string;
+      amountIdr: bigint;
+      resolvedBy: string;
+      approvedBy: string;
+      note: string;
+    }
+  ): Promise<void> {
+    const result = await client.query(MARK_DISPUTE_CLAWBACK_SQL, [
+      input.disputeId,
+      input.amountIdr.toString(),
+      input.resolvedBy,
+      input.approvedBy,
+      input.note
+    ]);
+    if (result.rows.length === 0) {
+      throw new AppError('CONFLICT', 'Sengketa sudah diputuskan atau tidak lagi terbuka.');
     }
   }
 

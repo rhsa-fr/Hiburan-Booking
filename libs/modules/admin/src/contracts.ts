@@ -308,6 +308,35 @@ export interface DisputeRecord extends Dispute {
   vendor_name: string;
   city: string;
   customer_name: string;
+  /** FR-122: post-release clawback attached to this dispute, if any. */
+  clawback: DisputeClawback | null;
+}
+
+export interface DisputeClawback {
+  id: string;
+  status: 'requested' | 'approved' | 'rejected';
+  amount_idr: number;
+  request_note: string;
+  requested_by: string;
+  requested_by_name: string;
+  requested_at: string;
+}
+
+export interface RequestDisputeClawbackInput {
+  amount_idr: number;
+  note: string;
+}
+
+export interface DecideDisputeClawbackInput {
+  note: string;
+}
+
+export interface DisputeClawbackResult {
+  dispute_id: string;
+  clawback_id: string;
+  status: 'requested' | 'approved' | 'rejected';
+  amount_idr: number;
+  journal_entry_id: string | null;
 }
 
 export interface DisputeOverview {

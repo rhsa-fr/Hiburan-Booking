@@ -68,6 +68,8 @@ function disputeResolutionBody(code: string, payload: Record<string, unknown>): 
       return `${code}: refund diputuskan. Dana dikembalikan sesuai keputusan admin.`;
     case 'release_to_vendor':
       return `${code}: dana diteruskan ke vendor.`;
+    case 'clawback':
+      return `${code}: clawback diputuskan. Dana ditarik kembali dari vendor dan dikembalikan ke pelanggan.`;
     case 'reject':
     case 'no_action':
       return `${code}: sengketa ditolak.`;
