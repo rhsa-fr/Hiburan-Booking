@@ -5,6 +5,9 @@ import { AuthGuard, JWT_SECRET, RolesGuard } from '@tarlink/platform/auth';
 import { AdminController } from './admin.controller';
 import { AdminRepository } from './admin.repository';
 import { AdminService } from './admin.service';
+import { OpsController } from './ops.controller';
+import { OpsRepository } from './ops.repository';
+import { OpsService } from './ops.service';
 import { ReconciliationController } from './reconciliation.controller';
 import { ReconciliationRepository } from './reconciliation.repository';
 import { ReconciliationService } from './reconciliation.service';
@@ -18,11 +21,23 @@ import { ReconciliationService } from './reconciliation.service';
  */
 @Module({
   imports: [PaymentModule],
-  controllers: [AdminController, ReconciliationController],
+  controllers: [AdminController, ReconciliationController, OpsController],
   providers: [
     AdminRepository,
     AdminService,
-    ReconciliationRepository,
+    {
+      provide: OpsRepository,
+      // Interface-typed constructor parameter (database port): Nest cannot
+      // resolve it by reflection, so the API instance is built explicitly.
+      useFactory: () => new OpsRepository()
+    },
+    OpsService,
+    {
+      provide: ReconciliationRepository,
+      // The repository has a DB-port constructor so the worker can inject its
+      // own pool; the API instance keeps the default core pool.
+      useFactory: () => new ReconciliationRepository()
+    },
     ReconciliationService,
     { provide: JWT_SECRET, useValue: loadConfig().JWT_SECRET },
     { provide: AuthGuard, useClass: AuthGuard },

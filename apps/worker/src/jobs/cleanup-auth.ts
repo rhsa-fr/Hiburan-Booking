@@ -6,6 +6,7 @@ interface CleanupRow {
   sessions: number;
   otp_requests: number;
   login_attempts: number;
+  admin_2fa_challenges: number;
 }
 
 /**
@@ -15,7 +16,9 @@ interface CleanupRow {
  *   - sessions: 30 days after expiry or revocation (the refresh TTL itself is
  *     30 days, so an active family is never touched);
  *   - otp_requests: 7 days after expiry;
- *   - login_attempts: 30 days.
+ *   - login_attempts: 30 days;
+ *   - admin_2fa_challenges: 7 days after expiry/consumption (tickets live 10
+ *     minutes; the extra window keeps recent login forensics available).
  *
  * Idempotent: running it twice simply deletes nothing the second time.
  */
@@ -35,10 +38,17 @@ deleted_attempts AS (
   DELETE FROM login_attempts
    WHERE created_at < now() - interval '30 days'
   RETURNING 1
+),
+deleted_2fa AS (
+  DELETE FROM admin_2fa_challenges
+   WHERE expires_at < now() - interval '7 days'
+      OR (consumed_at IS NOT NULL AND consumed_at < now() - interval '7 days')
+  RETURNING 1
 )
 SELECT (SELECT COUNT(*) FROM deleted_sessions)::int AS sessions,
        (SELECT COUNT(*) FROM deleted_otp)::int AS otp_requests,
-       (SELECT COUNT(*) FROM deleted_attempts)::int AS login_attempts
+       (SELECT COUNT(*) FROM deleted_attempts)::int AS login_attempts,
+       (SELECT COUNT(*) FROM deleted_2fa)::int AS admin_2fa_challenges
 `;
 
 export async function runCleanupAuth(): Promise<JobStats> {
@@ -46,12 +56,16 @@ export async function runCleanupAuth(): Promise<JobStats> {
   try {
     const rows = await query<CleanupRow>(CLEANUP_SQL);
     const row = rows[0];
-    const total = (row?.sessions ?? 0) + (row?.otp_requests ?? 0) + (row?.login_attempts ?? 0);
+    const total =
+      (row?.sessions ?? 0) +
+      (row?.otp_requests ?? 0) +
+      (row?.login_attempts ?? 0) +
+      (row?.admin_2fa_challenges ?? 0);
     stats.processed = total;
     if (total === 0) stats.skipped = 1;
     else {
       logLine(
-        `job=cleanup_auth sessions=${row?.sessions ?? 0} otp_requests=${row?.otp_requests ?? 0} login_attempts=${row?.login_attempts ?? 0}`
+        `job=cleanup_auth sessions=${row?.sessions ?? 0} otp_requests=${row?.otp_requests ?? 0} login_attempts=${row?.login_attempts ?? 0} admin_2fa_challenges=${row?.admin_2fa_challenges ?? 0}`
       );
     }
   } catch (err) {
