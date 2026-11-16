@@ -171,7 +171,7 @@ dibuat oleh npm 11, dan `node:22` membawa npm 10 yang menolak lock ini.
 4. `flutter analyze` + `flutter test`, lalu screenshot 390×844.
 
 **Migrasi DB**
-1. Nomor urut berikutnya di `db/migrations` (terakhir `034_dispute_clawbacks.sql`, berikutnya `035`).
+1. Nomor urut berikutnya di `db/migrations` (terakhir `035_vendor_earnings_index.sql`, berikutnya `036`).
 2. Idempoten bila memungkinkan; sediakan jalur koreksi ke depan, bukan `DROP` data.
 3. Jalankan `npm run migrate:dry` sebelum `npm run migrate`.
 
@@ -327,6 +327,13 @@ Masih terbuka:
   `clawed_back`, menutup sengketa `resolution = 'clawback'`, dan meninggalkan
   `vendor_payable` negatif yang otomatis memotong payout berikutnya. Panel
   `/disputes` punya opsi ajukan + tombol Setujui/Tolak.
+- Ekspor pendapatan vendor (FR-126, migrasi `035`): `GET /v1/vendor/earnings/export`
+  mengirim CSV (default bulan berjalan WIB, maks 366 hari/5.000 baris) dengan kolom
+  GMV, komisi, biaya layanan, pendapatan vendor, clawback, pencairan, dan baris
+  `TOTAL`. Sel uang dibaca dari jurnal `release` (`2100`/`4100`/`4110`/`2120`) dan
+  `clawback_recognized`, bukan dihitung ulang dari kolom booking, sehingga total
+  cocok dengan ledger. `format=json` memberi pratinjau + CSV untuk mobile, yang
+  menyalin isi CSV lewat papan klip (belum ada pemilih berkas di allowlist mobile).
 - Moderasi UGC (FR-123/124/142) sudah ada, termasuk notifikasi pelapor, eskalasi
   SLA (migrasi `030`), banding takedown (migrasi `031`, panel `/appeals` + layar
   mobile `Banding konten`), dan bukti berkas privat (migrasi `033`, terenkripsi,

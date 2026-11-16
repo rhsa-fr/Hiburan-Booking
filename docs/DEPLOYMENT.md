@@ -186,7 +186,7 @@ diuji 2026-11-08 pada salinan database dev: dump 287 KB, hasil restore punya
 54 tabel/30 migrasi (skema saat uji itu) dan jumlah baris tabel utama yang sama,
 `migrate:dry` tanpa pending, `verify:db` 20/20. `restore-db.sh` juga terbukti menolak
 database non-kosong tanpa `--force`. Retensi `RETENTION_DAYS` diuji menghapus dump lama.
-Skema kini `001`-`034`; jalankan ulang uji restore setelah menambah migrasi baru.
+Skema kini `001`-`035`; jalankan ulang uji restore setelah menambah migrasi baru.
 
 ## 7. Rollback
 

@@ -820,6 +820,7 @@ dari klien, sehingga satu vendor tidak bisa mengubah vendor lain.
 | GET | `/vendor/bookings` | Daftar booking vendor (`page`, `page_size`, `status`) |
 | GET | `/vendor/bookings/:id` | Detail booking milik vendor |
 | GET | `/vendor/earnings` | Saldo tertahan + riwayat pencairan |
+| GET | `/vendor/earnings/export` | CSV pendapatan bulanan (FR-126) |
 | GET | `/vendor/packages` | Semua paket sendiri (termasuk nonaktif) |
 | POST | `/vendor/packages` | Buat paket |
 | PATCH | `/vendor/packages/:id` | Ubah paket milik sendiri |
@@ -882,6 +883,55 @@ sudah Released tetapi belum ditransfer, dan halaman pencairan `settled`:
 berjalan yang disimpan. `pending_payout_idr` adalah jumlah payout berstatus
 `requested`/`approved`/`processing`. `bank_account` bernilai `null` bila belum ada
 rekening terverifikasi.
+
+### `GET /vendor/earnings/export` (FR-126)
+
+Query `from` dan `to` berformat `YYYY-MM-DD` dan ditafsirkan sebagai tanggal WIB.
+Default: awal bulan berjalan sampai hari ini. Rentang maksimal 366 hari dan
+5.000 baris; lebih dari itu dijawab `400 VALIDATION_ERROR`.
+
+Tanpa `format=json`, respons berupa unduhan:
+
+```
+Content-Type: text/csv; charset=utf-8
+Content-Disposition: attachment; filename="pendapatan-vendor-2026-11-01_2026-11-30.csv"
+```
+
+Kolom CSV: `tanggal_lepas`, `kode_booking`, `judul_acara`, `tanggal_acara`,
+`gmv_idr`, `komisi_idr`, `biaya_layanan_idr`, `pendapatan_vendor_idr`,
+`clawback_idr`, `pendapatan_bersih_idr`, `pencairan_idr`, `status_pencairan`,
+`tanggal_pencairan`, diakhiri baris `TOTAL`. Hanya booking dengan `released_at`
+di rentang tersebut yang muncul.
+
+Nilai uang diambil dari jurnal booking, bukan dihitung ulang dari kolom booking:
+GMV = debit `2100`, komisi = kredit `4100`, biaya layanan = kredit `4110`,
+pendapatan vendor = kredit `2120` (jurnal `release`), dan clawback = debit `2120`
+pada jurnal `clawback_recognized`. Baris `TOTAL` menjumlahkan sel yang sama,
+sehingga total laporan cocok dengan ledger (selisih Rp0). CSV memakai BOM UTF-8
+dan CRLF agar terbuka rapi di Excel.
+
+Dengan `format=json` respons berisi pratinjau untuk mobile:
+
+```json
+{
+  "data": {
+    "filename": "pendapatan-vendor-2026-11-01_2026-11-30.csv",
+    "period": { "from": "2026-11-01", "to": "2026-11-30" },
+    "row_count": 12,
+    "source": "release_journal",
+    "totals": {
+      "gmv_idr": 150000000,
+      "commission_idr": 7500000,
+      "service_fee_idr": 3000000,
+      "vendor_entitlement_idr": 139500000,
+      "clawback_idr": 500000,
+      "net_vendor_idr": 139000000,
+      "payout_idr": 93000000
+    },
+    "csv": "\uFEFFtanggal_lepas,kode_booking,..."
+  }
+}
+```
 
 `GET /vendor/bookings` mengembalikan objek halaman langsung (`items`, `total`, `page`,
 `page_size`). Setiap item memuat `code`, tiga status, `total_customer_idr`,

@@ -14,7 +14,7 @@ Repositori ini berisi **API**, **panel admin**, **worker**, **library domain**, 
 | `apps/api` — NestJS `/v1` | Berjalan | `GET /v1/health` → 200 |
 | `apps/admin` — Next.js | Berjalan | `http://localhost:3002/login` |
 | `apps/worker` — poller PostgreSQL | Berjalan | log `tick=done` tiap interval |
-| `apps/mobile` — Flutter pelanggan | 47 widget test lulus, `flutter analyze` bersih | `cd apps/mobile && flutter test` |
+| `apps/mobile` — Flutter pelanggan | 49 widget test lulus, `flutter analyze` bersih | `cd apps/mobile && flutter test` |
 | `apps/mobile` — portal vendor | dashboard, kalender, saldo, profil, pesanan, paket, media, rekening | login akun `vendor_owner` |
 | Payout vendor + rekening | `payouts`/`payout_items`, rekening terenkripsi, maker-checker, worker rekonsiliasi | `PAYOUT_PROVIDER=local` (default) |
 | Chat booking (FR-050) | REST riwayat/kirim + WebSocket per booking, izin per relasi booking | `GET/POST /v1/bookings/:id/chat/messages`, `WS /v1/chat/ws` |
@@ -22,11 +22,12 @@ Repositori ini berisi **API**, **panel admin**, **worker**, **library domain**, 
 | Moderasi UGC (FR-123/124/142) | Lapor konten ≤2 ketukan, tiket otomatis + SLA 24 jam (72 jam untuk hak cipta), takedown menyembunyikan tanpa menghapus, blokir pengguna; pelapor diberi notifikasi saat laporan diputuskan; banding pemilik konten (maks. 30 hari) dengan antrean panel `/appeals`, termasuk **bukti berkas privat** (JPG/PNG/WebP ≤5 MB, terenkripsi, hanya pemilik + admin); worker `escalate_reports` memberi tahu admin bila SLA lewat | migrasi `027`+`030`+`031`+`033`; panel `/reports`, `/appeals`; `POST /v1/reports`, `POST /v1/reports/:id/appeal/evidence` |
 | 2FA admin (FR-128) | TOTP terenkripsi + 10 backup code, challenge sekali pakai, gate di tiga jalur login | migrasi `025`+`026`; alur di `docs/API.md` |
 | Sengketa oleh pelanggan (FR-056) | `POST/GET /v1/bookings/:id/disputes`, jendela 7 hari pra-rilis / 30 hari pasca-rilis | `libs/modules/booking`, migrasi tidak perlu (memakai transisi S-04/S-08) |
+| Ekspor pendapatan vendor (FR-126) | CSV bulanan dari jurnal `release` + `clawback_recognized` (GMV, komisi, biaya layanan, pendapatan, clawback, pencairan) dengan baris TOTAL; default bulan berjalan WIB, maks 366 hari/5.000 baris; mobile menampilkan pratinjau + salin CSV | `GET /v1/vendor/earnings/export`; migrasi `035` |
 | Rekonsiliasi (FR-131) | Fase 1 **read-only** gateway ↔ ledger; fase 2: SLA per temuan + keputusan admin (`accepted`/`ignored`/`referred`/`corrected`) dengan audit; **worker harian** `reconcile_daily` (setelah `recon_hour_wib`, default 07:00 WIB) dengan catch-up maksimal 7 hari | migrasi `024`+`029`; panel `/reconciliation` |
 | Consent ToS + Privasi (FR-103) | `user_consents` append-only per versi; register wajib mengirim versi aktif | `POST /v1/auth/register`, `GET /v1/policies/:code` |
 | Toggle wilayah (FR-125) | Wilayah nonaktif hilang dari katalog & formulir vendor; panel `/regions` | `GET/PATCH /v1/admin/regions` |
-| Ledger double-entry | 1420 test lulus (1313 backend + 62 worker + 45 panel), 8 skip; mobile 47 | `npm test` |
-| Skema DB | migrasi `001`-`034` diterapkan; berikutnya `035` | `npm run migrate` |
+| Ledger double-entry | 1443 test lulus (1336 backend + 62 worker + 45 panel), 8 skip; mobile 49 | `npm test` |
+| Skema DB | migrasi `001`-`035` diterapkan; berikutnya `036` | `npm run migrate` |
 | Operasional | Liveness `/v1/health`, readiness `/v1/health/ready` (503 saat DB mati, dipakai HEALTHCHECK), rate limit 10 laporan/jam/user, cleanup challenge 2FA di worker | `GET /v1/health/ready`; job `cleanup_auth` |
 | Kesiapan operasional | Panel `/ops` + banner dashboard merangkum tujuh antrean yang lewat SLA, gagal kirim, atau macet; read-only, agregat, semua peran admin | `GET /v1/admin/ops/alerts` |
 | Deploy produksi | `Dockerfile` 4 target, `docker-compose.prod.yml`, preflight, backup/restore, CI GitHub Actions | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) |
@@ -50,7 +51,7 @@ Repositori ini berisi **API**, **panel admin**, **worker**, **library domain**, 
 | `apps/worker` | Job: `expire-unpaid`, `expire-unresponsive`, `expire-holds`, `auto-complete`, `auto-release`, `payout-reconcile`, `reconcile-daily`, `escalate-reports`, `booking-reminders`, `outbox`, `cleanup-auth`, `cleanup-media` |
 | `libs/modules/*` | Domain: `auth`, `booking`, `chat`, `payment`, `payout`, `ledger`, `catalog`, `calendar`, `admin`, `moderation`, `notifications`, `vendor-onboarding`, `vendor-portal` |
 | `libs/platform/*` | Fondasi: auth (JWT + `jti`), clock, crypto (AES-256-GCM), email (transport transaksional), idempotensi, outbox, pricing, rate-limit. DB/config/money ada di `apps/api/src/core/` |
-| `db/migrations` | Skema PostgreSQL `001`-`034` diterapkan; berikutnya `035` |
+| `db/migrations` | Skema PostgreSQL `001`-`035` diterapkan; berikutnya `036` |
 | `scripts/` | Migrasi, seed, smoke test, webhook PJP, probe browser |
 | `opendesain/` | Ekspor HTML acuan desain pelanggan & vendor (bukan aplikasi) — lihat [docs/DESIGN-REFERENCES.md](docs/DESIGN-REFERENCES.md) |
 | `docs/` | PRD, tech design, UX flow, brief legal, SOP, arsitektur, API |
@@ -303,6 +304,9 @@ Yang masih terbuka:
   berbeda. Jurnal `clawback_recognized` + `clawback_paid` meninggalkan saldo
   `vendor_payable` negatif yang memotong payout berikutnya; panel `/disputes`
   punya alur ajukan/setujui/tolak.
+- Ekspor pendapatan vendor (FR-126) tersedia sebagai **CSV** dari jurnal ledger;
+  PDF belum dibuat, dan mobile hanya bisa menyalin CSV ke papan klip karena
+  allowlist dependency belum memuat pemilih/penyimpan berkas.
 - `policy_versions` untuk `tos` dan `privacy` masih **placeholder** bertanda
   `"status":"draft"`; teks final harus diganti lewat migrasi baru. Consent dicatat pada
   registrasi email+password **dan** pembuatan akun baru lewat Google (`consent` wajib).
@@ -312,3 +316,4 @@ Yang masih terbuka:
 ## Lisensi
 
 Internal / belum dipublikasikan.
+
