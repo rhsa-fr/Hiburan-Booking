@@ -501,6 +501,20 @@ async function main(): Promise<void> {
       `${clawbackEnum[0].n}/1 nilai`
     );
 
+    // 12. FR-126: index rilis per vendor untuk ekspor pendapatan.
+    const { rows: earningsIndex } = await client.query<{ n: string }>(
+      `SELECT count(*)::text AS n
+         FROM pg_indexes
+        WHERE schemaname = current_schema()
+          AND tablename = 'bookings'
+          AND indexname = 'bookings_vendor_released_idx'`
+    );
+    record(
+      'index ekspor pendapatan vendor ada',
+      Number(earningsIndex[0].n) === 1,
+      `${earningsIndex[0].n}/1 index`
+    );
+
     await client.query('ROLLBACK');
     // eslint-disable-next-line no-console
     console.log('\n(transaksi ROLLBACK — database target tidak berubah)');
