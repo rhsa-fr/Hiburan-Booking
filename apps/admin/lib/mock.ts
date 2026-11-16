@@ -1574,7 +1574,8 @@ export function mockGetDisputes(): DisputeOverview {
         ...dispute,
         vendor_name: booking?.vendor_name ?? 'Vendor tidak ditemukan',
         city: booking?.city ?? '-',
-        customer_name: booking?.customer_name ?? '-'
+        customer_name: booking?.customer_name ?? '-',
+        clawback: null
       };
     })
     .sort((a, b) => new Date(b.opened_at).getTime() - new Date(a.opened_at).getTime());

@@ -35,6 +35,9 @@ import type {
   BookingDetail,
   DashboardSummary,
   DisputeOverview,
+  DisputeClawbackResult,
+  DecideDisputeClawbackInput,
+  RequestDisputeClawbackInput,
   LedgerData,
   Operator,
   OpsAlerts,
@@ -1167,6 +1170,38 @@ export function resolveDispute(
 
 export function getAuditLog(): Promise<AuditLog> {
   return apiFetch<AuditLog>('/api/v1/admin/audit');
+}
+
+/** FR-122 step 1: file a post-release clawback claim. */
+export function requestDisputeClawback(
+  disputeId: string,
+  input: RequestDisputeClawbackInput
+): Promise<DisputeClawbackResult> {
+  return apiFetch<DisputeClawbackResult>(
+    `/api/v1/admin/disputes/${encodeURIComponent(disputeId)}/clawback`,
+    { method: 'POST', body: JSON.stringify(input) }
+  );
+}
+
+/** FR-122 step 2: a different admin approves; the ledger is posted here. */
+export function approveDisputeClawback(
+  disputeId: string,
+  input: DecideDisputeClawbackInput
+): Promise<DisputeClawbackResult> {
+  return apiFetch<DisputeClawbackResult>(
+    `/api/v1/admin/disputes/${encodeURIComponent(disputeId)}/clawback/approve`,
+    { method: 'POST', body: JSON.stringify(input) }
+  );
+}
+
+export function rejectDisputeClawback(
+  disputeId: string,
+  input: DecideDisputeClawbackInput
+): Promise<DisputeClawbackResult> {
+  return apiFetch<DisputeClawbackResult>(
+    `/api/v1/admin/disputes/${encodeURIComponent(disputeId)}/clawback/reject`,
+    { method: 'POST', body: JSON.stringify(input) }
+  );
 }
 
 export function getSettings(): Promise<PlatformSettings> {
