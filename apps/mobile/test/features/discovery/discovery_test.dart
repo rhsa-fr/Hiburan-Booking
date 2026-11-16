@@ -171,7 +171,7 @@ void main() {
     });
 
     await pumpHome(tester, api);
-    await tester.tap(find.text('Seni\nTradisi'));
+    await tester.tap(find.text('Seni Tradisi'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pump(const Duration(milliseconds: 400));
@@ -221,7 +221,7 @@ void main() {
     }
 
     await pumpHome(tester, api);
-    await tester.tap(find.text('Seni\nTradisi'));
+    await tester.tap(find.text('Seni Tradisi'));
     await settle();
     expect(categoryQueries.last, 'seni-tradisi');
 
@@ -232,7 +232,7 @@ void main() {
 
     await tester.tap(find.text('Beranda'));
     await tester.pump();
-    await tester.tap(find.text('Seni\nTradisi'));
+    await tester.tap(find.text('Seni Tradisi'));
     await settle();
 
     expect(categoryQueries.last, 'seni-tradisi');

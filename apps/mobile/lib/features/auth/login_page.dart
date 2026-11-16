@@ -131,7 +131,7 @@ class _LoginPageState extends State<LoginPage> {
                   Text(
                     'Masuk atau Daftar',
                     style: text.headlineSmall?.copyWith(
-                      fontSize: 26,
+                      fontSize: 22,
                       fontWeight: FontWeight.w700,
                       letterSpacing: -0.4,
                     ),
@@ -236,10 +236,7 @@ class _LoginPageState extends State<LoginPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const _FieldLabel(
-              label: 'Alamat Email',
-              trailing: 'Wajib diisi',
-            ),
+            const _FieldLabel(label: 'Alamat Email', trailing: 'Wajib diisi'),
             const SizedBox(height: 6),
             TextFormField(
               controller: _email,

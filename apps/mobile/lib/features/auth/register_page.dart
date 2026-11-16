@@ -117,9 +117,7 @@ class _RegisterPageState extends State<RegisterPage> {
       return;
     }
     if (!_consent) {
-      setState(
-        () => _error = 'Centang persetujuan Syarat & Ketentuan dulu.',
-      );
+      setState(() => _error = 'Centang persetujuan Syarat & Ketentuan dulu.');
       return;
     }
 
@@ -206,7 +204,7 @@ class _RegisterPageState extends State<RegisterPage> {
                   Text(
                     'Daftar akun',
                     style: text.headlineSmall?.copyWith(
-                      fontSize: 26,
+                      fontSize: 22,
                       letterSpacing: -0.4,
                     ),
                   ),
@@ -237,8 +235,7 @@ class _RegisterPageState extends State<RegisterPage> {
                             decoration: authField(
                               hint: 'Nama sesuai panggilan',
                             ),
-                            onFieldSubmitted: (_) =>
-                                _emailFocus.requestFocus(),
+                            onFieldSubmitted: (_) => _emailFocus.requestFocus(),
                           ),
                           const SizedBox(height: Sp.lg),
                           const AuthFieldLabel('Email'),

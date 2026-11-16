@@ -173,8 +173,9 @@ class _BookingStatusPageState extends State<BookingStatusPage>
         raw = await api.get('/payments/by-booking/${widget.bookingId}');
       }
       final data = _asMap(raw);
-      final paymentMap =
-          data['payment'] != null ? _asMap(data['payment']) : data;
+      final paymentMap = data['payment'] != null
+          ? _asMap(data['payment'])
+          : data;
       final restored = PaymentView(
         payment: Payment.fromJson(paymentMap),
         instruction: data['payment_instruction'] == null
@@ -314,12 +315,15 @@ class _BookingStatusPageState extends State<BookingStatusPage>
     if (booking == null || booking.lifecycleStatus != 'confirmed') {
       return false;
     }
-    final parsed = DateTime.tryParse(booking.event.startDate) ??
+    final parsed =
+        DateTime.tryParse(booking.event.startDate) ??
         (booking.slots.isNotEmpty
             ? DateTime.tryParse(booking.slots.first.date)
             : null);
     if (parsed == null) return false;
-    final session = booking.slots.isNotEmpty ? booking.slots.first.session : null;
+    final session = booking.slots.isNotEmpty
+        ? booking.slots.first.session
+        : null;
     final hour = session == 'night' ? 19 : 8;
     final eventStart = DateTime(parsed.year, parsed.month, parsed.day, hour);
     return DateTime.now().isAfter(eventStart.add(const Duration(hours: 2)));
@@ -411,8 +415,9 @@ class _BookingStatusPageState extends State<BookingStatusPage>
         body: {'booking_id': booking.id, 'method': _method},
       );
       final data = _asMap(raw);
-      final paymentMap =
-          data['payment'] != null ? _asMap(data['payment']) : data;
+      final paymentMap = data['payment'] != null
+          ? _asMap(data['payment'])
+          : data;
       final result = PaymentView(
         payment: Payment.fromJson(paymentMap),
         instruction: data['payment_instruction'] == null
@@ -624,15 +629,15 @@ class _BookingStatusPageState extends State<BookingStatusPage>
             constraints: const BoxConstraints(maxWidth: 560),
             child: Column(
               children: [
-                StageHeader.back(
-                  context: context,
-                  title: 'Detail pesanan',
-                ),
+                StageHeader.back(context: context, title: 'Detail pesanan'),
                 Expanded(
                   child: _loading
                       ? const Padding(
                           padding: EdgeInsets.all(Sp.lg),
-                          child: AppLoading(rows: 3, label: 'Memuat status booking'),
+                          child: AppLoading(
+                            rows: 3,
+                            label: 'Memuat status booking',
+                          ),
                         )
                       : AppError(
                           message: _loadError ?? 'Booking belum bisa dimuat.',
@@ -705,10 +710,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
       bottom: Row(
         children: [
           Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: Sp.sm,
-              vertical: 5,
-            ),
+            padding: const EdgeInsets.symmetric(horizontal: Sp.sm, vertical: 5),
             decoration: BoxDecoration(
               color: AppColors.surfaceTint,
               borderRadius: BorderRadius.circular(8),
@@ -767,7 +769,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
             child: Text(
               _headline(booking),
               style: text.headlineSmall?.copyWith(
-                fontSize: 22,
+                fontSize: 19,
                 fontWeight: FontWeight.w700,
                 letterSpacing: -0.3,
               ),
@@ -794,10 +796,33 @@ class _BookingStatusPageState extends State<BookingStatusPage>
       _moneyBlock(booking),
       const SizedBox(height: Sp.lg),
       if (booking.lifecycleStatus == 'requested') ...[
-        const InfoStrip(
-          message: 'Menunggu vendor menerima. Kamu belum perlu membayar.',
+        SectionPanel(
           icon: Icons.schedule,
-          tone: InfoTone.primary,
+          title: 'Menunggu jawaban vendor',
+          caption: 'Booking sudah dikirim. Kamu belum perlu membayar.',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _waitingStep(
+                icon: Icons.check_circle_outline,
+                title: 'Permintaan dikirim',
+                caption: 'Booking ${booking.code} sudah masuk ke vendor.',
+                done: true,
+              ),
+              const SizedBox(height: Sp.md),
+              _waitingStep(
+                icon: Icons.storefront_outlined,
+                title: 'Vendor menerima',
+                caption: 'Setelah diterima, tombol bayar DP muncul di sini.',
+              ),
+              const SizedBox(height: Sp.md),
+              _waitingStep(
+                icon: Icons.payments_outlined,
+                title: 'Bayar DP',
+                caption: 'Selesaikan DP sebelum batas waktu yang tertera.',
+              ),
+            ],
+          ),
         ),
         const SizedBox(height: Sp.lg),
       ],
@@ -863,6 +888,42 @@ class _BookingStatusPageState extends State<BookingStatusPage>
           'tanggal lain.',
     _ => null,
   };
+
+  Widget _waitingStep({
+    required IconData icon,
+    required String title,
+    required String caption,
+    bool done = false,
+  }) {
+    final text = Theme.of(context).textTheme;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        IconBadge(
+          icon: icon,
+          tone: done ? IconBadgeTone.success : IconBadgeTone.neutral,
+          size: 32,
+        ),
+        const SizedBox(width: Sp.md),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: text.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                caption,
+                style: text.bodySmall?.copyWith(color: AppColors.inkMuted),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
 
   Widget _moneyBlock(BookingView booking) {
     final total =
@@ -1200,8 +1261,9 @@ class _BookingStatusPageState extends State<BookingStatusPage>
     double size, {
     bool isSettlement = false,
   }) {
-    final label =
-        isSettlement ? 'Kode QRIS pelunasan sisa' : 'Kode QRIS pembayaran DP';
+    final label = isSettlement
+        ? 'Kode QRIS pelunasan sisa'
+        : 'Kode QRIS pembayaran DP';
     final url = instruction.qrUrl;
     if (url != null) {
       return Image.network(
@@ -1267,10 +1329,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
         ),
         if (instruction.billerCode != null) ...[
           const SizedBox(height: Sp.xs),
-          Text(
-            'Kode biller ${instruction.billerCode}',
-            style: text.bodySmall,
-          ),
+          Text('Kode biller ${instruction.billerCode}', style: text.bodySmall),
         ],
         const SizedBox(height: Sp.md),
         OutlinedButton.icon(
@@ -1316,11 +1375,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
                     borderRadius: BorderRadius.circular(Radii.sm),
                     border: Border.all(color: AppColors.line),
                   ),
-                  child: _qrImage(
-                    instruction,
-                    240,
-                    isSettlement: isSettlement,
-                  ),
+                  child: _qrImage(instruction, 240, isSettlement: isSettlement),
                 ),
               ),
               const SizedBox(height: Sp.lg),
@@ -1579,7 +1634,10 @@ class _BookingStatusPageState extends State<BookingStatusPage>
           ],
         ),
         const SizedBox(height: 2),
-        Text('Dibuka ${formatDateIso(dispute.openedAt)}', style: text.bodySmall),
+        Text(
+          'Dibuka ${formatDateIso(dispute.openedAt)}',
+          style: text.bodySmall,
+        ),
         if (dispute.description.trim().isNotEmpty) ...[
           const SizedBox(height: Sp.sm),
           Text(dispute.description, style: text.bodyMedium),

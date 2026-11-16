@@ -285,8 +285,9 @@ Sisa yang harus dibayar Rp3.550.000    (Display / ink) ← satu-satunya angka be
    bila tidak null, lalu "Mulai dari" + harga + chip DP.
 4. Deskripsi (maks 4 baris + "Baca selengkapnya") — **hanya bila ada**.
 5. Galeri **photo_urls** (bila ada) dan kartu cuplikan video (dibuka in-app).
-6. Seksi **Paket** — kartu: nama, durasi (`3 jam`), jumlah personel, harga, `DP 30%`,
-   serta daftar **Fasilitas** dari `inclusions` bila tidak kosong.
+6. Seksi **Paket** — satu kartu paket **full day**: nama, durasi (`12 jam`), jumlah
+   personel, harga, `DP 30%`, serta daftar **Fasilitas** dari `inclusions` bila tidak
+   kosong. Satu vendor = satu grup, jadi tidak ada pemilih paket.
 7. Seksi **Jadwal** — strip 45 hari (§6.6) + legenda; banner peringatan bila `stale`.
 8. Seksi **Lokasi & transport** — alamat (`baseAddress`) bila ada; teks biaya
    transport. Tanpa peta bila koordinat tidak ada.
@@ -295,14 +296,18 @@ Sisa yang harus dibayar Rp3.550.000    (Display / ink) ← satu-satunya angka be
 
 ### 7.4 Buat booking
 Satu halaman scroll, tiga blok bernomor (bukan stepper dengan tombol mati):
-1. **Acara** — nama acara, jenis (dropdown dari pilihan tetap), tanggal & sesi
-   (dari jadwal terpilih), perkiraan tamu, alamat lokasi, catatan.
-2. **Paket & tambahan** — paket terpilih (ringkas, bisa ganti), add-on dengan stepper
-   jumlah, harga mengikuti.
+1. **Acara** — nama acara, jenis (dropdown dari pilihan tetap), tanggal acara
+   (dibawa dari jadwal yang sudah dipilih di detail vendor, tidak diminta ulang),
+   perkiraan tamu, alamat lokasi, catatan. Tidak ada pemilih sesi: booking selalu
+   sehari penuh.
+2. **Paket & tambahan** — paket full-day terpilih (ringkas, bukan pilihan), add-on
+   dengan stepper jumlah, harga mengikuti.
 3. **Ringkasan uang** — kartu uang (§6.4) dengan DP dan sisa; teks aturan DP
-   ("DP berlaku 24 jam; untuk nilai ≥ Rp10 juta, 48 jam").
-Bottom bar: `Lanjut bayar DP Rp1.500.000`. Validasi inline per field, pesan di bawah
-field, bukan dialog.
+   ("DP berlaku 24 jam; untuk nilai ≥ Rp10 juta, 48 jam") dan catatan bahwa
+   pembayaran DP dibuka setelah vendor menerima booking.
+Bottom bar: `Kirim permintaan booking`. Validasi inline per field, pesan di bawah
+field, bukan dialog. Tombol bayar DP baru muncul di Status booking setelah vendor
+menerima.
 
 ### 7.5 Status booking
 1. Header: kode booking (mono/`Label M`, bisa disalin) + chip siklus hidup + chip bayar.
@@ -387,7 +392,8 @@ field, bukan dialog.
 
 ## 10. Aturan copy (Indonesia)
 
-1. Kata kerja di tombol: `Lanjut bayar DP`, `Pilih jadwal`, `Hubungi vendor`.
+1. Kata kerja di tombol: `Kirim permintaan booking`, `Pilih jadwal`, `Bayar DP`,
+   `Hubungi vendor`.
 2. Sebut angka konkret: "Sisa Rp3.550.000", bukan "sisa pembayaran".
 3. Jangan pakai istilah teknis: escrow → "ditahan penyedia pembayaran berizin";
    settlement → "dana diteruskan ke vendor"; stale → "data lama".

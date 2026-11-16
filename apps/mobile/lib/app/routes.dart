@@ -10,6 +10,7 @@ import '../features/chat/chat_page.dart';
 import '../features/discovery/favorites_page.dart';
 import '../features/discovery/home_page.dart';
 import '../features/discovery/vendor_page.dart';
+import '../features/moderation/appeals_page.dart';
 import '../features/vendor/vendor_bank_account_page.dart';
 import '../features/vendor/vendor_booking_detail_page.dart';
 import '../features/vendor/vendor_bookings_page.dart';
@@ -17,12 +18,19 @@ import '../features/vendor/vendor_manage_packages_page.dart';
 import '../features/vendor/vendor_manage_profile_page.dart';
 import '../features/vendor/vendor_shell.dart';
 
-/// Arguments for `bookCreate`: the chosen vendor and package.
+/// Arguments for `bookCreate`: the chosen vendor, package, and date.
+/// The date is chosen on the vendor page and carried into checkout so the
+/// customer never has to pick it twice.
 class BookCreateArgs {
-  const BookCreateArgs({required this.vendorIdOrSlug, required this.packageId});
+  const BookCreateArgs({
+    required this.vendorIdOrSlug,
+    required this.packageId,
+    this.date,
+  });
 
   final String vendorIdOrSlug;
   final String packageId;
+  final String? date;
 }
 
 /// Arguments for `bookingChat`: one thread per booking, with a display title.
@@ -51,6 +59,7 @@ abstract final class Routes {
   static const vendorManagePackages = 'vendorManagePackages';
   static const vendorBankAccount = 'vendorBankAccount';
   static const favorites = 'favorites';
+  static const appeals = 'appeals';
 
   static Route<dynamic> onGenerateRoute(RouteSettings settings) {
     switch (settings.name) {
@@ -113,6 +122,8 @@ abstract final class Routes {
         return _page(const VendorBankAccountPage(), settings);
       case Routes.favorites:
         return _page(const FavoritesPage(), settings);
+      case Routes.appeals:
+        return _page(const AppealsPage(), settings);
     }
     return _page(const LoginPage(), settings);
   }

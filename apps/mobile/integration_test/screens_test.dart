@@ -5,6 +5,7 @@ import 'package:tarlink_customer/core/ui.dart';
 import 'package:tarlink_customer/core/widgets.dart';
 import 'package:tarlink_customer/features/booking/status_page.dart';
 import 'package:tarlink_customer/features/discovery/vendor_page.dart';
+import 'package:tarlink_customer/features/moderation/appeals_page.dart';
 import 'package:tarlink_customer/main.dart' as app;
 
 import 'e2e_support.dart';
@@ -151,6 +152,27 @@ void main() {
     await tester.pump(const Duration(milliseconds: 600));
     await waitFor(tester, find.text('Bantuan & kebijakan'), label: 'profil');
     await shot(tester, 'ui-06-profil');
+
+    // FR-124: daftar konten yang diturunkan + formulir banding.
+    final appealRow = find.text('Banding konten');
+    await scrollTo(tester, appealRow);
+    await tester.tap(appealRow);
+    await waitFor(tester, find.byType(AppealsPage), label: 'banding konten');
+    await tester.pump(const Duration(milliseconds: 900));
+    await shot(tester, 'ui-07-banding');
+    final appealButton = find.text('Ajukan banding');
+    if (appealButton.evaluate().isNotEmpty) {
+      await tester.tap(appealButton.first);
+      await tester.pump(const Duration(milliseconds: 600));
+      await shot(tester, 'ui-07b-banding-form');
+      final cancel = find.text('Batal');
+      if (cancel.evaluate().isNotEmpty) {
+        await tester.tap(cancel.first);
+        await tester.pump(const Duration(milliseconds: 400));
+      }
+    }
+    await popRoute(tester, find.byType(AppealsPage));
+    await tester.pump(const Duration(milliseconds: 400));
   });
 }
 

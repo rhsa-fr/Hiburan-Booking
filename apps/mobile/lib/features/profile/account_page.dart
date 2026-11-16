@@ -270,6 +270,12 @@ class _AccountPageState extends State<AccountPage> {
           ),
           const Divider(height: 1, thickness: 1, color: AppColors.line),
           _MenuRow(
+            icon: Icons.gavel_outlined,
+            label: 'Banding konten',
+            onTap: () => Navigator.pushNamed(context, Routes.appeals),
+          ),
+          const Divider(height: 1, thickness: 1, color: AppColors.line),
+          _MenuRow(
             icon: Icons.assignment_return_outlined,
             label: 'Kebijakan pembatalan',
             onTap: () => _openPolicy('cancellation', 'Kebijakan pembatalan'),

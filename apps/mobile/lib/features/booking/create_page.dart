@@ -15,7 +15,6 @@ import 'booking_support.dart';
 
 const _weekdays = <String>['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'];
 const _allowedStates = {'available', 'unconfirmed', 'stale'};
-const _sessions = <String>['day', 'night', 'full'];
 const _tabularFigures = <FontFeature>[FontFeature.tabularFigures()];
 
 /// Server pricing: 30% DP of the package, 1% service fee, add-ons on top.
@@ -83,11 +82,6 @@ bool _dateUncertain(
       (_allowedState(night) && night != 'available');
 }
 
-String _slotStateText(String? state) {
-  if (!_allowedState(state)) return 'Tidak tersedia';
-  return state == 'available' ? 'Tersedia' : 'Belum dikonfirmasi';
-}
-
 /// One scrollable screen, three numbered blocks: event, package/add-ons, money.
 /// The API still computes the final number; this page never invents a total.
 class CreateBookingPage extends StatefulWidget {
@@ -129,6 +123,8 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
   @override
   void initState() {
     super.initState();
+    _selectedDate = widget.args.date;
+    _selectedSession = 'full';
     _title.addListener(() {
       if (!_settingTitle) _titleEdited = true;
     });
@@ -204,6 +200,7 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
         _dates = dates;
         _loading = false;
       });
+      _syncTitle();
     } on ApiException catch (error) {
       if (!mounted) return;
       setState(() {
@@ -272,7 +269,6 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
         dates: _dates,
         availability: _availability,
         initialDate: _selectedDate,
-        initialSession: _selectedSession,
       ),
     );
     if (result == null || !mounted) return;
@@ -405,7 +401,10 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
                 child: _loading
                     ? const Padding(
                         padding: EdgeInsets.all(Sp.lg),
-                        child: AppLoading(rows: 3, label: 'Memuat vendor dan jadwal'),
+                        child: AppLoading(
+                          rows: 3,
+                          label: 'Memuat vendor dan jadwal',
+                        ),
                       )
                     : _loadError != null
                     ? AppError(message: _loadError!, onRetry: _load)
@@ -420,20 +419,12 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
                             160,
                           ),
                           children: [
-                            Text('Atur acara', style: text.displaySmall),
-                            const SizedBox(height: Sp.xs),
-                            Text(
-                              'Isi satu halaman ini. Vendor menjawab dulu sebelum '
-                              'kamu membayar DP.',
-                              style: text.bodyMedium?.copyWith(
-                                color: AppColors.inkMuted,
-                              ),
-                            ),
-                            const SizedBox(height: Sp.xl),
+                            _summaryStrip(text),
+                            const SizedBox(height: Sp.md),
                             _eventBlock(text),
-                            const SizedBox(height: Sp.xl),
+                            const SizedBox(height: Sp.md),
                             _packageBlock(text),
-                            const SizedBox(height: Sp.xl),
+                            const SizedBox(height: Sp.md),
                             _moneyBlock(),
                             if (_submitError != null) ...[
                               const SizedBox(height: Sp.lg),
@@ -456,7 +447,7 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
       bottomNavigationBar: loaded
           ? StickyActionBar(
               child: PrimaryButton(
-                label: 'Lanjut bayar DP ${rupiah(_dpAmount)}',
+                label: 'Kirim permintaan booking',
                 loadingLabel: 'Mengirim…',
                 loading: _submitting,
                 onPressed: _submit,
@@ -466,133 +457,194 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
     );
   }
 
-  Widget _eventBlock(TextTheme text) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const SectionHeader(
-          title: '1. Acara',
-          caption: 'Detail yang dipakai vendor untuk menyiapkan acara.',
-        ),
-        const SizedBox(height: Sp.md),
-        TextFormField(
-          controller: _title,
-          textInputAction: TextInputAction.next,
-          maxLength: 150,
-          decoration: const InputDecoration(
-            labelText: 'Nama acara',
-            hintText: 'Contoh: Hajatan keluarga di rumah',
-            counterText: '',
+  /// Compact order rail: package + DP visible before the first field so the
+  /// page never opens on a wall of empty inputs.
+  Widget _summaryStrip(TextTheme text) {
+    final package = _package;
+    if (package == null) return const SizedBox.shrink();
+    final meta = <String>[
+      if (package.durationMinutes > 0) _duration(package.durationMinutes),
+      if (package.personnelCount > 0) '${package.personnelCount} personel',
+    ].join(' · ');
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: Sp.md, vertical: Sp.sm),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceSoft,
+        borderRadius: BorderRadius.circular(Radii.sm),
+        border: Border.all(color: AppColors.line),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.inventory_2_outlined,
+            size: 18,
+            color: AppColors.primary,
           ),
-          validator: (value) {
-            final trimmed = value?.trim() ?? '';
-            if (trimmed.isEmpty) return 'Nama acara wajib diisi.';
-            if (trimmed.length > 150) return 'Nama maksimal 150 karakter.';
-            return null;
-          },
-        ),
-        const SizedBox(height: Sp.md),
-        DropdownButtonFormField<String>(
-          initialValue: _eventType,
-          isExpanded: true,
-          decoration: const InputDecoration(labelText: 'Jenis acara'),
-          hint: const Text('Pilih jenis acara'),
-          items: [
-            for (final type in _eventTypes)
-              DropdownMenuItem(value: type.value, child: Text(type.label)),
-          ],
-          onChanged: (value) => setState(() => _eventType = value),
-        ),
-        const SizedBox(height: Sp.md),
-        if (_dates.isEmpty)
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const InfoStrip(
-                message:
-                    'Jadwal vendor belum tersedia untuk 45 hari ke depan. '
-                    'Muat ulang dulu sebelum memesan.',
-                icon: Icons.event_busy_outlined,
-                tone: InfoTone.warning,
-              ),
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton(
-                  onPressed: _load,
-                  child: const Text('Muat ulang jadwal'),
+          const SizedBox(width: Sp.sm),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  package.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: text.labelLarge?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.1,
+                  ),
                 ),
-              ),
-            ],
-          )
-        else
-          _slotSummary(text),
-        if (_dateError && _dates.isNotEmpty) ...[
-          const SizedBox(height: Sp.xs),
+                if (meta.isNotEmpty)
+                  Text(
+                    meta,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: text.bodySmall?.copyWith(color: AppColors.inkMuted),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: Sp.sm),
           Text(
-            'Pilih tanggal dan sesi dulu.',
-            style: text.bodySmall?.copyWith(color: AppColors.danger),
+            'DP $_dpRatePercent%',
+            style: text.labelMedium?.copyWith(
+              color: AppColors.primary,
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ],
-        const SizedBox(height: Sp.md),
-        TextFormField(
-          controller: _guests,
-          keyboardType: TextInputType.number,
-          textInputAction: TextInputAction.next,
-          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-          decoration: const InputDecoration(
-            labelText: 'Perkiraan jumlah tamu (opsional)',
-            hintText: 'Contoh: 120',
+      ),
+    );
+  }
+
+  Widget _eventBlock(TextTheme text) {
+    return SectionPanel(
+      leading: const StepBadge(step: 1, icon: Icons.event_outlined),
+      title: 'Acara',
+      caption: 'Detail yang dipakai vendor untuk menyiapkan acara.',
+      padding: const EdgeInsets.all(Sp.md),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextFormField(
+            controller: _title,
+            textInputAction: TextInputAction.next,
+            maxLength: 150,
+            decoration: const InputDecoration(
+              labelText: 'Nama acara',
+              hintText: 'Contoh: Hajatan keluarga di rumah',
+              counterText: '',
+            ),
+            validator: (value) {
+              final trimmed = value?.trim() ?? '';
+              if (trimmed.isEmpty) return 'Nama acara wajib diisi.';
+              if (trimmed.length > 150) return 'Nama maksimal 150 karakter.';
+              return null;
+            },
           ),
-          validator: (value) {
-            final trimmed = value?.trim() ?? '';
-            if (trimmed.isEmpty) return null;
-            final parsed = int.tryParse(trimmed);
-            if (parsed == null || parsed < 0 || parsed > 100000) {
-              return 'Isi angka 0 sampai 100.000.';
-            }
-            return null;
-          },
-        ),
-        const SizedBox(height: Sp.md),
-        TextFormField(
-          controller: _address,
-          textInputAction: TextInputAction.next,
-          minLines: 2,
-          maxLines: 4,
-          maxLength: 1000,
-          decoration: const InputDecoration(
-            labelText: 'Alamat lokasi acara',
-            hintText: 'Nama kampung, jalan, patokan',
-            counterText: '',
+          const SizedBox(height: Sp.md),
+          DropdownButtonFormField<String>(
+            initialValue: _eventType,
+            isExpanded: true,
+            decoration: const InputDecoration(labelText: 'Jenis acara'),
+            hint: const Text('Pilih jenis acara'),
+            items: [
+              for (final type in _eventTypes)
+                DropdownMenuItem(value: type.value, child: Text(type.label)),
+            ],
+            onChanged: (value) => setState(() => _eventType = value),
           ),
-          validator: (value) {
-            final trimmed = value?.trim() ?? '';
-            if (trimmed.length < 10) return 'Alamat minimal 10 karakter.';
-            if (trimmed.length > 1000) {
-              return 'Alamat maksimal 1.000 karakter.';
-            }
-            return null;
-          },
-        ),
-        const SizedBox(height: Sp.md),
-        TextFormField(
-          controller: _notes,
-          minLines: 2,
-          maxLines: 4,
-          maxLength: 2000,
-          decoration: const InputDecoration(
-            labelText: 'Catatan untuk vendor (opsional)',
-            hintText: 'Contoh: listrik tersedia, panggung di halaman',
-            counterText: '',
+          const SizedBox(height: Sp.md),
+          if (_dates.isEmpty)
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const InfoStrip(
+                  message:
+                      'Jadwal vendor belum tersedia untuk 45 hari ke depan. '
+                      'Muat ulang dulu sebelum memesan.',
+                  icon: Icons.event_busy_outlined,
+                  tone: InfoTone.warning,
+                ),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: _load,
+                    child: const Text('Muat ulang jadwal'),
+                  ),
+                ),
+              ],
+            )
+          else
+            _slotSummary(text),
+          if (_dateError && _dates.isNotEmpty) ...[
+            const SizedBox(height: Sp.xs),
+            Text(
+              'Pilih tanggal acara dulu.',
+              style: text.bodySmall?.copyWith(color: AppColors.danger),
+            ),
+          ],
+          const SizedBox(height: Sp.md),
+          TextFormField(
+            controller: _guests,
+            keyboardType: TextInputType.number,
+            textInputAction: TextInputAction.next,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            decoration: const InputDecoration(
+              labelText: 'Perkiraan jumlah tamu (opsional)',
+              hintText: 'Contoh: 120',
+            ),
+            validator: (value) {
+              final trimmed = value?.trim() ?? '';
+              if (trimmed.isEmpty) return null;
+              final parsed = int.tryParse(trimmed);
+              if (parsed == null || parsed < 0 || parsed > 100000) {
+                return 'Isi angka 0 sampai 100.000.';
+              }
+              return null;
+            },
           ),
-        ),
-      ],
+          const SizedBox(height: Sp.md),
+          TextFormField(
+            controller: _address,
+            textInputAction: TextInputAction.next,
+            minLines: 2,
+            maxLines: 4,
+            maxLength: 1000,
+            decoration: const InputDecoration(
+              labelText: 'Alamat lokasi acara',
+              hintText: 'Nama kampung, jalan, patokan',
+              counterText: '',
+            ),
+            validator: (value) {
+              final trimmed = value?.trim() ?? '';
+              if (trimmed.length < 10) return 'Alamat minimal 10 karakter.';
+              if (trimmed.length > 1000) {
+                return 'Alamat maksimal 1.000 karakter.';
+              }
+              return null;
+            },
+          ),
+          const SizedBox(height: Sp.md),
+          TextFormField(
+            controller: _notes,
+            minLines: 2,
+            maxLines: 4,
+            maxLength: 2000,
+            decoration: const InputDecoration(
+              labelText: 'Catatan untuk vendor (opsional)',
+              hintText: 'Contoh: listrik tersedia, panggung di halaman',
+              counterText: '',
+            ),
+          ),
+        ],
+      ),
     );
   }
 
   Widget _slotSummary(TextTheme text) {
     final date = _selectedDate;
-    final session = _selectedSession;
     final parsed = date == null ? null : DateTime.tryParse(date);
     final uncertain = date != null && _dateUncertainOn(date);
 
@@ -606,9 +658,9 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
       child: InkWell(
         onTap: _pickSlot,
         child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 64),
+          constraints: const BoxConstraints(minHeight: 56),
           child: Padding(
-            padding: const EdgeInsets.all(Sp.lg),
+            padding: const EdgeInsets.all(Sp.md),
             child: Row(
               children: [
                 const Icon(
@@ -623,7 +675,7 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
                     children: [
                       Text(
                         parsed == null
-                            ? 'Pilih tanggal & sesi'
+                            ? 'Pilih tanggal acara'
                             : formatDate(parsed),
                         style: text.titleMedium?.copyWith(
                           color: parsed == null
@@ -635,7 +687,7 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
                       Text(
                         parsed == null
                             ? 'Dari jadwal vendor yang masih terbuka'
-                            : '${session == null ? 'Sesi belum dipilih' : sessionText(session)}'
+                            : 'Sehari penuh · satu panggung untuk acara ini'
                                   '${uncertain ? ' · belum dikonfirmasi' : ''}',
                         style: text.bodySmall?.copyWith(
                           color: uncertain ? AppColors.warning : null,
@@ -668,50 +720,53 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
       if (package.personnelCount > 0) '${package.personnelCount} personel',
     ].join(' · ');
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        SectionHeader(
-          title: '2. Paket & tambahan',
-          actionLabel: 'Ganti',
-          onAction: () => Navigator.maybePop(context),
-        ),
-        const SizedBox(height: Sp.md),
-        BookingPanel(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+    return SectionPanel(
+      leading: const StepBadge(step: 2, icon: Icons.inventory_2_outlined),
+      title: 'Paket',
+      caption: 'Satu grup, satu harga untuk sehari penuh.',
+      padding: const EdgeInsets.all(Sp.md),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                package.name,
-                style: text.titleLarge,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      package.name,
+                      style: text.titleLarge,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: Sp.xs),
+                    Text(
+                      vendor.displayName,
+                      style: text.bodySmall,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    if (meta.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(meta, style: text.bodySmall),
+                    ],
+                  ],
+                ),
               ),
-              const SizedBox(height: Sp.xs),
-              Text(
-                vendor.displayName,
-                style: text.bodySmall,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              if (meta.isNotEmpty) ...[
-                const SizedBox(height: 2),
-                Text(meta, style: text.bodySmall),
-              ],
-              const SizedBox(height: Sp.md),
-              Row(
+              const SizedBox(width: Sp.sm),
+              Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  Expanded(
-                    child: Text(
-                      rupiah(package.basePriceIdr),
-                      style: text.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                        fontFeatures: _tabularFigures,
-                      ),
+                  Text(
+                    rupiah(package.basePriceIdr),
+                    style: text.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      fontFeatures: _tabularFigures,
                     ),
                   ),
-                  const SizedBox(width: Sp.sm),
+                  const SizedBox(height: 2),
                   Text(
                     'DP $_dpRatePercent%',
                     style: text.labelSmall?.copyWith(
@@ -721,62 +776,75 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
                   ),
                 ],
               ),
-              if (_serviceFee > 0) ...[
-                const SizedBox(height: 2),
-                Text(
-                  'Ditambah biaya layanan 1% (${rupiah(_serviceFee)}).',
-                  style: text.bodySmall,
-                ),
-              ],
             ],
           ),
-        ),
-        if (package.addons.isNotEmpty) ...[
-          const SizedBox(height: Sp.md),
-          BookingPanel(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
+          if (package.inclusions.isNotEmpty) ...[
+            const SizedBox(height: Sp.md),
+            for (final item in package.inclusions)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      child: Text(
-                        'Tambahan',
-                        style: text.labelSmall?.copyWith(
-                          color: AppColors.inkMuted,
-                        ),
+                    const Padding(
+                      padding: EdgeInsets.only(top: 1),
+                      child: Icon(
+                        Icons.check_circle_outline,
+                        size: 16,
+                        color: AppColors.accent,
                       ),
                     ),
-                    if (_addonTotal > 0)
-                      Text(
-                        rupiah(_addonTotal),
-                        style: text.labelMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                          fontFeatures: _tabularFigures,
-                        ),
-                      ),
+                    const SizedBox(width: 6),
+                    Expanded(child: Text(item, style: text.bodySmall)),
                   ],
                 ),
-                const SizedBox(height: Sp.sm),
-                for (var i = 0; i < package.addons.length; i++) ...[
-                  if (i > 0)
-                    const Divider(
-                      height: Sp.lg,
-                      color: AppColors.line,
-                      thickness: 1,
-                    ),
-                  _AddonRow(
-                    addon: package.addons[i],
-                    qty: _qtyOf(package.addons[i]),
-                    maxQty: _maxQty(package.addons[i]),
-                    onChanged: (value) => _setQty(package.addons[i], value),
+              ),
+          ],
+          if (_serviceFee > 0) ...[
+            const SizedBox(height: Sp.xs),
+            Text(
+              'Ditambah biaya layanan 1% (${rupiah(_serviceFee)}).',
+              style: text.bodySmall,
+            ),
+          ],
+          if (package.addons.isNotEmpty) ...[
+            const SizedBox(height: Sp.lg),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Tambahan',
+                    style: text.labelSmall?.copyWith(color: AppColors.inkMuted),
                   ),
-                ],
+                ),
+                if (_addonTotal > 0)
+                  Text(
+                    rupiah(_addonTotal),
+                    style: text.labelMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      fontFeatures: _tabularFigures,
+                    ),
+                  ),
               ],
             ),
-          ),
+            const SizedBox(height: Sp.sm),
+            for (var i = 0; i < package.addons.length; i++) ...[
+              if (i > 0)
+                const Divider(
+                  height: Sp.lg,
+                  color: AppColors.line,
+                  thickness: 1,
+                ),
+              _AddonRow(
+                addon: package.addons[i],
+                qty: _qtyOf(package.addons[i]),
+                maxQty: _maxQty(package.addons[i]),
+                onChanged: (value) => _setQty(package.addons[i], value),
+              ),
+            ],
+          ],
         ],
-      ],
+      ),
     );
   }
 
@@ -787,9 +855,31 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const SectionHeader(
-          title: '3. Ringkasan',
-          caption: 'Total, DP, dan sisa setelah DP.',
+        Row(
+          children: [
+            const StepBadge(step: 3, icon: Icons.receipt_long_outlined),
+            const SizedBox(width: Sp.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Ringkasan',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Total, DP, dan sisa setelah DP.',
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: AppColors.inkMuted),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: Sp.md),
         MoneyBlock(
@@ -804,10 +894,10 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
         const SizedBox(height: Sp.md),
         const InfoStrip(
           message:
-              'Total final dihitung sistem saat booking dikirim, dan bisa '
-              'berbeda kalau vendor punya aturan harga untuk tanggal ini.',
-          icon: Icons.receipt_long_outlined,
-          tone: InfoTone.neutral,
+              'Pembayaran DP dibuka setelah vendor menerima booking. '
+              'Total final dihitung sistem saat booking dikirim.',
+          icon: Icons.schedule_outlined,
+          tone: InfoTone.primary,
         ),
       ],
     );
@@ -929,20 +1019,18 @@ class _QtyStepper extends StatelessWidget {
   }
 }
 
-/// Slot picker sheet: pick a date, then a session, then confirm. Nothing is
-/// written back to the form until the customer taps the confirm button.
+/// Date picker sheet. A booking is always a full day, so the sheet only asks
+/// for the date; nothing is written back until the customer confirms.
 class _SlotSheet extends StatefulWidget {
   const _SlotSheet({
     required this.dates,
     required this.availability,
     this.initialDate,
-    this.initialSession,
   });
 
   final List<String> dates;
   final Map<String, Map<String, String>> availability;
   final String? initialDate;
-  final String? initialSession;
 
   @override
   State<_SlotSheet> createState() => _SlotSheetState();
@@ -950,7 +1038,6 @@ class _SlotSheet extends StatefulWidget {
 
 class _SlotSheetState extends State<_SlotSheet> {
   String? _date;
-  String? _session;
 
   @override
   void initState() {
@@ -962,46 +1049,14 @@ class _SlotSheetState extends State<_SlotSheet> {
       return;
     }
     _date = date;
-    final session = widget.initialSession;
-    _session =
-        session != null &&
-            _allowedState(_sessionState(widget.availability, date, session))
-        ? session
-        : _firstSession(date);
   }
 
-  String? _firstSession(String date) {
-    for (final session in _sessions) {
-      if (_allowedState(_sessionState(widget.availability, date, session))) {
-        return session;
-      }
-    }
-    return null;
-  }
-
-  void _chooseDate(String date) {
-    final current = _session;
-    final keep =
-        current != null &&
-        _allowedState(_sessionState(widget.availability, date, current));
-    setState(() {
-      _date = date;
-      _session = keep ? current : _firstSession(date);
-    });
-  }
-
-  void _chooseSession(String session) {
-    if (!_allowedState(_sessionState(widget.availability, _date!, session))) {
-      return;
-    }
-    setState(() => _session = session);
-  }
+  void _chooseDate(String date) => setState(() => _date = date);
 
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     final date = _date;
-    final session = _session;
     final uncertain = date != null && _dateUncertain(widget.availability, date);
 
     return SafeArea(
@@ -1033,7 +1088,7 @@ class _SlotSheetState extends State<_SlotSheet> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Pilih tanggal & sesi',
+                          'Pilih tanggal acara',
                           style: text.titleLarge?.copyWith(
                             fontWeight: FontWeight.w800,
                             letterSpacing: -0.3,
@@ -1041,15 +1096,21 @@ class _SlotSheetState extends State<_SlotSheet> {
                         ),
                         const SizedBox(height: Sp.xs),
                         Text(
-                          'Satu tanggal dan satu sesi per booking.',
-                          style: text.bodySmall?.copyWith(color: AppColors.inkMuted),
+                          'Booking berlaku sehari penuh. Vendor hanya menerima '
+                          'satu acara per tanggal.',
+                          style: text.bodySmall?.copyWith(
+                            color: AppColors.inkMuted,
+                          ),
                         ),
                       ],
                     ),
                   ),
                   if (date != null && DateTime.tryParse(date) != null) ...[
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
                       decoration: BoxDecoration(
                         color: AppColors.primary,
                         borderRadius: BorderRadius.circular(Radii.sm),
@@ -1084,44 +1145,23 @@ class _SlotSheetState extends State<_SlotSheet> {
                   ],
                 ),
               ),
-              if (date != null) ...[
-                const SizedBox(height: Sp.lg),
-                Text('Sesi · ${formatDateIso(date)}', style: text.titleMedium),
-                if (uncertain) ...[
-                  const SizedBox(height: Sp.sm),
-                  const InfoStrip(
-                    message:
-                        'Vendor perlu mengecek tanggal ini. Kamu tetap bisa '
-                        'memesan, tapi jadwal belum pasti.',
-                    icon: Icons.help_outline,
-                    tone: InfoTone.warning,
-                  ),
-                ],
-                const SizedBox(height: Sp.sm),
-                for (final item in _sessions) ...[
-                  _SessionOption(
-                    label: sessionText(item),
-                    stateText: _slotStateText(
-                      _sessionState(widget.availability, date, item),
-                    ),
-                    enabled: _allowedState(
-                      _sessionState(widget.availability, date, item),
-                    ),
-                    selected: session == item,
-                    onTap: () => _chooseSession(item),
-                  ),
-                  const SizedBox(height: Sp.sm),
-                ],
+              if (uncertain) ...[
+                const SizedBox(height: Sp.md),
+                const InfoStrip(
+                  message:
+                      'Vendor perlu mengecek tanggal ini. Kamu tetap bisa '
+                      'memesan, tapi jadwal belum pasti.',
+                  icon: Icons.help_outline,
+                  tone: InfoTone.warning,
+                ),
               ],
-              const SizedBox(height: Sp.sm),
+              const SizedBox(height: Sp.lg),
               PrimaryButton(
-                label: 'Pakai jadwal ini',
-                onPressed: date == null || session == null
+                label: 'Pakai tanggal ini',
+                onPressed: date == null
                     ? null
-                    : () => Navigator.pop(context, (
-                        date: date,
-                        session: session,
-                      )),
+                    : () =>
+                          Navigator.pop(context, (date: date, session: 'full')),
               ),
             ],
           ),
@@ -1262,84 +1302,6 @@ class _DateButton extends StatelessWidget {
                 ),
               ],
             ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SessionOption extends StatelessWidget {
-  const _SessionOption({
-    required this.label,
-    required this.stateText,
-    required this.enabled,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String label;
-  final String stateText;
-  final bool enabled;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: enabled ? onTap : null,
-        borderRadius: BorderRadius.circular(Radii.sm),
-        child: Container(
-          constraints: const BoxConstraints(minHeight: 48),
-          padding: const EdgeInsets.symmetric(
-            horizontal: Sp.md,
-            vertical: Sp.md,
-          ),
-          decoration: BoxDecoration(
-            color: selected ? AppColors.primarySoft : AppColors.card,
-            borderRadius: BorderRadius.circular(Radii.sm),
-            border: Border.all(
-              color: selected ? AppColors.primary : AppColors.line,
-              width: selected ? 1.6 : 1,
-            ),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                selected
-                    ? Icons.radio_button_checked
-                    : Icons.radio_button_unchecked,
-                size: 22,
-                color: enabled ? AppColors.primary : AppColors.inkMuted,
-              ),
-              const SizedBox(width: Sp.md),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      label,
-                      style: text.titleMedium?.copyWith(
-                        color: enabled ? AppColors.ink : AppColors.inkMuted,
-                      ),
-                    ),
-                    Text(
-                      stateText,
-                      style: text.bodySmall?.copyWith(
-                        color: enabled
-                            ? stateText == 'Tersedia'
-                                  ? AppColors.accent
-                                  : AppColors.warning
-                            : AppColors.inkMuted,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
           ),
         ),
       ),

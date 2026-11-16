@@ -81,7 +81,7 @@ TextTheme _textTheme() {
     displaySmall: TextStyle(
       fontFamily: _display,
       fontFamilyFallback: _fontFallback,
-      fontSize: 28,
+      fontSize: 25,
       height: 1.28,
       fontWeight: FontWeight.w700,
       letterSpacing: -0.3,
@@ -90,7 +90,7 @@ TextTheme _textTheme() {
     headlineSmall: TextStyle(
       fontFamily: _display,
       fontFamilyFallback: _fontFallback,
-      fontSize: 24,
+      fontSize: 21,
       height: 1.33,
       fontWeight: FontWeight.w700,
       color: AppColors.ink,
@@ -98,7 +98,7 @@ TextTheme _textTheme() {
     titleLarge: TextStyle(
       fontFamily: _display,
       fontFamilyFallback: _fontFallback,
-      fontSize: 20,
+      fontSize: 18,
       height: 1.4,
       fontWeight: FontWeight.w600,
       color: AppColors.ink,
@@ -106,7 +106,7 @@ TextTheme _textTheme() {
     titleMedium: TextStyle(
       fontFamily: _display,
       fontFamilyFallback: _fontFallback,
-      fontSize: 18,
+      fontSize: 16,
       height: 1.33,
       fontWeight: FontWeight.w600,
       color: AppColors.ink,
@@ -114,7 +114,7 @@ TextTheme _textTheme() {
     bodyLarge: TextStyle(
       fontFamily: _body,
       fontFamilyFallback: _fontFallback,
-      fontSize: 16,
+      fontSize: 15,
       height: 1.5,
       fontWeight: FontWeight.w400,
       color: AppColors.ink,
@@ -122,7 +122,7 @@ TextTheme _textTheme() {
     bodyMedium: TextStyle(
       fontFamily: _body,
       fontFamilyFallback: _fontFallback,
-      fontSize: 14,
+      fontSize: 13,
       height: 1.43,
       fontWeight: FontWeight.w400,
       color: AppColors.ink,
@@ -130,7 +130,7 @@ TextTheme _textTheme() {
     bodySmall: TextStyle(
       fontFamily: _body,
       fontFamilyFallback: _fontFallback,
-      fontSize: 12,
+      fontSize: 11.5,
       height: 1.33,
       fontWeight: FontWeight.w400,
       color: AppColors.inkMuted,
@@ -138,7 +138,7 @@ TextTheme _textTheme() {
     labelLarge: TextStyle(
       fontFamily: _display,
       fontFamilyFallback: _fontFallback,
-      fontSize: 14,
+      fontSize: 13,
       height: 1.43,
       fontWeight: FontWeight.w700,
       color: AppColors.ink,
@@ -146,7 +146,7 @@ TextTheme _textTheme() {
     labelMedium: TextStyle(
       fontFamily: _display,
       fontFamilyFallback: _fontFallback,
-      fontSize: 12,
+      fontSize: 11.5,
       height: 1.33,
       fontWeight: FontWeight.w600,
       letterSpacing: 0.2,
@@ -155,7 +155,7 @@ TextTheme _textTheme() {
     labelSmall: TextStyle(
       fontFamily: _display,
       fontFamilyFallback: _fontFallback,
-      fontSize: 11,
+      fontSize: 10.5,
       height: 1.27,
       fontWeight: FontWeight.w600,
       letterSpacing: 0.3,
@@ -268,31 +268,36 @@ ThemeData buildTheme() {
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      fillColor: AppColors.card,
-      hintStyle: text.bodyMedium?.copyWith(color: AppColors.inkMuted),
-      labelStyle: text.labelMedium?.copyWith(color: AppColors.ink),
+      // Soft filled fields, not hard boxes: the outline only appears on focus.
+      fillColor: AppColors.surfaceSoft,
+      hintStyle: text.bodyMedium?.copyWith(color: AppColors.muted2),
+      labelStyle: text.labelMedium?.copyWith(color: AppColors.inkMuted),
+      floatingLabelStyle: text.labelMedium?.copyWith(
+        color: AppColors.primary,
+        fontWeight: FontWeight.w600,
+      ),
       contentPadding: const EdgeInsets.symmetric(
         horizontal: Sp.lg,
         vertical: Sp.lg,
       ),
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(Radii.sm),
-        borderSide: const BorderSide(color: AppColors.line),
+        borderRadius: BorderRadius.circular(Radii.xl),
+        borderSide: BorderSide.none,
       ),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(Radii.sm),
-        borderSide: const BorderSide(color: AppColors.line),
+        borderRadius: BorderRadius.circular(Radii.xl),
+        borderSide: BorderSide.none,
       ),
       focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(Radii.sm),
+        borderRadius: BorderRadius.circular(Radii.xl),
         borderSide: const BorderSide(color: AppColors.limeDark, width: 1.5),
       ),
       errorBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(Radii.sm),
+        borderRadius: BorderRadius.circular(Radii.xl),
         borderSide: const BorderSide(color: AppColors.danger, width: 1.5),
       ),
       focusedErrorBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(Radii.sm),
+        borderRadius: BorderRadius.circular(Radii.xl),
         borderSide: const BorderSide(color: AppColors.danger, width: 1.5),
       ),
     ),
@@ -323,7 +328,9 @@ ThemeData buildTheme() {
       elevation: 0,
       height: 64,
       indicatorColor: AppColors.limeSoft,
-      indicatorShape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(Radii.sm)),
+      indicatorShape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(Radii.sm),
+      ),
       labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
       iconTheme: WidgetStateProperty.resolveWith((states) {
         final selected = states.contains(WidgetState.selected);

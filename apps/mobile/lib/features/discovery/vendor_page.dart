@@ -9,8 +9,8 @@ import '../../core/format.dart';
 import '../../core/models.dart';
 import '../../core/ui.dart';
 import '../../core/widgets.dart';
+import '../moderation/report_sheet.dart';
 
-const _weekdays = <String>['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'];
 const _tabularFigures = <FontFeature>[FontFeature.tabularFigures()];
 
 /// `Rp 1.500.000` → `Rp1.500.000`, the tighter form DESIGN.md asks for.
@@ -36,7 +36,6 @@ class _VendorPageState extends State<VendorPage> {
   String? _availError;
   bool _loadingAvail = true;
   bool _started = false;
-  int _weekIndex = 0;
   String? _packageId;
   String? _date;
   bool? _isFavorite;
@@ -90,6 +89,11 @@ class _VendorPageState extends State<VendorPage> {
             !detail.packages.any((item) => item.id == _packageId)) {
           _packageId = null;
         }
+        // A vendor is one group with one full-day offering. Keep a valid
+        // package selected so the schedule CTA never asks for a package first.
+        _packageId ??= detail.packages.isEmpty
+            ? null
+            : detail.packages.first.id;
       });
     } on ApiException catch (error) {
       if (!mounted) return;
@@ -154,7 +158,6 @@ class _VendorPageState extends State<VendorPage> {
       setState(() {
         _availability = availability;
         _loadingAvail = false;
-        _weekIndex = 0;
         final dates = _dates();
         final date = _date;
         if (date == null ||
@@ -185,9 +188,7 @@ class _VendorPageState extends State<VendorPage> {
     if (!AppScope.of(context).session.authorized) return;
 
     try {
-      final raw = await AppScope.of(context).api.get(
-        '/favorites/${vendor.id}',
-      );
+      final raw = await AppScope.of(context).api.get('/favorites/${vendor.id}');
       if (!mounted || _isFavorite != null) return;
       var isFav = false;
       if (raw is Map) {
@@ -258,11 +259,7 @@ class _VendorPageState extends State<VendorPage> {
     try {
       final raw = await AppScope.of(context).api.get(
         '/bookings',
-        query: const {
-          'status': 'completed',
-          'page': '1',
-          'page_size': '50',
-        },
+        query: const {'status': 'completed', 'page': '1', 'page_size': '50'},
       );
       if (!mounted) return;
       if (raw is Map && raw['items'] is List) {
@@ -271,7 +268,9 @@ class _VendorPageState extends State<VendorPage> {
         for (final item in items) {
           if (item is Map) {
             final v = item['vendor'];
-            final vendorId = v is Map ? v['id']?.toString() : item['vendor_id']?.toString();
+            final vendorId = v is Map
+                ? v['id']?.toString()
+                : item['vendor_id']?.toString();
             if (vendorId == vendor.id) {
               matchingBookingId = item['id']?.toString();
               break;
@@ -296,10 +295,7 @@ class _VendorPageState extends State<VendorPage> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(Radii.lg)),
       ),
-      builder: (ctx) => _ReviewSheet(
-        vendor: vendor,
-        bookingId: bookingId,
-      ),
+      builder: (ctx) => _ReviewSheet(vendor: vendor, bookingId: bookingId),
     );
     if (sent == true && mounted) {
       setState(() => _completedBookingId = null);
@@ -361,7 +357,28 @@ class _VendorPageState extends State<VendorPage> {
     _scrollTo(_scheduleKey);
   }
 
-  void _chooseDate(String date) {
+  /// Same date picker as the Explore page, restricted to the vendor's
+  /// 45-day availability window.
+  Future<void> _pickDate() async {
+    final today = DateTime.now();
+    final first = DateTime(today.year, today.month, today.day);
+    final selected = _date == null ? null : DateTime.tryParse(_date!);
+    final picked = await showTarlinkDatePicker(
+      context: context,
+      initialDate: selected ?? first,
+      firstDate: first,
+      lastDate: first.add(const Duration(days: 44)),
+    );
+    if (picked == null || !mounted) return;
+    final date = isoDate(picked);
+    if (_dayState(date) == 'blocked') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Tanggal itu sudah terisi. Pilih tanggal lain.'),
+        ),
+      );
+      return;
+    }
     setState(() => _date = date);
   }
 
@@ -380,6 +397,7 @@ class _VendorPageState extends State<VendorPage> {
       arguments: BookCreateArgs(
         vendorIdOrSlug: vendor.slug,
         packageId: package.id,
+        date: _date,
       ),
     );
   }
@@ -397,18 +415,18 @@ class _VendorPageState extends State<VendorPage> {
     final messenger = ScaffoldMessenger.of(context);
     try {
       if (next) {
-        await AppScope.of(context).api.post(
-          '/favorites/${Uri.encodeComponent(vendor.id)}',
-        );
+        await AppScope.of(
+          context,
+        ).api.post('/favorites/${Uri.encodeComponent(vendor.id)}');
         if (!mounted) return;
         messenger.hideCurrentSnackBar();
         messenger.showSnackBar(
           const SnackBar(content: Text('Ditambahkan ke favorit')),
         );
       } else {
-        await AppScope.of(context).api.delete(
-          '/favorites/${Uri.encodeComponent(vendor.id)}',
-        );
+        await AppScope.of(
+          context,
+        ).api.delete('/favorites/${Uri.encodeComponent(vendor.id)}');
         if (!mounted) return;
         messenger.hideCurrentSnackBar();
         messenger.showSnackBar(
@@ -509,10 +527,7 @@ class _VendorPageState extends State<VendorPage> {
   Widget _placeholderBody() {
     return Column(
       children: [
-        StageHeader.back(
-          context: context,
-          title: 'Detail Grup Hiburan',
-        ),
+        StageHeader.back(context: context, title: 'Detail Grup Hiburan'),
         Expanded(
           child: _vendorError != null
               ? AppError(message: _vendorError!, onRetry: _bootstrap)
@@ -541,9 +556,20 @@ class _VendorPageState extends State<VendorPage> {
       padding: EdgeInsets.zero,
       children: [
         _hero(vendor),
+        const SizedBox(height: Sp.md),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: Sp.lg),
+          child: _packages(vendor),
+        ),
+        const SizedBox(height: Sp.md),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: Sp.lg),
+          child: _schedule(vendor),
+        ),
         if (vendor.videoUrl != null && vendor.videoUrl!.trim().isNotEmpty) ...[
+          const SizedBox(height: Sp.md),
           Padding(
-            padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.lg, Sp.lg, 0),
+            padding: const EdgeInsets.symmetric(horizontal: Sp.lg),
             child: StageVideoCard(
               videoUrl: vendor.videoUrl!,
               thumbnailUrl: vendor.bannerUrl,
@@ -552,55 +578,98 @@ class _VendorPageState extends State<VendorPage> {
             ),
           ),
         ],
-        if (vendor.photoUrls.isNotEmpty) ...[
+        if (description.isNotEmpty) ...[
+          const SizedBox(height: Sp.md),
           Padding(
-            padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.lg, Sp.lg, 0),
+            padding: const EdgeInsets.symmetric(horizontal: Sp.lg),
+            child: SectionPanel(
+              icon: Icons.theater_comedy_outlined,
+              title: 'Tentang grup',
+              padding: const EdgeInsets.all(Sp.md),
+              child: _ExpandableDescription(text: description),
+            ),
+          ),
+        ],
+        if (vendor.photoUrls.isNotEmpty) ...[
+          const SizedBox(height: Sp.md),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: Sp.lg),
             child: MediaGalleryReel(photoUrls: vendor.photoUrls),
           ),
         ],
-        if (description.isNotEmpty) ...[
-          Padding(
-            padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.lg, Sp.lg, 0),
-            child: _ExpandableDescription(text: description),
+        const SizedBox(height: Sp.md),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: Sp.lg),
+          child: SectionPanel(
+            icon: Icons.verified_user_outlined,
+            title: 'Aman & jelas',
+            padding: const EdgeInsets.all(Sp.md),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _assurance(
+                  Icons.lock_outline,
+                  'DP ditahan PJP berizin sampai acara selesai',
+                ),
+                const SizedBox(height: Sp.sm),
+                _assurance(
+                  Icons.receipt_long_outlined,
+                  'Harga final dihitung sistem saat booking dikirim',
+                ),
+                const SizedBox(height: Sp.sm),
+                _assurance(
+                  Icons.schedule_outlined,
+                  'Bayar DP setelah vendor menerima permintaan',
+                ),
+              ],
+            ),
           ),
-          const SizedBox(height: Sp.sm),
-        ],
-        const Padding(
-          padding: EdgeInsets.fromLTRB(Sp.lg, Sp.md, Sp.lg, 0),
-          child: Divider(color: AppColors.line),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.md, Sp.lg, 0),
-          child: _packages(vendor),
-        ),
-        const Padding(
-          padding: EdgeInsets.fromLTRB(Sp.lg, Sp.lg, Sp.lg, 0),
-          child: Divider(color: AppColors.line),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.md, Sp.lg, 0),
-          child: _schedule(vendor),
         ),
         if (address.isNotEmpty || transport != null) ...[
-          const Padding(
-            padding: EdgeInsets.fromLTRB(Sp.lg, Sp.lg, Sp.lg, 0),
-            child: Divider(color: AppColors.line),
-          ),
+          const SizedBox(height: Sp.md),
           Padding(
-            padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.md, Sp.lg, 0),
+            padding: const EdgeInsets.symmetric(horizontal: Sp.lg),
             child: _location(address, transport),
           ),
         ],
-        const Padding(
-          padding: EdgeInsets.fromLTRB(Sp.lg, Sp.lg, Sp.lg, 0),
-          child: Divider(color: AppColors.line),
+        const SizedBox(height: Sp.md),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: Sp.lg),
+          child: _reviewsSection(vendor),
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.md, Sp.lg, 0),
-          child: _reviewsSection(vendor),
+          child: _reportLink(vendor),
         ),
         const SizedBox(height: 96),
       ],
+    );
+  }
+
+  /// FR-123: laporkan vendor dari halaman publiknya. Dua ketukan
+  /// (Laporkan vendor → Kirim laporan), tanpa perlu membuka chat.
+  Widget _reportLink(VendorDetail vendor) {
+    final text = Theme.of(context).textTheme;
+    final authorized = AppScope.of(context).session.authorized;
+    if (!authorized) {
+      return Text(
+        'Masuk untuk melaporkan vendor ini.',
+        style: text.bodySmall?.copyWith(color: AppColors.inkMuted),
+      );
+    }
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: TextButton.icon(
+        onPressed: () => showReportSheet(
+          context,
+          targetKind: ReportTargetKind.vendor,
+          targetId: vendor.id,
+          targetLabel: vendor.displayName,
+        ),
+        icon: const Icon(Icons.flag_outlined, size: 18),
+        label: const Text('Laporkan vendor'),
+        style: TextButton.styleFrom(foregroundColor: AppColors.inkMuted),
+      ),
     );
   }
 
@@ -711,176 +780,233 @@ class _VendorPageState extends State<VendorPage> {
           child: PosterTile(
             name: vendor.displayName,
             imageUrl: vendor.bannerUrl ?? vendor.avatarUrl,
-            aspectRatio: 16 / 9,
+            aspectRatio: 2.2,
             heroTag: 'vendor-poster-${vendor.id}',
             badges: [
               if (category.isNotEmpty) category,
               if (region.isNotEmpty) region,
-              if (vendor.videoUrl != null &&
-                  vendor.videoUrl!.trim().isNotEmpty)
-                '▶ Cuplikan Video',
+              if (vendor.videoUrl != null && vendor.videoUrl!.trim().isNotEmpty)
+                '• Cuplikan Video',
             ],
           ),
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.md, Sp.lg, 0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  if (vendor.avatarUrl != null &&
-                      vendor.avatarUrl!.trim().isNotEmpty) ...[
-                    Container(
-                      width: 52,
-                      height: 52,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        border: Border.all(color: AppColors.primary, width: 2),
-                        boxShadow: const [
-                          BoxShadow(
-                            color: Color(0x18000000),
-                            blurRadius: 8,
-                            offset: Offset(0, 2),
+          child: SectionPanel(
+            padding: const EdgeInsets.all(Sp.md),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    if (vendor.avatarUrl != null &&
+                        vendor.avatarUrl!.trim().isNotEmpty) ...[
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: AppColors.primary,
+                            width: 2,
                           ),
-                        ],
-                      ),
-                      clipBehavior: Clip.antiAlias,
-                      child: Image.network(
-                        vendor.avatarUrl!.trim(),
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => const ColoredBox(
-                          color: AppColors.surfaceSoft,
-                          child: Icon(Icons.person, color: AppColors.primary),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: Sp.md),
-                  ],
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          vendor.displayName,
-                          style: text.headlineSmall?.copyWith(
-                            fontSize: 22,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: -0.3,
-                          ),
-                        ),
-                        const SizedBox(height: Sp.xs),
-                        Row(
-                          children: [
-                            const Icon(
-                              Icons.place_outlined,
-                              size: 16,
-                              color: AppColors.inkMuted,
-                            ),
-                            const SizedBox(width: 4),
-                            Expanded(
-                              child: Text(
-                                <String>[
-                                  if (region.isNotEmpty) region,
-                                  '${vendor.packages.length} paket',
-                                ].join(' · '),
-                                style: text.bodySmall,
-                              ),
+                          boxShadow: const [
+                            BoxShadow(
+                              color: Color(0x18000000),
+                              blurRadius: 8,
+                              offset: Offset(0, 2),
                             ),
                           ],
                         ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              if (ratingText != null || responseText != null) ...[
-                const SizedBox(height: Sp.xs),
-                Row(
-                  children: [
-                    if (ratingText != null) ...[
-                      const Icon(
-                        Icons.star_rounded,
-                        size: 17,
-                        color: AppColors.tertiary,
-                      ),
-                      const SizedBox(width: 2),
-                      Text(
-                        ratingText,
-                        style: text.bodySmall?.copyWith(
-                          color: AppColors.ink,
-                          fontWeight: FontWeight.w600,
+                        clipBehavior: Clip.antiAlias,
+                        child: Image.network(
+                          vendor.avatarUrl!.trim(),
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => const ColoredBox(
+                            color: AppColors.surfaceSoft,
+                            child: Icon(Icons.person, color: AppColors.primary),
+                          ),
                         ),
                       ),
+                      const SizedBox(width: Sp.md),
                     ],
-                    if (ratingText != null && responseText != null)
-                      Text(' · ', style: text.bodySmall),
-                    if (responseText != null)
-                      Flexible(
-                        child: Text(
-                          responseText,
-                          style: text.bodySmall,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            vendor.displayName,
+                            style: text.headlineSmall?.copyWith(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: -0.3,
+                            ),
+                          ),
+                          const SizedBox(height: Sp.xs),
+                          Row(
+                            children: [
+                              const Icon(
+                                Icons.place_outlined,
+                                size: 16,
+                                color: AppColors.inkMuted,
+                              ),
+                              const SizedBox(width: 4),
+                              Expanded(
+                                child: Text(
+                                  <String>[
+                                    if (region.isNotEmpty) region,
+                                    '${vendor.packages.length} paket',
+                                  ].join(' · '),
+                                  style: text.bodySmall,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
                       ),
+                    ),
                   ],
                 ),
+                if (ratingText != null || responseText != null) ...[
+                  const SizedBox(height: Sp.xs),
+                  Row(
+                    children: [
+                      if (ratingText != null) ...[
+                        const Icon(
+                          Icons.star_rounded,
+                          size: 17,
+                          color: AppColors.tertiary,
+                        ),
+                        const SizedBox(width: 2),
+                        Text(
+                          ratingText,
+                          style: text.bodySmall?.copyWith(
+                            color: AppColors.ink,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                      if (ratingText != null && responseText != null)
+                        Text(' · ', style: text.bodySmall),
+                      if (responseText != null)
+                        Flexible(
+                          child: Text(
+                            responseText,
+                            style: text.bodySmall,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
+                const SizedBox(height: Sp.md),
+                _quickFacts(vendor),
               ],
-              const SizedBox(height: Sp.md),
-              _pricePill(vendor),
-            ],
+            ),
           ),
         ),
       ],
     );
   }
 
-  Widget _pricePill(VendorDetail vendor) {
-    final text = Theme.of(context).textTheme;
-    final price = _startingPrice(vendor);
-    final percent = vendor.minDpBp > 0 ? _percent(vendor.minDpBp) : null;
+  /// One-line trust row: keeps the assurance block dense enough to sit above
+  /// the fold without hiding the promise.
+  Widget _assurance(IconData icon, String text) {
+    final style = Theme.of(
+      context,
+    ).textTheme.bodySmall?.copyWith(height: 1.35, color: AppColors.ink);
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Mulai dari', style: text.bodySmall?.copyWith(fontSize: 11)),
-              Text(
-                price == 0 ? 'Harga belum diisi' : _rp(price),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: text.displaySmall?.copyWith(
-                  fontSize: 26,
-                  fontWeight: FontWeight.w700,
-                  color: price == 0 ? AppColors.inkMuted : AppColors.primary,
-                  fontFeatures: _tabularFigures,
-                ),
-              ),
-            ],
-          ),
+        Padding(
+          padding: const EdgeInsets.only(top: 1),
+          child: Icon(icon, size: 15, color: AppColors.secondary),
         ),
-        if (percent != null)
-          Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: Sp.sm + 2,
-              vertical: Sp.xs + 1,
+        const SizedBox(width: 8),
+        Expanded(child: Text(text, style: style)),
+      ],
+    );
+  }
+
+  /// Three compact stat tiles beat a row of pills: the same data reads at a
+  /// glance and the card no longer looks half empty.
+  Widget _quickFacts(VendorDetail vendor) {
+    final text = Theme.of(context).textTheme;
+    final facts = <({IconData icon, String value, String label})>[];
+    final package = vendor.packages.isEmpty ? null : vendor.packages.first;
+    if (package != null && package.durationMinutes > 0) {
+      facts.add((
+        icon: Icons.schedule,
+        value: _duration(package.durationMinutes),
+        label: 'Durasi',
+      ));
+    }
+    if (package != null && package.personnelCount > 0) {
+      facts.add((
+        icon: Icons.groups_outlined,
+        value: '${package.personnelCount}',
+        label: 'Personel',
+      ));
+    }
+    if (vendor.minDpBp > 0) {
+      facts.add((
+        icon: Icons.payments_outlined,
+        value: '${_percent(vendor.minDpBp)}%',
+        label: 'DP',
+      ));
+    }
+    if (vendor.serviceRadiusKm > 0) {
+      facts.add((
+        icon: Icons.near_me_outlined,
+        value: '${_kilometers(vendor.serviceRadiusKm)} km',
+        label: 'Jangkauan',
+      ));
+    }
+    if (facts.isEmpty) return const SizedBox.shrink();
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (var i = 0; i < facts.length; i++) ...[
+          if (i > 0)
+            Container(
+              width: 1,
+              height: 38,
+              margin: const EdgeInsets.only(top: 4),
+              color: AppColors.line,
             ),
-            decoration: BoxDecoration(
-              color: AppColors.primarySoft,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Text(
-              'DP $percent%',
-              style: text.labelSmall?.copyWith(
-                color: AppColors.primaryDeep,
-                fontWeight: FontWeight.w700,
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: Sp.sm),
+              child: Column(
+                children: [
+                  Icon(facts[i].icon, size: 16, color: AppColors.inkMuted),
+                  const SizedBox(height: 3),
+                  Text(
+                    facts[i].value,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: text.labelLarge?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.2,
+                    ),
+                  ),
+                  Text(
+                    facts[i].label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: text.labelSmall?.copyWith(
+                      color: AppColors.inkMuted,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
+        ],
       ],
     );
   }
@@ -891,7 +1017,25 @@ class _VendorPageState extends State<VendorPage> {
       key: _packagesKey,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const SectionHeader(title: 'Paket'),
+        Row(
+          children: [
+            const IconBadge(icon: Icons.inventory_2_outlined),
+            const SizedBox(width: Sp.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Paket & fasilitas',
+                    style: text.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
         const SizedBox(height: Sp.md),
         if (vendor.packages.isEmpty)
           Container(
@@ -927,35 +1071,39 @@ class _VendorPageState extends State<VendorPage> {
     final text = Theme.of(context).textTheme;
     final availability = _availability;
 
-    return Column(
+    return SectionPanel(
       key: _scheduleKey,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const SectionHeader(title: 'Jadwal', caption: '45 hari ke depan'),
-        const SizedBox(height: Sp.md),
-        if (_loadingAvail)
-          const AppLoading(rows: 2, label: 'Memuat jadwal vendor')
-        else if (_availError != null) ...[
-          AppError(message: _availError!, compact: true),
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton(
-              onPressed: _loadAvailability,
-              child: const Text('Coba lagi'),
+      icon: Icons.event_available_outlined,
+      title: 'Jadwal',
+      caption: '45 hari ke depan',
+      padding: const EdgeInsets.all(Sp.md),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (_loadingAvail)
+            const AppLoading(rows: 2, label: 'Memuat jadwal vendor')
+          else if (_availError != null) ...[
+            AppError(message: _availError!, compact: true),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: _loadAvailability,
+                child: const Text('Coba lagi'),
+              ),
             ),
-          ),
-        ] else if (availability != null) ...[
-          if (availability.stale) ...[
-            _staleStrip(vendor, availability),
-            const SizedBox(height: Sp.md),
-          ],
-          _datesStrip(availability),
-        ] else
-          Text(
-            'Jadwal belum tersedia untuk 45 hari ke depan.',
-            style: text.bodyMedium?.copyWith(color: AppColors.inkMuted),
-          ),
-      ],
+          ] else if (availability != null) ...[
+            if (availability.stale) ...[
+              _staleStrip(vendor, availability),
+              const SizedBox(height: Sp.md),
+            ],
+            _dateField(),
+          ] else
+            Text(
+              'Jadwal belum tersedia untuk 45 hari ke depan.',
+              style: text.bodyMedium?.copyWith(color: AppColors.inkMuted),
+            ),
+        ],
+      ),
     );
   }
 
@@ -984,169 +1132,112 @@ class _VendorPageState extends State<VendorPage> {
         'lewat WhatsApp.';
   }
 
-  Widget _datesStrip(Availability availability) {
+  Widget _dateField() {
     final text = Theme.of(context).textTheme;
-    final dates = _dates();
-    if (dates.isEmpty) {
-      return Text(
-        'Jadwal belum tersedia untuk 45 hari ke depan.',
-        style: text.bodyMedium?.copyWith(color: AppColors.inkMuted),
-      );
-    }
-
-    final weeks = <List<String>>[];
-    for (var i = 0; i < dates.length; i += 7) {
-      weeks.add(dates.sublist(i, i + 7 > dates.length ? dates.length : i + 7));
-    }
-    final index = _weekIndex.clamp(0, weeks.length - 1);
-    final week = weeks[index];
+    final selected = _date == null ? null : DateTime.tryParse(_date!);
+    final openDays = _dates()
+        .where((date) => _dayState(date) != 'blocked')
+        .length;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Row(
-          children: [
-            IconButton(
-              tooltip: 'Minggu sebelumnya',
-              onPressed: index == 0
-                  ? null
-                  : () => setState(() => _weekIndex = index - 1),
-              icon: const Icon(Icons.chevron_left),
-              color: AppColors.inkMuted,
-            ),
-            Expanded(
-              child: Text(
-                _weekLabel(week),
-                textAlign: TextAlign.center,
-                style: text.labelMedium?.copyWith(
-                  color: AppColors.ink,
-                  fontWeight: FontWeight.w700,
+        Material(
+          color: selected == null
+              ? AppColors.surfaceSoft
+              : AppColors.surfaceTint,
+          borderRadius: BorderRadius.circular(Radii.xl),
+          child: InkWell(
+            onTap: _pickDate,
+            borderRadius: BorderRadius.circular(Radii.xl),
+            child: Container(
+              constraints: const BoxConstraints(minHeight: 58),
+              padding: const EdgeInsets.symmetric(
+                horizontal: Sp.md,
+                vertical: Sp.sm,
+              ),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(Radii.xl),
+                border: Border.all(
+                  color: selected == null ? AppColors.line : AppColors.limeDark,
+                  width: selected == null ? 1 : 1.5,
                 ),
               ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.event_outlined,
+                    size: 20,
+                    color: selected == null
+                        ? AppColors.inkMuted
+                        : AppColors.primary,
+                  ),
+                  const SizedBox(width: Sp.sm),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          selected == null
+                              ? 'Pilih tanggal acara'
+                              : formatDate(selected),
+                          style: text.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: selected == null
+                                ? AppColors.inkMuted
+                                : AppColors.ink,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          selected == null
+                              ? 'Sehari penuh · $openDays tanggal terbuka'
+                              : 'Sehari penuh · ketuk untuk ubah',
+                          style: text.bodySmall?.copyWith(
+                            color: AppColors.inkMuted,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(
+                    Icons.chevron_right,
+                    size: 22,
+                    color: AppColors.inkMuted,
+                  ),
+                ],
+              ),
             ),
-            IconButton(
-              tooltip: 'Minggu berikutnya',
-              onPressed: index >= weeks.length - 1
-                  ? null
-                  : () => setState(() => _weekIndex = index + 1),
-              icon: const Icon(Icons.chevron_right),
-              color: AppColors.inkMuted,
-            ),
-          ],
+          ),
         ),
-        const SizedBox(height: Sp.sm),
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final cellWidth = ((constraints.maxWidth - Sp.sm * 6) / 7).clamp(
-              34.0,
-              56.0,
-            );
-            final states = <String, String>{
-              for (final date in week) date: _dayState(date),
-            };
-            final cells = <Widget>[];
-            for (final date in week) {
-              final parsed = DateTime.tryParse(date);
-              if (parsed == null) continue;
-              final state = states[date]!;
-              cells.add(
-                _DayCell(
-                  date: parsed,
-                  state: state,
-                  selected: date == _date,
-                  width: cellWidth,
-                  // Blocked days stay visible but cannot be chosen.
-                  onTap: state == 'blocked' ? null : () => _chooseDate(date),
-                ),
-              );
-            }
-            return Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: cells,
-            );
-          },
-        ),
-        const SizedBox(height: Sp.sm),
-        const _ScheduleLegend(),
       ],
     );
   }
 
-  String _weekLabel(List<String> week) {
-    final first = DateTime.tryParse(week.first);
-    final last = DateTime.tryParse(week.last);
-    if (first == null || last == null) return '${week.first} – ${week.last}';
-    if (first.year == last.year) {
-      if (first.month == last.month) {
-        return '${first.day} – ${formatDate(last)}';
-      }
-      return '${formatDayMonth(first)} – ${formatDate(last)}';
-    }
-    return '${formatDate(first)} – ${formatDate(last)}';
-  }
-
   Widget _location(String address, String? transport) {
-    final text = Theme.of(context).textTheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const SectionHeader(title: 'Lokasi & transport'),
-        const SizedBox(height: Sp.md),
-        Container(
-          padding: const EdgeInsets.all(Sp.lg),
-          decoration: BoxDecoration(
-            color: AppColors.card,
-            borderRadius: BorderRadius.circular(Radii.lg),
-            border: Border.all(color: AppColors.line),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (address.isNotEmpty)
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Padding(
-                      padding: EdgeInsets.only(top: 2),
-                      child: Icon(
-                        Icons.place_outlined,
-                        size: 18,
-                        color: AppColors.inkMuted,
-                      ),
-                    ),
-                    const SizedBox(width: Sp.sm),
-                    Expanded(child: Text(address, style: text.bodyMedium)),
-                  ],
-                ),
-              if (address.isNotEmpty && transport != null)
-                const SizedBox(height: Sp.sm),
-              if (transport != null)
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Padding(
-                      padding: EdgeInsets.only(top: 2),
-                      child: Icon(
-                        Icons.directions_car_outlined,
-                        size: 18,
-                        color: AppColors.inkMuted,
-                      ),
-                    ),
-                    const SizedBox(width: Sp.sm),
-                    Expanded(
-                      child: Text(
-                        transport,
-                        style: text.bodyMedium?.copyWith(
-                          color: AppColors.inkMuted,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-            ],
-          ),
-        ),
-      ],
+    return SectionPanel(
+      icon: Icons.place_outlined,
+      title: 'Lokasi & transport',
+      padding: const EdgeInsets.all(Sp.md),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (address.isNotEmpty)
+            DetailRow(
+              icon: Icons.place_outlined,
+              label: 'Alamat panggung',
+              value: address,
+            ),
+          if (address.isNotEmpty && transport != null)
+            const SizedBox(height: Sp.md),
+          if (transport != null)
+            DetailRow(
+              icon: Icons.directions_car_outlined,
+              label: 'Transport',
+              value: transport,
+            ),
+        ],
+      ),
     );
   }
 
@@ -1159,8 +1250,13 @@ class _VendorPageState extends State<VendorPage> {
       children: [
         Row(
           children: [
-            const Expanded(
-              child: SectionHeader(title: 'Ulasan Pelanggan'),
+            const IconBadge(icon: Icons.star_outline_rounded),
+            const SizedBox(width: Sp.md),
+            Expanded(
+              child: Text(
+                'Ulasan pelanggan',
+                style: text.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+              ),
             ),
             if (_completedBookingId != null) ...[
               const SizedBox(width: Sp.sm),
@@ -1361,7 +1457,8 @@ class _PackageCard extends StatelessWidget {
       if (package.personnelCount > 0) '${package.personnelCount} personel',
     ].join(' · ');
     final dp = minDpBp > 0 ? package.basePriceIdr * minDpBp ~/ 10000 : 0;
-    final hasPhoto = package.photoUrl != null && package.photoUrl!.trim().isNotEmpty;
+    final hasPhoto =
+        package.photoUrl != null && package.photoUrl!.trim().isNotEmpty;
 
     return Semantics(
       button: true,
@@ -1392,14 +1489,20 @@ class _PackageCard extends StatelessWidget {
                         fit: BoxFit.cover,
                         errorBuilder: (_, __, ___) => const ColoredBox(
                           color: AppColors.surfaceSoft,
-                          child: Icon(Icons.music_note, color: AppColors.inkMuted),
+                          child: Icon(
+                            Icons.music_note,
+                            color: AppColors.inkMuted,
+                          ),
                         ),
                       ),
                       Positioned(
                         top: Sp.sm,
                         right: Sp.sm,
                         child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
                           decoration: BoxDecoration(
                             color: Colors.black.withValues(alpha: 0.6),
                             borderRadius: BorderRadius.circular(Radii.pill),
@@ -1445,278 +1548,107 @@ class _PackageCard extends StatelessWidget {
                               fontFeatures: _tabularFigures,
                             ),
                           ),
-                      if (dp > 0) ...[
-                        const SizedBox(height: 2),
-                        Text(
-                          'DP ${_rp(dp)} · ${_percent(minDpBp)}%',
-                          style: text.bodySmall,
-                        ),
-                      ],
-                      if (package.inclusions.isNotEmpty) ...[
-                        const SizedBox(height: Sp.md),
-                        Text(
-                          'Fasilitas',
-                          style: text.labelSmall?.copyWith(
-                            color: AppColors.inkMuted,
-                          ),
-                        ),
-                        const SizedBox(height: Sp.xs),
-                        for (final item in package.inclusions)
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 2),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Padding(
-                                  padding: EdgeInsets.only(top: 2),
-                                  child: Icon(
-                                    Icons.check,
-                                    size: 13,
-                                    color: AppColors.accent,
-                                  ),
-                                ),
-                                const SizedBox(width: 6),
-                                Expanded(
-                                  child: Text(
-                                    item,
-                                    style: text.bodySmall?.copyWith(
-                                      color: AppColors.ink,
-                                    ),
-                                  ),
-                                ),
-                              ],
+                          if (dp > 0) ...[
+                            const SizedBox(height: 2),
+                            Text(
+                              'DP ${_rp(dp)} · ${_percent(minDpBp)}%',
+                              style: text.bodySmall,
                             ),
-                          ),
-                      ],
-                      if (package.addons.isNotEmpty) ...[
-                        const SizedBox(height: Sp.md),
-                        Text(
-                          'Add-on',
-                          style: text.labelSmall?.copyWith(
-                            color: AppColors.inkMuted,
-                          ),
-                        ),
-                        const SizedBox(height: Sp.xs),
-                        for (final addon in package.addons)
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 2),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    addon.name,
-                                    style: text.bodySmall?.copyWith(
-                                      color: AppColors.ink,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: Sp.sm),
-                                Text(_addonPrice(addon), style: text.bodySmall),
-                              ],
+                          ],
+                          if (package.inclusions.isNotEmpty) ...[
+                            const SizedBox(height: Sp.md),
+                            Text(
+                              'Fasilitas',
+                              style: text.labelSmall?.copyWith(
+                                color: AppColors.inkMuted,
+                              ),
                             ),
-                          ),
-                      ],
-                    ],
-                  ),
+                            const SizedBox(height: Sp.xs),
+                            for (final item in package.inclusions)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 2),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Padding(
+                                      padding: EdgeInsets.only(top: 2),
+                                      child: Icon(
+                                        Icons.check,
+                                        size: 13,
+                                        color: AppColors.accent,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Expanded(
+                                      child: Text(
+                                        item,
+                                        style: text.bodySmall?.copyWith(
+                                          color: AppColors.ink,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                          ],
+                          if (package.addons.isNotEmpty) ...[
+                            const SizedBox(height: Sp.md),
+                            Text(
+                              'Add-on',
+                              style: text.labelSmall?.copyWith(
+                                color: AppColors.inkMuted,
+                              ),
+                            ),
+                            const SizedBox(height: Sp.xs),
+                            for (final addon in package.addons)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 2),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        addon.name,
+                                        style: text.bodySmall?.copyWith(
+                                          color: AppColors.ink,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: Sp.sm),
+                                    Text(
+                                      _addonPrice(addon),
+                                      style: text.bodySmall,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: Sp.md),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Icon(
+                        selected
+                            ? Icons.check_circle_rounded
+                            : Icons.chevron_right,
+                        size: 22,
+                        color: selected
+                            ? AppColors.primary
+                            : AppColors.inkMuted,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: Sp.md),
-                Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Icon(
-                    selected ? Icons.check_circle_rounded : Icons.chevron_right,
-                    size: 22,
-                    color: selected ? AppColors.primary : AppColors.inkMuted,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    ),
-  ),
-);
-  }
-}
-
-class _DayCell extends StatelessWidget {
-  const _DayCell({
-    required this.date,
-    required this.state,
-    required this.selected,
-    required this.width,
-    required this.onTap,
-  });
-
-  final DateTime date;
-  final String state;
-  final bool selected;
-  final double width;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    final disabled = onTap == null;
-    final waiting = state == 'waiting';
-    final background = selected
-        ? AppColors.primary
-        : disabled
-        ? AppColors.neutralSoft
-        : waiting
-        ? AppColors.warningSoft
-        : AppColors.accentSoft;
-    final border = selected
-        ? AppColors.primary
-        : disabled
-        ? Colors.transparent
-        : waiting
-        ? AppColors.warning.withValues(alpha: 0.35)
-        : AppColors.accent.withValues(alpha: 0.35);
-    final dayColor = selected
-        ? AppColors.onPrimary
-        : disabled
-        ? AppColors.inkMuted
-        : waiting
-        ? AppColors.warning
-        : AppColors.accent;
-    final weekdayColor = selected
-        ? AppColors.onPrimary.withValues(alpha: 0.85)
-        : AppColors.inkMuted;
-
-    return Semantics(
-      button: !disabled,
-      enabled: !disabled,
-      selected: selected,
-      label: '${formatDate(date)}, ${_stateLabel(state)}',
-      excludeSemantics: true,
-      child: SizedBox(
-        width: width,
-        height: 56,
-        child: Material(
-          color: background,
-          clipBehavior: Clip.antiAlias,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(Radii.sm),
-            side: BorderSide(color: border, width: selected ? 1.5 : 1),
-          ),
-          child: InkWell(
-            onTap: onTap,
-            child: Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    _weekdays[date.weekday - 1],
-                    maxLines: 1,
-                    style: text.labelSmall?.copyWith(
-                      fontSize: 10,
-                      height: 1.2,
-                      fontWeight: FontWeight.w600,
-                      color: weekdayColor,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    '${date.day}',
-                    maxLines: 1,
-                    style: text.titleMedium?.copyWith(
-                      fontSize: 15,
-                      height: 1.2,
-                      fontWeight: FontWeight.w700,
-                      color: dayColor,
-                      fontFeatures: _tabularFigures,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Container(
-                    width: 4,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: waiting
-                          ? (selected ? AppColors.onPrimary : AppColors.warning)
-                          : Colors.transparent,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                ],
               ),
-            ),
+            ],
           ),
         ),
       ),
     );
   }
 }
-
-class _ScheduleLegend extends StatelessWidget {
-  const _ScheduleLegend();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Wrap(
-      spacing: Sp.md,
-      runSpacing: Sp.xs,
-      children: [
-        _LegendItem(
-          label: 'Tersedia',
-          background: AppColors.card,
-          border: AppColors.line,
-        ),
-        _LegendItem(
-          label: 'Menunggu konfirmasi',
-          background: AppColors.warningSoft,
-          border: AppColors.warning,
-        ),
-        _LegendItem(
-          label: 'Terisi',
-          background: AppColors.neutralSoft,
-          border: AppColors.neutralSoft,
-        ),
-      ],
-    );
-  }
-}
-
-class _LegendItem extends StatelessWidget {
-  const _LegendItem({
-    required this.label,
-    required this.background,
-    required this.border,
-  });
-
-  final String label;
-  final Color background;
-  final Color border;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 9,
-          height: 9,
-          decoration: BoxDecoration(
-            color: background,
-            borderRadius: BorderRadius.circular(3),
-            border: Border.all(color: border),
-          ),
-        ),
-        const SizedBox(width: Sp.xs + 2),
-        Text(label, style: Theme.of(context).textTheme.bodySmall),
-      ],
-    );
-  }
-}
-
-String _stateLabel(String state) => switch (state) {
-  'available' => 'Tersedia',
-  'waiting' => 'Menunggu konfirmasi',
-  'blocked' => 'Terisi atau tutup',
-  _ => 'Belum jelas',
-};
 
 String _duration(int minutes) {
   if (minutes <= 0) return 'Durasi belum diisi';
@@ -1830,10 +1762,7 @@ class _ReviewCard extends StatelessWidget {
 }
 
 class _ReviewSheet extends StatefulWidget {
-  const _ReviewSheet({
-    required this.vendor,
-    required this.bookingId,
-  });
+  const _ReviewSheet({required this.vendor, required this.bookingId});
 
   final VendorDetail vendor;
   final String bookingId;
@@ -1872,10 +1801,7 @@ class _ReviewSheetState extends State<_ReviewSheet> {
       final comment = _commentController.text.trim();
       await AppScope.of(context).api.post(
         '/bookings/${widget.bookingId}/review',
-        body: {
-          'rating': _rating,
-          if (comment.isNotEmpty) 'comment': comment,
-        },
+        body: {'rating': _rating, if (comment.isNotEmpty) 'comment': comment},
       );
       if (!mounted) return;
       Navigator.pop(context, true);

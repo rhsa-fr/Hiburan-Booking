@@ -708,3 +708,55 @@ class Policy {
   final String effectiveFrom;
   final dynamic body;
 }
+
+/// FR-124: one takedown that belongs to the signed-in user, with appeal state.
+class OwnedTakedown {
+  const OwnedTakedown({
+    required this.reportId,
+    required this.targetType,
+    required this.reason,
+    required this.resolvedAt,
+    required this.appealDeadlineAt,
+    this.appealId,
+    this.appealStatus,
+    this.appealCreatedAt,
+    this.appealDecidedAt,
+    this.appealDecisionNote,
+    this.hasEvidenceFile = false,
+  });
+
+  factory OwnedTakedown.fromJson(Map<String, dynamic> json) => OwnedTakedown(
+    reportId: _string(json['report_id']),
+    targetType: _string(json['target_type']),
+    reason: _string(json['reason']),
+    resolvedAt: _string(json['resolved_at']),
+    appealDeadlineAt: _string(json['appeal_deadline_at']),
+    appealId: _stringOrNull(json['appeal_id']),
+    appealStatus: _stringOrNull(json['appeal_status']),
+    appealCreatedAt: _stringOrNull(json['appeal_created_at']),
+    appealDecidedAt: _stringOrNull(json['appeal_decided_at']),
+    appealDecisionNote: _stringOrNull(json['appeal_decision_note']),
+    hasEvidenceFile: json['appeal_has_evidence_file'] == true,
+  );
+
+  final String reportId;
+  final String targetType;
+  final String reason;
+  final String resolvedAt;
+  final String appealDeadlineAt;
+  final String? appealId;
+  final String? appealStatus;
+  final String? appealCreatedAt;
+  final String? appealDecidedAt;
+  final String? appealDecisionNote;
+  /// Bukti berkas privat sudah dilampirkan (FR-124).
+  final bool hasEvidenceFile;
+
+  bool get hasAppeal => appealId != null;
+
+  bool get canAppeal {
+    if (hasAppeal) return false;
+    final deadline = DateTime.tryParse(appealDeadlineAt);
+    return deadline != null && deadline.isAfter(DateTime.now());
+  }
+}

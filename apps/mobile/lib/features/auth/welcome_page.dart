@@ -92,7 +92,7 @@ class WelcomePage extends StatelessWidget {
                               'Hiburan panggung\nuntuk acaramu.',
                               style: TextStyle(
                                 color: Colors.white,
-                                fontSize: 28,
+                                fontSize: 24,
                                 height: 1.08,
                                 fontWeight: FontWeight.w800,
                                 letterSpacing: -1.2,
@@ -231,9 +231,7 @@ class _WelcomeFeature extends StatelessWidget {
             decoration: BoxDecoration(
               color: AppColors.lime.withValues(alpha: 0.13),
               borderRadius: BorderRadius.circular(9),
-              border: Border.all(
-                color: AppColors.lime.withValues(alpha: 0.18),
-              ),
+              border: Border.all(color: AppColors.lime.withValues(alpha: 0.18)),
             ),
             child: Icon(icon, size: 16, color: AppColors.lime),
           ),
