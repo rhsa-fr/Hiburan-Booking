@@ -79,7 +79,13 @@ async function main(): Promise<void> {
   const finance = { authorization: `Bearer ${financeToken}` };
 
   // Tanpa token harus 401 di semua endpoint admin.
-  for (const path of ['/admin/dashboard', '/admin/bookings', '/admin/release/queue']) {
+  for (const path of [
+    '/admin/dashboard',
+    '/admin/bookings',
+    '/admin/release/queue',
+    '/admin/ops/alerts',
+    '/admin/report-appeals'
+  ]) {
     const { status } = await call(path);
     record(`401 tanpa token ${path}`, status === 401, `status=${status}`);
   }
@@ -96,7 +102,9 @@ async function main(): Promise<void> {
     // bentuknya objek, bukan memaksa nama key internal.
     { path: '/admin/payments', keys: [] },
     { path: '/admin/settings', keys: [] },
-    { path: '/admin/operators', keys: [] }
+    { path: '/admin/operators', keys: [] },
+    { path: '/admin/ops/alerts', keys: ['status', 'alerts', 'metrics'] },
+    { path: '/admin/report-appeals', keys: ['items', 'total'] }
   ];
 
   for (const read of reads) {
@@ -147,6 +155,23 @@ async function main(): Promise<void> {
     SECRET,
     900
   );
+  // Ringkasan operasional agregat boleh dibaca semua peran admin.
+  const opsSupport = await call('/admin/ops/alerts', {
+    headers: { authorization: `Bearer ${supportToken}` }
+  });
+  record(
+    'admin_support boleh membaca ops alerts',
+    opsSupport.status === 200,
+    `status=${opsSupport.status}`
+  );
+  const opsBody = (opsSupport.body ?? {}) as Record<string, unknown>;
+  const opsStatus = typeof opsBody.status === 'string' ? opsBody.status : '';
+  record(
+    'GET /admin/ops/alerts status valid',
+    ['ok', 'attention', 'critical'].includes(opsStatus),
+    `status=${opsStatus || 'tidak ada'}`
+  );
+
   const forbidden = await call('/admin/release/preview', {
     method: 'POST',
     headers: { authorization: `Bearer ${supportToken}` },

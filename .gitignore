@@ -8,6 +8,7 @@ stitch_tarlink_live_entertainment_app/
 .env
 .env.*
 !.env.example
+!.env.*.example
 *.pem
 *.key
 

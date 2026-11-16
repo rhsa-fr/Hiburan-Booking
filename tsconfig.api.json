@@ -5,6 +5,11 @@
     "rootDir": ".",
     "types": ["node"]
   },
-  "include": ["apps/api/src/**/*.ts", "libs/**/*.ts"],
+  "include": [
+    "apps/api/src/**/*.ts",
+    "libs/**/*.ts",
+    "scripts/migrate.ts",
+    "scripts/migrate-cli.ts"
+  ],
   "exclude": ["node_modules", "dist", "**/*.test.ts"]
 }
