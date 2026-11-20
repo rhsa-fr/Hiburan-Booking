@@ -1,4 +1,4 @@
-
+﻿
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tarlink_customer/core/ui.dart';
@@ -50,11 +50,11 @@ void main() {
     // keluar bila ternyata bukan layar awal.
     await _waitForAny(tester, [
       find.text('Mulai cari hiburan'),
-      find.text('Vendor Siap Tanggap'),
+      find.text('Vendor di Pantura'),
       find.byType(Scaffold),
     ], label: 'shell aplikasi');
     if (find.text('Mulai cari hiburan').evaluate().isEmpty &&
-        find.text('Vendor Siap Tanggap').evaluate().isEmpty) {
+        find.text('Vendor di Pantura').evaluate().isEmpty) {
       return;
     }
     if (find.text('Mulai cari hiburan').evaluate().isNotEmpty) {
@@ -67,6 +67,8 @@ void main() {
     } else {
       await loginIfNeeded(tester);
     }
+    // Booking aktif datang setelah katalog; beri waktu satu tick jaringan.
+    await tester.pump(const Duration(seconds: 2));
     await shot(tester, 'ui-01-beranda');
 
     // Beranda -> detail vendor pertama.
@@ -99,7 +101,7 @@ void main() {
     }
     if (find.textContaining('paket').evaluate().isEmpty) {
       await shot(tester, 'ui-02-vendor-empty');
-      fail('Isi vendor tidak termuat — lihat ui-02-vendor-empty.png');
+      fail('Isi vendor tidak termuat â€” lihat ui-02-vendor-empty.png');
     }
     // Regresi yang pernah terjadi: bottom bar membesar sampai body 0 px.
     // `'Pilih jadwal'` tetap ketemu di bottom bar, jadi hanya ukuran yang
@@ -108,7 +110,7 @@ void main() {
     if (vendorBody.evaluate().isNotEmpty) {
       final height = tester.getSize(vendorBody.first).height;
       if (height <= 400) {
-        fail('Body detail vendor kolaps (${height.toStringAsFixed(1)} px) — lihat ui-02-vendor.png');
+        fail('Body detail vendor kolaps (${height.toStringAsFixed(1)} px) â€” lihat ui-02-vendor.png');
       }
     }
     await shot(tester, 'ui-02-vendor');
@@ -127,8 +129,8 @@ void main() {
     // chip kategori baru dirender setelah panel dibuka.
     await tester.tap(find.text('Jelajah'));
     await tester.pump(const Duration(milliseconds: 600));
-    await waitFor(tester, find.text('Filter & Urutan'), label: 'tombol filter');
-    await tester.tap(find.text('Filter & Urutan'));
+    await waitFor(tester, find.text('Filter & urutan'), label: 'tombol filter');
+    await tester.tap(find.text('Filter & urutan'));
     await tester.pump(const Duration(milliseconds: 300));
     await waitFor(tester, find.byType(SelectChip), label: 'chip kategori');
     await shot(tester, 'ui-03-jelajah');

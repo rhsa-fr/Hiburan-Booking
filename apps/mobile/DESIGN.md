@@ -146,7 +146,9 @@ Grid vertikal mengikuti kelipatan 4; hindari "kartu di dalam kartu".
 
 ## 5. Arsitektur informasi (4 tab)
 
-Bottom navigation **4 item**, semuanya punya fungsi nyata di backend. Tidak ada tab
+Bottom navigation **4 item**, semuanya punya fungsi nyata di backend. Bar mengambang
+(radius 18, margin 12, bayangan tipis) di atas kanvas, ikon aktif di dalam pil lime;
+bukan bar penuh selebar layar dengan garis atas. Tidak ada tab
 "Chat": percakapan dibuka dari detail booking (pelanggan) atau detail pesanan (vendor)
 lewat tombol "Chat dengan vendor" / "Chat pelanggan" — API dan WebSocket-nya sudah ada. Notifikasi in-app tidak punya tab;
 API `/v1/notifications` ditampilkan sebagai popup, bukan halaman.
@@ -172,27 +174,34 @@ dibuka kapan saja dari Status booking (pelanggan) dan Detail pesanan (vendor).
 ## 6. Komponen
 
 ### 6.1 Kartu vendor (dipakai di Beranda & Jelajah)
-- Radius 8, latar `card`, border 1 px `line`, bayangan tipis, padding 12.
-- Atas: `PosterTile` rasio 16:10. Bila API mengirim `avatar_url`/`banner_url`, foto itu
-  yang dipakai; bila kosong, gradien graphite/lime deterministik dari nama vendor plus
-  inisial. Badge kategori/wilayah.
-- Bawah: nama (Title M 18/700, 2 baris), `kategori · wilayah · N paket` (Body S,
-  `inkMuted`), baris "Mulai dari" + harga besar 24/700 `primary`, chip DP.
-- Seluruh kartu adalah target sentuh (InkWell); tidak ada tombol CTA terpisah di kartu.
+- Radius 16, latar `card`, **tanpa border**, bayangan lembut (`0x12 0B1220`, blur 18,
+  offset 6) supaya kartu terangkat dari kanvas tanpa garis kotak.
+- Atas: `PosterTile` tinggi 176 px, full-bleed sampai sudut kartu. Bila API mengirim
+  `avatar_url`/`banner_url`, foto itu yang dipakai; bila kosong, gradien graphite/lime
+  deterministik dari nama vendor plus inisial. Badge kategori + video.
+- Bawah: nama (17/800, 2 baris), `kategori · wilayah · N paket` (Body S `inkMuted`),
+  baris "Mulai dari" + harga 22/800 `ink`, chip DP, dan chevron tipis.
+- Seluruh kartu adalah target sentuh (InkWell); **tidak ada tombol CTA terpisah** di kartu.
 - Baris rating `★ 4.8 (12)` dan `Respons 92%` hanya muncul bila API mengirim
   `rating`/`response_rate_bp`; nilai null dihilangkan, bukan diisi `0`.
 - Jarak dan "terverifikasi" **tidak dirender** karena tidak ada di API halaman kartu.
 - Harga kosong → "Harga belum diisi", bukan `Rp0`.
+- Skeleton `VendorCardSkeleton` memakai tinggi poster yang sama agar tidak melompat.
 
 ### 6.2 Header layar (`StageHeader`)
 - Latar gradien `primaryDeep → primary` (graphite), judul putih, garis bawah lime 2 px.
+- **StageBeams** (`ui.dart`): tiga berkas lampu lime statis dari kanan atas + sumber
+  radial, digambar sekali. Dipakai di header Beranda (intensitas 0.85), seluruh
+  `StageHeader` (0.55), kartu identitas Profil (0.7), dan tiket booking aktif (0.55).
+  Tidak beranimasi, jadi tidak menambah biaya scroll.
 - Header selalu melebar penuh. Di dalam `Column`, set
   `crossAxisAlignment: CrossAxisAlignment.stretch`; tanpa itu header mengecil dan
   judulnya tampak di tengah (bug lama di layar Profil).
-- Beranda: brand lockup (emblem `assets/images/logo_mark.png`) + pencarian di bagian
-  bawah header.
+- Beranda memakai header khusus (bukan `StageHeader`): brand lockup + avatar, tanggal
+  kapital lime 9.5/800, sapaan 26/800, lokasi + pil jumlah grup, lalu pencarian 52 px
+  radius 12.
 - Layar detail: `StageHeader.back()` dengan tombol kembali kotak 38×38 berlatar putih
-  transparan, judul 20/600, aksi kanan opsional (mis. WhatsApp).
+  transparan, judul 20/800, aksi kanan opsional (mis. WhatsApp).
 - Status bar memakai ikon terang (`SystemUiOverlayStyle.light`) karena header gelap;
   layar tanpa header tetap memakai ikon gelap di atas kanvas terang.
 
@@ -252,29 +261,37 @@ Sisa yang harus dibayar Rp3.550.000    (Display / ink) ← satu-satunya angka be
 ## 7. Spesifikasi layar
 
 ### 7.1 Beranda
-1. Header gelap `StageHeader` dengan brand lockup (emblem + "Tarlink") dan field
-   pencarian 52 px di bagian bawah header.
-2. Booking aktif (kalau ada) tampil paling atas setelah header.
-3. "Kategori Panggung": 4 ubin (Tarling Dangdut, Organ Tunggal, Seni Tradisi,
-   Pendukung Acara). Satu ubin ditonjolkan (`ink` + ikon lime), sisanya `card` dengan
-   tint lembut. Ubin membuka Jelajah dengan filter kategori, bukan filter palsu.
-4. Seksi "Vendor Siap Tanggap" + tautan "Semua", lalu kartu vendor.
-5. Kartu jaminan PJP (`InfoStrip` bernada `primary`) di area daftar.
-6. Tanpa banner promo, tanpa carousel auto-play, tanpa pusat notifikasi in-app.
+1. Header panggung gelap dengan `StageBeams`, brand lockup + avatar, tanggal kapital
+   lime, sapaan 26/800, lokasi + pil jumlah grup, dan pencarian 52 px. Tidak ada
+   tombol Jelajah di header: tab sudah ada di bawah.
+2. **Booking aktif** (kalau ada) tampil sebagai **tiket gelap**: label kapital
+   "BOOKING AKTIF" lime, pil status putih transparan, nama vendor 20/800 putih,
+   kode + tanggal + chip H-N, nominal sisa 28/800 lime, panah di lingkaran lime,
+   progress pembayaran lime, dan satu baris "Sudah dibayar … dari …". Tidak ada
+   tombol "Lihat booking" terpisah — seluruh tiket bisa ditekan.
+3. "Kategori": rel 4 pintasan (Tarling & Dangdut, Organ Tunggal, Seni Tradisi,
+   Pendukung Acara) dengan cakram 54 px dan label 11/700, tanpa kotak pembungkus.
+   Setiap pintasan membuka Jelajah dengan filter kategori nyata.
+4. Judul seksi memakai **garis lime 3 px** + judul 18/800 (bukan ikon kotak).
+   Seksi "Vendor di Pantura" + tautan "Lihat semua", lalu kartu vendor.
+5. Bila `total > 4`, tampilkan "Menampilkan 4 dari N vendor" di bawah daftar.
+6. Panel jaminan PJP versi gelap (ikon lime, tiga pilar) sebagai penutup halaman.
+7. Tanpa banner promo, tanpa carousel auto-play, tanpa pusat notifikasi in-app.
 
 ### 7.2 Jelajah
-- Header gelap: emblem, "Jelajah Vendor", subjudul jumlah vendor, lalu field
-  pencarian 52 px. Favorit dikelola dari detail vendor dan Profil; header tanpa ikon
-  notifikasi (notifikasi tampil sebagai popup).
-- Kartu jaminan `InfoStrip` di atas filter: DP ditahan PJP sampai acara selesai.
-- Baris chip kategori dari `GET /categories` (chip pertama "Semua kategori").
-- Tombol outline pemilih tanggal acara; bila aktif menampilkan tanggal dan tombol
-  hapus. Tanggal mengirim query `date`.
-- Baris chip wilayah (dari `regionName` unik yang sudah dimuat, difilter di klien).
-- `SegmentBar` urutan: **Termurah** (`price_asc`) dan **Nama A-Z** (`name_asc`).
-- Daftar kartu vendor, jarak 8, padding bawah 96.
+- Header gelap dengan `StageBeams`, emblem, "Jelajah Vendor", subjudul dinamis
+  (kategori / wilayah / kata kunci, default "Temukan grup untuk acaramu"), lalu
+  pencarian 52 px. Favorit dikelola dari detail vendor dan Profil.
+- Baris **"Filter & urutan"** tanpa kartu pembungkus: ikon tune, jumlah filter aktif
+  dalam pil ink, panah buka/tutup, dan jumlah vendor di kanan (atau "Reset" bila ada
+  filter). Panel terbuka memakai latar `surfaceSoft` radius 12 berisi chip kategori,
+  pemilih tanggal, wilayah, dan `SegmentBar` Termurah / Nama A-Z.
+- Chip kategori dari `GET /categories` (chip pertama "Semua kategori").
+- Tanggal mengirim query `date`; wilayah difilter di klien dari hasil yang sudah dimuat.
+- Daftar kartu vendor memakai §6.1 (radius 16, bayangan lembut), jarak 12.
 - Halaman pertama 20 vendor. Selama `total > termuat`, tampilkan tombol outline
   `Muat vendor lainnya (+N)`; tidak ada spinner penuh layar.
+- Kosong: pesan spesifik per filter + satu aksi untuk melepas filter.
 
 ### 7.3 Detail vendor
 1. Header gelap `StageHeader.back()`: judul **"Detail Grup Hiburan"**, subjudul nama
@@ -325,13 +342,25 @@ menerima.
 ### 7.6 Booking saya
 - Segmen: Semua / Aktif (`unpaid`, `dp_paid`, `confirmed`) / Selesai (`completed`,
   `cancelled`, `expired`).
-- Kartu: kode + chip, nama vendor, tanggal acara, sisa tagihan (atau "Lunas").
-- Kosong (§6.7). Tarik-untuk-refresh.
+- Kartu berbentuk **tiket**: spine kiri 58 px berwarna `ink` berisi hari kapital lime,
+  tanggal 25/800 putih, bulan kapital putih 55%; garis perforasi putus-putus 1 px
+  memisahkan spine dari isi. Isi: kode + chip, nama vendor 17/800, sesi + tahun, lalu
+  footer `surfaceSoft` berisi "DP …"/"Dibayar …" di kiri dan "Sisa Rp…"/"Lunas" 15/800
+  di kanan + chevron. Tanggal kosong → spine "JADWAL — MENYUSUL".
+- Radius 16 + bayangan lembut, bukan border.
+- Kosong (§6.7) dengan aksi `Cari vendor` yang berpindah ke tab Jelajah.
+  Tarik-untuk-refresh.
 
 ### 7.7 Akun
-- Blok identitas: inisial 56, nama, nomor WA (`+62 812-…`).
-- Baris: `Kebijakan pembatalan`, `Kebijakan privasi`, `Bantuan via WhatsApp`,
-  `Keluar`.
+- Header "Profil" + subjudul "Akun dan pengaturan Tarlink", dengan `StageBeams`.
+- Blok identitas **gelap**: monogram 60 di cakram lime, nama 20/800 putih, nomor WA
+  dan email putih transparan, beam lime tipis di belakang.
+- Kartu **lime** "Buka jasa hiburanmu" (ikon storefront di cakram ink, panah) sebagai
+  pintu masuk formulir vendor — bukan baris kesembilan di daftar pengaturan.
+- Tiga kelompok dengan judul bergaris lime: **Aktivitas** (Vendor favorit, Banding
+  konten), **Bantuan & kebijakan** (pembatalan, privasi, WhatsApp), dan **Akun**
+  (Hapus akun, Keluar). Tiap kelompok satu kartu radius 16 + bayangan lembut; ikon
+  baris di kotak tint 32 px.
 - Kebijakan dibuka di sheet dengan teks dari `GET /policies/:code`; tanpa teks hukum
   palsu.
 - `Keluar` memakai konfirmasi sheet, bukan dialog sistem.

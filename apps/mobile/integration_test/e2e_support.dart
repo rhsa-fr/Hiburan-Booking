@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:tarlink_customer/core/ui.dart';
@@ -72,7 +72,7 @@ const e2ePassword = 'Tarlink#2026!';
 
 /// Beranda is already reachable (session restored by a second drive pass).
 Future<void> loginIfNeeded(WidgetTester tester) async {
-  if (find.text('Vendor Siap Tanggap').evaluate().isNotEmpty) return;
+  if (find.text('Vendor di Pantura').evaluate().isNotEmpty) return;
   await login(tester);
 }
 
@@ -85,11 +85,11 @@ Future<void> login(WidgetTester tester) async {
   // Stop early on a visible API error so the failure is capturable.
   final deadline = DateTime.now().add(const Duration(seconds: 40));
   while (DateTime.now().isBefore(deadline) &&
-      find.text('Vendor Siap Tanggap').evaluate().isEmpty &&
+      find.text('Vendor di Pantura').evaluate().isEmpty &&
       find.byType(AppError).evaluate().isEmpty) {
     await tester.pump(const Duration(milliseconds: 150));
   }
-  if (find.text('Vendor Siap Tanggap').evaluate().isEmpty) {
+  if (find.text('Vendor di Pantura').evaluate().isEmpty) {
     await shot(tester, 'e2e-login-failed');
     fail('Login tidak sampai ke Beranda (lihat e2e-login-failed.png)');
   }

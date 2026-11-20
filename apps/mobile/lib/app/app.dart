@@ -184,26 +184,36 @@ class _CustomerTabBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        color: AppColors.card,
-        border: Border(top: BorderSide(color: AppColors.line)),
-      ),
-      child: SafeArea(
-        top: false,
-        child: SizedBox(
-          height: 58,
-          child: Row(
-            children: [
-              for (var i = 0; i < _items.length; i++)
-                Expanded(
-                  child: _CustomerTabItem(
-                    item: _items[i],
-                    selected: i == index,
-                    onTap: () => onSelected(i),
-                  ),
-                ),
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(Sp.md, 6, Sp.md, Sp.sm),
+        child: Container(
+          decoration: BoxDecoration(
+            color: AppColors.card,
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x140B1220),
+                blurRadius: 18,
+                offset: Offset(0, 6),
+              ),
             ],
+          ),
+          child: SizedBox(
+            height: 58,
+            child: Row(
+              children: [
+                for (var i = 0; i < _items.length; i++)
+                  Expanded(
+                    child: _CustomerTabItem(
+                      item: _items[i],
+                      selected: i == index,
+                      onTap: () => onSelected(i),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
       ),
@@ -231,19 +241,26 @@ class _CustomerTabItem extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           AnimatedContainer(
-            duration: const Duration(milliseconds: 160),
-            height: 2,
-            width: selected ? 22 : 0,
-            color: AppColors.limeDark,
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOut,
+            padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 5),
+            decoration: BoxDecoration(
+              color: selected ? AppColors.lime : Colors.transparent,
+              borderRadius: BorderRadius.circular(Radii.pill),
+            ),
+            child: Icon(
+              selected ? item.active : item.icon,
+              size: 19,
+              color: color,
+            ),
           ),
-          const SizedBox(height: 6),
-          Icon(selected ? item.active : item.icon, size: 20, color: color),
           const SizedBox(height: 2),
           Text(
             item.label,
             style: TextStyle(
-              fontSize: 11,
+              fontSize: 10.5,
               height: 1.2,
+              letterSpacing: 0.1,
               fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
               color: color,
             ),
@@ -313,15 +330,15 @@ class StageSearchField extends StatelessWidget {
                     ),
               contentPadding: const EdgeInsets.symmetric(vertical: Sp.md),
               border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(Radii.sm),
+                borderRadius: BorderRadius.circular(Radii.xl),
                 borderSide: const BorderSide(color: AppColors.line),
               ),
               enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(Radii.sm),
+                borderRadius: BorderRadius.circular(Radii.xl),
                 borderSide: const BorderSide(color: AppColors.line),
               ),
               focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(Radii.sm),
+                borderRadius: BorderRadius.circular(Radii.xl),
                 borderSide: const BorderSide(
                   color: AppColors.primary,
                   width: 2,

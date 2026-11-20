@@ -32,7 +32,10 @@ const _closedLifecycles = {
 /// The status segmented control filters the pages already loaded, because the
 /// list endpoint only understands one lifecycle value at a time.
 class BookingListPage extends StatefulWidget {
-  const BookingListPage({super.key});
+  const BookingListPage({super.key, this.onBrowse});
+
+  /// Optional way out of an empty list: the shell passes its Jelajah tab.
+  final VoidCallback? onBrowse;
 
   @override
   State<BookingListPage> createState() => _BookingListPageState();
@@ -141,7 +144,7 @@ class _BookingListPageState extends State<BookingListPage> {
       children: [
         const StageHeader(
           title: 'Booking Saya',
-          subtitle: 'Daftar transaksi dan jadwal acara',
+          subtitle: 'Transaksi, jadwal, dan pembayaran',
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.lg, Sp.lg, Sp.md),
@@ -205,6 +208,18 @@ class _BookingListPageState extends State<BookingListPage> {
                             : () => _load(reset: false),
                         child: Text(
                           _loadingMore ? 'Memuat…' : 'Muat lebih banyak',
+                        ),
+                      )
+                    : widget.onBrowse != null
+                    ? FilledButton.icon(
+                        onPressed: widget.onBrowse,
+                        icon: const Icon(Icons.search, size: 18),
+                        label: const Text('Cari vendor'),
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(0, 46),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: Sp.xl,
+                          ),
                         ),
                       )
                     : TextButton(
@@ -294,6 +309,7 @@ class _BookingCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     final slot = booking.firstSlot;
+    final eventDate = slot == null ? null : DateTime.tryParse(slot.date);
     final lifecycle = booking.lifecycleStatus.toLowerCase();
     final fullyPaid = isFullySettled(booking.paymentStatus);
     final refunded = booking.paymentStatus.toLowerCase() == 'refunded';
@@ -314,96 +330,241 @@ class _BookingCard extends StatelessWidget {
     final detail = fullyPaid
         ? 'Dibayar ${rupiah(booking.totalCustomerIdr)} · '
               'Sisa ${rupiah(booking.outstandingIdr)}'
+        : refunded
+        ? 'Dana sudah dikembalikan'
+        : closed
+        ? 'Tidak ada tagihan'
         : isDpSettled(booking.paymentStatus)
-        ? 'Dibayar ${rupiah(booking.dpAmountIdr)} (DP)'
+        ? 'DP ${rupiah(booking.dpAmountIdr)}'
         : 'Belum ada pembayaran';
 
-    return Material(
-      color: AppColors.card,
-      clipBehavior: Clip.antiAlias,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(Radii.lg),
-        side: const BorderSide(color: AppColors.line),
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x120B1220),
+            blurRadius: 18,
+            offset: Offset(0, 6),
+          ),
+        ],
       ),
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(Sp.lg),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      booking.code,
-                      style: text.labelMedium?.copyWith(
-                        color: AppColors.inkMuted,
-                        letterSpacing: 0.4,
+      clipBehavior: Clip.antiAlias,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          child: IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _DateSpine(date: eventDate),
+                SizedBox(
+                  width: 1,
+                  child: CustomPaint(painter: _TicketSeamPainter()),
+                ),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(
+                          Sp.md,
+                          Sp.md,
+                          Sp.md,
+                          11,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    booking.code,
+                                    style: text.labelMedium?.copyWith(
+                                      fontSize: 10.5,
+                                      color: AppColors.inkMuted,
+                                      letterSpacing: 0.5,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: Sp.sm),
+                                StatusPill(
+                                  label: lifecycleText(booking.lifecycleStatus),
+                                  tone: bookingPillTone(
+                                    booking.lifecycleStatus,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 7),
+                            Text(
+                              booking.vendor.displayName,
+                              style: text.titleLarge?.copyWith(
+                                fontSize: 17,
+                                fontWeight: FontWeight.w800,
+                                height: 1.2,
+                                letterSpacing: -0.35,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              slot == null
+                                  ? 'Jadwal menyusul'
+                                  : '${sessionText(slot.session)} · '
+                                        '${eventDate?.year ?? ''}',
+                              style: text.bodySmall,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
+                      Container(
+                        padding: const EdgeInsets.fromLTRB(
+                          Sp.md,
+                          10,
+                          Sp.sm,
+                          10,
+                        ),
+                        decoration: const BoxDecoration(
+                          color: AppColors.surfaceSoft,
+                          border: Border(
+                            top: BorderSide(color: AppColors.line),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                detail,
+                                style: text.bodySmall,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(width: Sp.sm),
+                            Text(
+                              money.label,
+                              style: text.titleMedium?.copyWith(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w800,
+                                color: money.color,
+                                fontFeatures: const [
+                                  FontFeature.tabularFigures(),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 2),
+                            const Icon(
+                              Icons.chevron_right,
+                              size: 18,
+                              color: AppColors.inkMuted,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: Sp.sm),
-                  StatusPill(
-                    label: lifecycleText(booking.lifecycleStatus),
-                    tone: bookingPillTone(booking.lifecycleStatus),
-                  ),
-                ],
-              ),
-              const SizedBox(height: Sp.sm),
-              Text(
-                booking.vendor.displayName,
-                style: text.titleLarge,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-              const SizedBox(height: 2),
-              Row(
-                children: [
-                  const Icon(
-                    Icons.event_outlined,
-                    size: 15,
-                    color: AppColors.inkMuted,
-                  ),
-                  const SizedBox(width: Sp.xs),
-                  Expanded(
-                    child: Text(
-                      slot == null
-                          ? 'Jadwal menyusul'
-                          : '${formatDateIso(slot.date)} · '
-                                '${sessionText(slot.session)}',
-                      style: text.bodySmall,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: Sp.md),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Expanded(child: Text(detail, style: text.bodySmall)),
-                  const SizedBox(width: Sp.sm),
-                  Text(
-                    money.label,
-                    style: text.titleMedium?.copyWith(
-                      color: money.color,
-                      fontFeatures: const [FontFeature.tabularFigures()],
-                    ),
-                  ),
-                  const SizedBox(width: Sp.xs),
-                  const Icon(
-                    Icons.chevron_right,
-                    size: 20,
-                    color: AppColors.inkMuted,
-                  ),
-                ],
-              ),
-            ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
+}
+
+/// Ticket stub: the date lives in a dark spine, so a list of bookings can be
+/// scanned by when they happen, not by their booking code.
+class _DateSpine extends StatelessWidget {
+  const _DateSpine({required this.date});
+
+  final DateTime? date;
+
+  static const _weekdays = ['SEN', 'SEL', 'RAB', 'KAM', 'JUM', 'SAB', 'MIN'];
+  static const _months = [
+    'JAN',
+    'FEB',
+    'MAR',
+    'APR',
+    'MEI',
+    'JUN',
+    'JUL',
+    'AGU',
+    'SEP',
+    'OKT',
+    'NOV',
+    'DES',
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final value = date;
+    return Container(
+      width: 58,
+      color: AppColors.ink,
+      padding: const EdgeInsets.symmetric(vertical: 13),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.start,
+        children: [
+          Text(
+            value == null ? 'JADWAL' : _weekdays[value.weekday - 1],
+            style: const TextStyle(
+              fontSize: 8.5,
+              height: 1.2,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 1,
+              color: AppColors.lime,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value == null ? '—' : '${value.day}',
+            style: const TextStyle(
+              fontSize: 25,
+              height: 1.05,
+              fontWeight: FontWeight.w800,
+              letterSpacing: -0.8,
+              color: Colors.white,
+            ),
+          ),
+          const SizedBox(height: 1),
+          Text(
+            value == null ? 'MENYUSUL' : _months[value.month - 1],
+            style: TextStyle(
+              fontSize: 8.5,
+              height: 1.2,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.9,
+              color: Colors.white.withValues(alpha: 0.55),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One-pixel perforation between the stub and the body.
+class _TicketSeamPainter extends CustomPainter {
+  const _TicketSeamPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = AppColors.lineStrong
+      ..strokeWidth = 1;
+    for (var y = 0.0; y < size.height; y += 7) {
+      canvas.drawLine(Offset(0.5, y), Offset(0.5, y + 4), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_TicketSeamPainter oldDelegate) => false;
 }

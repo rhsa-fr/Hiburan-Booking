@@ -77,6 +77,71 @@ String _monogram(String name) {
       .toUpperCase();
 }
 
+/// Printed stage-light wash: lime beams from the top-right plus a soft source.
+/// Static paint, so it costs nothing to scroll and never distracts from copy.
+class StageBeams extends StatelessWidget {
+  const StageBeams({super.key, this.intensity = 1});
+
+  final double intensity;
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: CustomPaint(painter: _StageBeamsPainter(intensity: intensity)),
+    );
+  }
+}
+
+class _StageBeamsPainter extends CustomPainter {
+  const _StageBeamsPainter({required this.intensity});
+
+  final double intensity;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final source = Offset(size.width * 0.92, -size.height * 0.42);
+    for (var i = 0; i < 3; i++) {
+      final t = i / 2;
+      final footX = size.width * (0.30 + 0.46 * t);
+      final path = Path()
+        ..moveTo(footX - 28, size.height)
+        ..lineTo(footX + 28, size.height)
+        ..lineTo(source.dx, source.dy)
+        ..close();
+      canvas.drawPath(
+        path,
+        Paint()
+          ..shader = LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              AppColors.lime.withValues(alpha: 0.10 * intensity),
+              AppColors.lime.withValues(alpha: 0),
+            ],
+          ).createShader(Rect.fromLTWH(0, 0, size.width, size.height)),
+      );
+    }
+    canvas.drawCircle(
+      source,
+      size.width * 0.72,
+      Paint()
+        ..shader =
+            RadialGradient(
+              colors: [
+                AppColors.lime.withValues(alpha: 0.14 * intensity),
+                AppColors.lime.withValues(alpha: 0),
+              ],
+            ).createShader(
+              Rect.fromCircle(center: source, radius: size.width * 0.72),
+            ),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _StageBeamsPainter oldDelegate) =>
+      oldDelegate.intensity != intensity;
+}
+
 /// Clean minimalist header with architectural 1px hairline border,
 /// high-contrast typography, and tactile button containers.
 class StageHeader extends StatelessWidget {
@@ -164,64 +229,77 @@ class StageHeader extends StatelessWidget {
                   )
                 : null,
           ),
-          child: Padding(
-            padding: EdgeInsets.fromLTRB(Sp.lg, topInset + Sp.sm, Sp.lg, Sp.md),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
+          child: Stack(
+            children: [
+              const Positioned.fill(child: StageBeams(intensity: 0.55)),
+              Padding(
+                padding: EdgeInsets.fromLTRB(
+                  Sp.lg,
+                  topInset + Sp.sm,
+                  Sp.lg,
+                  Sp.md,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    if (leading != null) ...[
-                      leading!,
-                      const SizedBox(width: Sp.md),
-                    ],
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            title,
-                            style:
-                                (leading != null
-                                        ? text.titleLarge
-                                        : text.headlineSmall)
-                                    ?.copyWith(
-                                      fontSize: leading != null ? 16 : 20,
-                                      fontWeight: FontWeight.w800,
-                                      letterSpacing: -0.4,
-                                      color: AppColors.onPrimary,
-                                    ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          if (subtitle != null) ...[
-                            const SizedBox(height: 2),
-                            Text(
-                              subtitle!,
-                              style: text.bodySmall?.copyWith(
-                                color: Colors.white.withValues(alpha: 0.62),
-                                fontSize: 12,
-                                fontWeight: FontWeight.w500,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ],
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        if (leading != null) ...[
+                          leading!,
+                          const SizedBox(width: Sp.md),
                         ],
-                      ),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                title,
+                                style:
+                                    (leading != null
+                                            ? text.titleLarge
+                                            : text.headlineSmall)
+                                        ?.copyWith(
+                                          fontSize: leading != null ? 16 : 20,
+                                          fontWeight: FontWeight.w800,
+                                          letterSpacing: -0.4,
+                                          color: AppColors.onPrimary,
+                                        ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              if (subtitle != null) ...[
+                                const SizedBox(height: 2),
+                                Text(
+                                  subtitle!,
+                                  style: text.bodySmall?.copyWith(
+                                    color: Colors.white.withValues(alpha: 0.62),
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                        if (trailing != null) ...[
+                          const SizedBox(width: Sp.sm),
+                          trailing!,
+                        ],
+                      ],
                     ),
-                    if (trailing != null) ...[
-                      const SizedBox(width: Sp.sm),
-                      trailing!,
+                    if (bottom != null) ...[
+                      const SizedBox(height: Sp.md),
+                      bottom!,
                     ],
                   ],
                 ),
-                if (bottom != null) ...[const SizedBox(height: Sp.md), bottom!],
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
@@ -856,55 +934,40 @@ class VendorCard extends StatelessWidget {
     final responseText = responseRate == null
         ? null
         : 'Respons ${(responseRate / 100).round()}%';
+    final dpPercent = vendor.minDpBp > 0
+        ? (vendor.minDpBp / 100).round()
+        : null;
 
-    final price = vendor.startingPriceIdr > 0
-        ? Text(
-            _rupiah(vendor.startingPriceIdr),
-            style: text.displaySmall?.copyWith(
-              fontSize: 21,
-              color: AppColors.primary,
-              fontWeight: FontWeight.w700,
-              fontFeatures: _tabularFigures,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          )
-        : Text(
-            'Harga belum diisi',
-            style: text.titleMedium?.copyWith(fontSize: 16),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          );
-
-    final details = Column(
+    final header = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
           vendor.displayName,
           style: text.titleMedium?.copyWith(
-            fontSize: 16,
-            fontWeight: FontWeight.w700,
-            height: 1.3,
+            fontSize: 17,
+            fontWeight: FontWeight.w800,
+            height: 1.25,
+            letterSpacing: -0.35,
           ),
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
         ),
-        const SizedBox(height: Sp.xs),
+        const SizedBox(height: 3),
         Text(
           meta,
-          style: text.bodySmall,
+          style: text.bodySmall?.copyWith(fontSize: 11.5),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
         if (ratingText != null || responseText != null) ...[
-          const SizedBox(height: Sp.xs),
+          const SizedBox(height: 5),
           Row(
             children: [
               if (ratingText != null) ...[
                 const Icon(
                   Icons.star_rounded,
-                  size: 16,
+                  size: 15,
                   color: AppColors.tertiary,
                 ),
                 const SizedBox(width: 2),
@@ -912,7 +975,7 @@ class VendorCard extends StatelessWidget {
                   ratingText,
                   style: text.bodySmall?.copyWith(
                     color: AppColors.ink,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
               ],
@@ -930,117 +993,220 @@ class VendorCard extends StatelessWidget {
             ],
           ),
         ],
-        const SizedBox(height: Sp.md),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    'Mulai dari',
-                    style: text.bodySmall?.copyWith(fontSize: 11),
-                  ),
-                  price,
-                ],
-              ),
-            ),
-            if (vendor.minDpBp > 0) ...[
-              const SizedBox(width: Sp.sm),
-              _DpPill(percent: (vendor.minDpBp / 100).round()),
-            ],
-          ],
-        ),
       ],
     );
 
-    final card = Semantics(
-      button: true,
-      child: Container(
-        decoration: BoxDecoration(
-          color: AppColors.card,
-          borderRadius: const BorderRadius.all(Radius.circular(Radii.lg)),
-          border: Border.all(color: AppColors.line),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x060F172A),
-              blurRadius: 8,
-              offset: Offset(0, 2),
+    final price = vendor.startingPriceIdr > 0
+        ? Text(
+            _rupiah(vendor.startingPriceIdr),
+            style: text.displaySmall?.copyWith(
+              fontSize: 22,
+              height: 1.14,
+              color: AppColors.ink,
+              fontWeight: FontWeight.w800,
+              letterSpacing: -0.7,
+              fontFeatures: _tabularFigures,
             ),
-          ],
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          )
+        : Text(
+            'Harga belum diisi',
+            style: text.titleMedium?.copyWith(fontSize: 15.5),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          );
+
+    final priceColumn = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          'Mulai dari',
+          style: text.labelSmall?.copyWith(
+            fontSize: 10,
+            letterSpacing: 0.4,
+            color: AppColors.inkMuted,
+          ),
         ),
-        clipBehavior: Clip.antiAlias,
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            onTap: onTap,
-            child: compact
-                ? Padding(
-                    padding: const EdgeInsets.all(Sp.md),
-                    child: Row(
-                      children: [
-                        PosterTile(
-                          name: vendor.displayName,
-                          imageUrl: vendor.avatarUrl ?? vendor.bannerUrl,
-                          compact: true,
-                          radius: Radii.sm,
-                          heroTag: 'vendor-poster-${vendor.id}',
-                        ),
-                        const SizedBox(width: Sp.md),
-                        Expanded(child: details),
-                      ],
+        const SizedBox(height: 1),
+        price,
+      ],
+    );
+
+    if (compact) {
+      return _PressScale(
+        child: Container(
+          decoration: BoxDecoration(
+            color: AppColors.card,
+            borderRadius: BorderRadius.circular(Radii.xl),
+            border: Border.all(color: AppColors.line),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: onTap,
+              child: Padding(
+                padding: const EdgeInsets.all(Sp.md),
+                child: Row(
+                  children: [
+                    PosterTile(
+                      name: vendor.displayName,
+                      imageUrl: vendor.avatarUrl ?? vendor.bannerUrl,
+                      compact: true,
+                      radius: Radii.sm,
+                      heroTag: 'vendor-poster-${vendor.id}',
                     ),
-                  )
-                : Padding(
-                    padding: const EdgeInsets.all(Sp.md),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        PosterTile(
-                          name: vendor.displayName,
-                          imageUrl: vendor.bannerUrl ?? vendor.avatarUrl,
-                          heroTag: 'vendor-poster-${vendor.id}',
-                          badges: [
-                            if (vendor.categoryName?.trim().isNotEmpty ?? false)
-                              vendor.categoryName!.trim(),
-                            if (vendor.regionName.trim().isNotEmpty)
-                              vendor.regionName,
-                            if (vendor.videoUrl != null &&
-                                vendor.videoUrl!.trim().isNotEmpty)
-                              '▶ Video Pentas',
-                          ],
-                        ),
-                        const SizedBox(height: Sp.md),
-                        details,
-                        const SizedBox(height: Sp.md),
-                        FilledButton(
-                          onPressed: onTap,
-                          style: FilledButton.styleFrom(
-                            minimumSize: const Size.fromHeight(46),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: Sp.md,
-                            ),
-                            textStyle: text.labelLarge?.copyWith(fontSize: 13),
-                          ),
-                          child: const Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
+                    const SizedBox(width: Sp.md),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          header,
+                          const SizedBox(height: Sp.sm),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
-                              Text('Lihat Jadwal & Paket'),
-                              SizedBox(width: Sp.xs),
-                              Icon(Icons.arrow_forward, size: 18),
+                              Expanded(child: priceColumn),
+                              if (dpPercent != null) ...[
+                                const SizedBox(width: Sp.sm),
+                                _DpPill(percent: dpPercent),
+                              ],
                             ],
                           ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return _PressScale(
+      child: Semantics(
+        button: true,
+        child: Container(
+          decoration: BoxDecoration(
+            color: AppColors.card,
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x120B1220),
+                blurRadius: 18,
+                offset: Offset(0, 6),
+              ),
+            ],
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: onTap,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  PosterTile(
+                    name: vendor.displayName,
+                    imageUrl: vendor.bannerUrl ?? vendor.avatarUrl,
+                    height: 176,
+                    radius: 0,
+                    heroTag: 'vendor-poster-${vendor.id}',
+                    badges: [
+                      if (vendor.categoryName?.trim().isNotEmpty ?? false)
+                        vendor.categoryName!.trim(),
+                      if (vendor.videoUrl != null &&
+                          vendor.videoUrl!.trim().isNotEmpty)
+                        '▶ Video Pentas',
+                    ],
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 13, 12, 14),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        header,
+                        const SizedBox(height: 13),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Expanded(child: priceColumn),
+                            if (dpPercent != null) ...[
+                              const SizedBox(width: Sp.sm),
+                              _DpPill(percent: dpPercent),
+                            ],
+                            const SizedBox(width: 6),
+                            const Icon(
+                              Icons.chevron_right,
+                              size: 20,
+                              color: AppColors.inkMuted,
+                            ),
+                          ],
                         ),
                       ],
                     ),
                   ),
+                ],
+              ),
+            ),
           ),
         ),
       ),
     );
-    return _PressScale(child: card);
+  }
+}
+
+/// Skeleton for a vendor feed: the poster keeps its height so the real card
+/// lands without a layout jump.
+class VendorCardSkeleton extends StatelessWidget {
+  const VendorCardSkeleton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    Widget bar(double widthFactor, double height) => FractionallySizedBox(
+      widthFactor: widthFactor,
+      alignment: Alignment.centerLeft,
+      child: Container(
+        height: height,
+        decoration: BoxDecoration(
+          color: AppColors.skeleton,
+          borderRadius: BorderRadius.circular(4),
+        ),
+      ),
+    );
+
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(Radii.xl),
+        border: Border.all(color: AppColors.line),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(height: 168, color: AppColors.skeleton),
+          Padding(
+            padding: const EdgeInsets.all(Sp.md),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                bar(0.62, 15),
+                const SizedBox(height: Sp.sm),
+                bar(0.86, 11),
+                const SizedBox(height: Sp.lg),
+                bar(0.38, 19),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

@@ -271,8 +271,16 @@ class _BrowsePageState extends State<BrowsePage> {
 
   String get _subtitle {
     if (_loading && _vendors.isEmpty) return 'Memuat vendor';
-    if (_region != null) return '${_visible.length} dari $_total vendor';
-    return '$_total vendor';
+    final category = _category;
+    if (category != null) {
+      for (final item in _categories) {
+        if (item.slug == category) return item.name;
+      }
+    }
+    final region = _region;
+    if (region != null) return 'Vendor di $region';
+    if (_query.isNotEmpty) return "Hasil untuk '$_query'";
+    return 'Temukan grup untuk acaramu';
   }
 
   @override
@@ -312,10 +320,16 @@ class _BrowsePageState extends State<BrowsePage> {
         slivers: [
           if (showFilters) SliverToBoxAdapter(child: _filters()),
           if (_loading && _vendors.isEmpty)
-            const SliverPadding(
-              padding: EdgeInsets.fromLTRB(Sp.lg, Sp.lg, Sp.lg, Sp.xl),
-              sliver: SliverToBoxAdapter(
-                child: AppLoading(rows: 4, label: 'Memuat vendor'),
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.md, Sp.lg, Sp.xl),
+              sliver: SliverList(
+                delegate: SliverChildListDelegate(const [
+                  VendorCardSkeleton(),
+                  SizedBox(height: Sp.md),
+                  VendorCardSkeleton(),
+                  SizedBox(height: Sp.md),
+                  VendorCardSkeleton(),
+                ]),
               ),
             )
           else if (_error != null && _vendors.isEmpty)
@@ -335,23 +349,11 @@ class _BrowsePageState extends State<BrowsePage> {
                 itemCount: visible.length,
                 itemBuilder: (context, index) => Padding(
                   padding: EdgeInsets.only(
-                    bottom: index == visible.length - 1 ? 0 : Sp.sm,
+                    bottom: index == visible.length - 1 ? 0 : Sp.md,
                   ),
-                  child: TweenAnimationBuilder<double>(
-                    key: ValueKey('vendor-${visible[index].id}'),
-                    duration: const Duration(milliseconds: 220),
-                    tween: Tween(begin: 0.0, end: 1.0),
-                    builder: (context, value, child) => Opacity(
-                      opacity: value,
-                      child: Transform.translate(
-                        offset: Offset(0, (1 - value) * 10),
-                        child: child,
-                      ),
-                    ),
-                    child: VendorCard(
-                      vendor: visible[index],
-                      onTap: () => _openVendor(visible[index]),
-                    ),
+                  child: VendorCard(
+                    vendor: visible[index],
+                    onTap: () => _openVendor(visible[index]),
                   ),
                 ),
               ),
@@ -374,187 +376,154 @@ class _BrowsePageState extends State<BrowsePage> {
         (_sort != 0 ? 1 : 0);
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.sm, Sp.lg, 0),
-      child: Container(
-        decoration: BoxDecoration(
-          color: AppColors.card,
-          borderRadius: BorderRadius.circular(Radii.lg),
-          border: Border.all(color: AppColors.line),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x060B1220),
-              blurRadius: 8,
-              offset: Offset(0, 2),
-            ),
-          ],
-        ),
-        padding: const EdgeInsets.all(Sp.md),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            InkWell(
-              onTap: () => setState(() => _showFilterPanel = !_showFilterPanel),
-              borderRadius: BorderRadius.circular(Radii.sm),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 2),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.tune_rounded,
-                            size: 16,
-                            color: (hasActiveFilters || _showFilterPanel)
-                                ? AppColors.primary
+      padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.xs, Sp.lg, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: InkWell(
+                  onTap: () =>
+                      setState(() => _showFilterPanel = !_showFilterPanel),
+                  borderRadius: BorderRadius.circular(Radii.sm),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.tune_rounded,
+                          size: 17,
+                          color: hasActiveFilters || _showFilterPanel
+                              ? AppColors.ink
+                              : AppColors.inkMuted,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Filter & urutan',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: hasActiveFilters || _showFilterPanel
+                                ? AppColors.ink
                                 : AppColors.inkMuted,
                           ),
-                          const SizedBox(width: Sp.xs + 2),
-                          Flexible(
+                        ),
+                        if (activeCount > 0) ...[
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 1,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppColors.ink,
+                              borderRadius: BorderRadius.circular(Radii.pill),
+                            ),
                             child: Text(
-                              'Filter & Urutan',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 13,
+                              '$activeCount',
+                              style: const TextStyle(
+                                fontSize: 10,
+                                height: 1.3,
                                 fontWeight: FontWeight.w700,
-                                color: (hasActiveFilters || _showFilterPanel)
-                                    ? AppColors.primary
-                                    : AppColors.ink,
+                                color: AppColors.lime,
                               ),
                             ),
-                          ),
-                          if (activeCount > 0) ...[
-                            const SizedBox(width: Sp.xs + 2),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: AppColors.primary,
-                                borderRadius: BorderRadius.circular(Radii.pill),
-                              ),
-                              child: Text(
-                                '$activeCount',
-                                style: const TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w700,
-                                  color: AppColors.onPrimary,
-                                ),
-                              ),
-                            ),
-                          ],
-                          const SizedBox(width: Sp.xs),
-                          Icon(
-                            _showFilterPanel
-                                ? Icons.keyboard_arrow_up
-                                : Icons.keyboard_arrow_down,
-                            size: 18,
-                            color: AppColors.inkMuted,
                           ),
                         ],
-                      ),
-                    ),
-                    const SizedBox(width: Sp.sm),
-                    if (hasActiveFilters)
-                      InkWell(
-                        onTap: _resetFilters,
-                        borderRadius: BorderRadius.circular(Radii.sm),
-                        child: const Padding(
-                          padding: EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.refresh_rounded,
-                                size: 13,
-                                color: AppColors.tertiary,
-                              ),
-                              SizedBox(width: 3),
-                              Text(
-                                'Reset',
-                                style: TextStyle(
-                                  fontSize: 11.5,
-                                  fontWeight: FontWeight.w700,
-                                  color: AppColors.tertiary,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      )
-                    else
-                      Text(
-                        '$_total vendor',
-                        style: const TextStyle(
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w500,
+                        const SizedBox(width: 2),
+                        Icon(
+                          _showFilterPanel
+                              ? Icons.keyboard_arrow_up
+                              : Icons.keyboard_arrow_down,
+                          size: 18,
                           color: AppColors.inkMuted,
                         ),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-            if (_showFilterPanel) ...[
-              const SizedBox(height: Sp.sm),
-              if (_categories.isNotEmpty) ...[
-                SizedBox(
-                  height: 36,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: _categories.length + 1,
-                    separatorBuilder: (_, _) => const SizedBox(width: Sp.sm),
-                    itemBuilder: (context, index) {
-                      if (index == 0) {
-                        return SelectChip(
-                          label: 'Semua kategori',
-                          selected: _category == null,
-                          onTap: () => _setCategory(null),
-                          compact: true,
-                        );
-                      }
-                      final category = _categories[index - 1];
-                      return SelectChip(
-                        label: category.name,
-                        selected: _category == category.slug,
-                        onTap: () => _setCategory(category.slug),
-                        compact: true,
-                      );
-                    },
+                      ],
+                    ),
                   ),
                 ),
-                const SizedBox(height: Sp.sm),
-              ],
-              Row(
+              ),
+              if (hasActiveFilters)
+                TextButton(
+                  onPressed: _resetFilters,
+                  style: TextButton.styleFrom(
+                    minimumSize: const Size(0, 44),
+                    padding: const EdgeInsets.symmetric(horizontal: Sp.sm),
+                    foregroundColor: AppColors.tertiary,
+                    textStyle: Theme.of(context).textTheme.labelMedium
+                        ?.copyWith(fontWeight: FontWeight.w700),
+                  ),
+                  child: const Text('Reset'),
+                )
+              else
+                Text(
+                  '$_total vendor',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(color: AppColors.inkMuted),
+                ),
+            ],
+          ),
+          if (_showFilterPanel) ...[
+            const SizedBox(height: Sp.xs),
+            Container(
+              padding: const EdgeInsets.all(Sp.md),
+              decoration: BoxDecoration(
+                color: AppColors.surfaceSoft,
+                borderRadius: BorderRadius.circular(Radii.xl),
+                border: Border.all(color: AppColors.line),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Expanded(child: _dateTile()),
-                  const SizedBox(width: Sp.sm),
-                  Expanded(child: _regionTile(regions)),
+                  if (_categories.isNotEmpty) ...[
+                    SizedBox(
+                      height: 36,
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: _categories.length + 1,
+                        separatorBuilder: (_, _) =>
+                            const SizedBox(width: Sp.sm),
+                        itemBuilder: (context, index) {
+                          if (index == 0) {
+                            return SelectChip(
+                              label: 'Semua kategori',
+                              selected: _category == null,
+                              onTap: () => _setCategory(null),
+                              compact: true,
+                            );
+                          }
+                          final category = _categories[index - 1];
+                          return SelectChip(
+                            label: category.name,
+                            selected: _category == category.slug,
+                            onTap: () => _setCategory(category.slug),
+                            compact: true,
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: Sp.md),
+                  ],
+                  Row(
+                    children: [
+                      Expanded(child: _dateTile()),
+                      const SizedBox(width: Sp.sm),
+                      Expanded(child: _regionTile(regions)),
+                    ],
+                  ),
+                  const SizedBox(height: Sp.md),
+                  SegmentBar(
+                    items: const ['Termurah', 'Nama A-Z'],
+                    index: _sort,
+                    onChanged: _setSort,
+                  ),
                 ],
               ),
-              const SizedBox(height: Sp.sm),
-              SegmentBar(
-                items: const ['Termurah', 'Nama A-Z'],
-                index: _sort,
-                onChanged: _setSort,
-              ),
-            ] else ...[
-              const Offstage(
-                offstage: true,
-                child: SizedBox(
-                  height: 0,
-                  child: SelectChip(label: '', selected: false),
-                ),
-              ),
-            ],
+            ),
           ],
-        ),
+        ],
       ),
     );
   }

@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/app.dart';
@@ -152,10 +152,7 @@ class _AccountPageState extends State<AccountPage> {
     final scope = AppScope.of(context);
     setState(() => _deletingAccount = true);
     try {
-      await scope.api.delete(
-        '/auth/me',
-        body: const {'confirm': 'HAPUS AKUN'},
-      );
+      await scope.api.delete('/auth/me', body: const {'confirm': 'HAPUS AKUN'});
       await scope.session.signOut();
       if (!mounted) return;
       Navigator.pushNamedAndRemoveUntil(context, Routes.login, (_) => false);
@@ -178,14 +175,14 @@ class _AccountPageState extends State<AccountPage> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const StageHeader(
-            title: 'Profil Pengguna',
-            subtitle: 'Pengaturan akun dan sesi Tarlink',
+            title: 'Profil',
+            subtitle: 'Akun dan pengaturan Tarlink',
           ),
           Expanded(
             child: SingleChildScrollView(
               padding: EdgeInsets.fromLTRB(
                 Sp.lg,
-                Sp.xl,
+                Sp.lg,
                 Sp.lg,
                 Sp.xl + bottomInset,
               ),
@@ -219,13 +216,89 @@ class _AccountPageState extends State<AccountPage> {
                           ),
                         ],
                       ],
-                      const SizedBox(height: Sp.xl),
-                      const SectionHeader(title: 'Bantuan & kebijakan'),
                       const SizedBox(height: Sp.md),
-                      _menuCard(),
+                      _VendorPromo(onTap: _openVendorApply),
+                      const SizedBox(height: Sp.xl),
+                      const _ProfileSectionTitle('Aktivitas'),
+                      const SizedBox(height: Sp.sm),
+                      _menuCard([
+                        _MenuRow(
+                          icon: Icons.favorite_outline,
+                          label: 'Vendor favorit',
+                          onTap: () =>
+                              Navigator.pushNamed(context, Routes.favorites),
+                        ),
+                        _MenuRow(
+                          icon: Icons.gavel_outlined,
+                          label: 'Banding konten',
+                          onTap: () =>
+                              Navigator.pushNamed(context, Routes.appeals),
+                        ),
+                      ]),
+                      const SizedBox(height: Sp.xl),
+                      const _ProfileSectionTitle('Bantuan & kebijakan'),
+                      const SizedBox(height: Sp.sm),
+                      _menuCard([
+                        _MenuRow(
+                          icon: Icons.assignment_return_outlined,
+                          label: 'Kebijakan pembatalan',
+                          onTap: () => _openPolicy(
+                            'cancellation',
+                            'Kebijakan pembatalan',
+                          ),
+                        ),
+                        _MenuRow(
+                          icon: Icons.privacy_tip_outlined,
+                          label: 'Kebijakan privasi',
+                          onTap: () =>
+                              _openPolicy('privacy', 'Kebijakan privasi'),
+                        ),
+                        _MenuRow(
+                          icon: Icons.chat_bubble_outline,
+                          label: 'Bantuan via WhatsApp',
+                          onTap: _openWhatsApp,
+                        ),
+                      ]),
+                      const SizedBox(height: Sp.xl),
+                      const _ProfileSectionTitle('Akun'),
+                      const SizedBox(height: Sp.sm),
+                      _menuCard([
+                        _MenuRow(
+                          icon: Icons.delete_forever_outlined,
+                          label: 'Hapus akun',
+                          danger: true,
+                          onTap: (_deletingAccount || _signingOut)
+                              ? null
+                              : _confirmDeleteAccount,
+                          trailing: _deletingAccount
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : null,
+                        ),
+                        _MenuRow(
+                          icon: Icons.logout,
+                          label: 'Keluar',
+                          danger: true,
+                          onTap: _signingOut ? null : _confirmSignOut,
+                          trailing: _signingOut
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : null,
+                        ),
+                      ]),
                       const SizedBox(height: Sp.xl),
                       Text(
-                        'Tarlink · Versi 0.1.0',
+                        'Tarlink Â· Versi 0.1.0',
                         textAlign: TextAlign.center,
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: AppColors.inkMuted,
@@ -242,87 +315,38 @@ class _AccountPageState extends State<AccountPage> {
     );
   }
 
-  Widget _menuCard() {
-    return Material(
-      color: AppColors.card,
-      clipBehavior: Clip.antiAlias,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(Radii.lg),
-        side: const BorderSide(color: AppColors.line),
-      ),
-      child: Column(
-        children: [
-          _MenuRow(
-            icon: Icons.storefront_outlined,
-            label: 'Daftar jadi vendor',
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute<void>(
-                builder: (_) => const VendorApplyPage(),
-              ),
-            ),
-          ),
-          const Divider(height: 1, thickness: 1, color: AppColors.line),
-          _MenuRow(
-            icon: Icons.favorite_outline,
-            label: 'Vendor Favorit',
-            onTap: () => Navigator.pushNamed(context, Routes.favorites),
-          ),
-          const Divider(height: 1, thickness: 1, color: AppColors.line),
-          _MenuRow(
-            icon: Icons.gavel_outlined,
-            label: 'Banding konten',
-            onTap: () => Navigator.pushNamed(context, Routes.appeals),
-          ),
-          const Divider(height: 1, thickness: 1, color: AppColors.line),
-          _MenuRow(
-            icon: Icons.assignment_return_outlined,
-            label: 'Kebijakan pembatalan',
-            onTap: () => _openPolicy('cancellation', 'Kebijakan pembatalan'),
-          ),
-          const Divider(height: 1, thickness: 1, color: AppColors.line),
-          _MenuRow(
-            icon: Icons.privacy_tip_outlined,
-            label: 'Kebijakan privasi',
-            onTap: () => _openPolicy('privacy', 'Kebijakan privasi'),
-          ),
-          const Divider(height: 1, thickness: 1, color: AppColors.line),
-          _MenuRow(
-            icon: Icons.chat_bubble_outline,
-            label: 'Bantuan via WhatsApp',
-            onTap: _openWhatsApp,
-          ),
-          const Divider(height: 1, thickness: 1, color: AppColors.line),
-          _MenuRow(
-            icon: Icons.delete_forever_outlined,
-            label: 'Hapus akun',
-            danger: true,
-            onTap: (_deletingAccount || _signingOut)
-                ? null
-                : _confirmDeleteAccount,
-            trailing: _deletingAccount
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : null,
-          ),
-          const Divider(height: 1, thickness: 1, color: AppColors.line),
-          _MenuRow(
-            icon: Icons.logout,
-            label: 'Keluar',
-            danger: true,
-            onTap: _signingOut ? null : _confirmSignOut,
-            trailing: _signingOut
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : null,
+  void _openVendorApply() {
+    Navigator.push(
+      context,
+      MaterialPageRoute<void>(builder: (_) => const VendorApplyPage()),
+    );
+  }
+
+  Widget _menuCard(List<Widget> rows) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x0E0B1220),
+            blurRadius: 16,
+            offset: Offset(0, 5),
           ),
         ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Material(
+        color: Colors.transparent,
+        child: Column(
+          children: [
+            for (var i = 0; i < rows.length; i++) ...[
+              if (i > 0)
+                const Divider(height: 1, thickness: 1, color: AppColors.line),
+              rows[i],
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -343,67 +367,187 @@ class _IdentityCard extends StatelessWidget {
     final showPhone = name.isNotEmpty && phone.isNotEmpty;
 
     return Container(
-      padding: const EdgeInsets.all(Sp.lg),
       decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(Radii.lg),
-        border: Border.all(color: AppColors.line),
+        color: AppColors.ink,
+        borderRadius: BorderRadius.circular(18),
       ),
-      child: Row(
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
         children: [
-          Container(
-            width: 56,
-            height: 56,
-            alignment: Alignment.center,
-            decoration: const BoxDecoration(
-              color: AppColors.primarySoft,
-              shape: BoxShape.circle,
-            ),
-            child: Text(
-              _monogram(user),
-              style: const TextStyle(
-                fontSize: 18,
-                height: 1,
-                fontWeight: FontWeight.w700,
-                color: AppColors.primary,
-              ),
-            ),
-          ),
-          const SizedBox(width: Sp.lg),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
+          const Positioned.fill(child: StageBeams(intensity: 0.7)),
+          Padding(
+            padding: const EdgeInsets.all(Sp.lg),
+            child: Row(
               children: [
-                Text(
-                  title.isEmpty ? 'Akun Tarlink' : title,
-                  style: text.titleLarge,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
+                Container(
+                  width: 60,
+                  height: 60,
+                  alignment: Alignment.center,
+                  decoration: const BoxDecoration(
+                    color: AppColors.lime,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Text(
+                    _monogram(user),
+                    style: const TextStyle(
+                      fontSize: 19,
+                      height: 1,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.ink,
+                    ),
+                  ),
                 ),
-                if (showPhone) ...[
-                  const SizedBox(height: Sp.xs),
-                  Text(
-                    phone,
-                    style: text.bodyMedium?.copyWith(color: AppColors.inkMuted),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        title.isEmpty ? 'Akun Tarlink' : title,
+                        style: text.titleLarge?.copyWith(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800,
+                          height: 1.2,
+                          letterSpacing: -0.5,
+                          color: Colors.white,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if (showPhone) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          phone,
+                          style: text.bodyMedium?.copyWith(
+                            color: Colors.white.withValues(alpha: 0.78),
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                      if (email.isNotEmpty) ...[
+                        const SizedBox(height: 1),
+                        Text(
+                          email,
+                          style: text.bodySmall?.copyWith(
+                            color: Colors.white.withValues(alpha: 0.52),
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ],
                   ),
-                ],
-                if (email.isNotEmpty) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    email,
-                    style: text.bodySmall,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
+                ),
               ],
             ),
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Growth card: the vendor door is a first-class action, not the ninth row of
+/// a settings list. It opens the application form that already exists.
+class _VendorPromo extends StatelessWidget {
+  const _VendorPromo({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return Material(
+      color: AppColors.lime,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(Sp.md),
+          child: Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: const BoxDecoration(
+                  color: AppColors.ink,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.storefront_outlined,
+                  size: 20,
+                  color: AppColors.lime,
+                ),
+              ),
+              const SizedBox(width: Sp.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Buka jasa hiburanmu',
+                      style: text.labelLarge?.copyWith(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.2,
+                        color: AppColors.ink,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Daftarkan grup atau sound system.',
+                      style: text.bodySmall?.copyWith(
+                        color: AppColors.ink.withValues(alpha: 0.68),
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: Sp.sm),
+              const Icon(Icons.arrow_forward, size: 18, color: AppColors.ink),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Same editorial rule as Beranda, so the two tabs share one heading voice.
+class _ProfileSectionTitle extends StatelessWidget {
+  const _ProfileSectionTitle(this.title);
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Container(
+          width: 3,
+          height: 20,
+          decoration: BoxDecoration(
+            color: AppColors.limeDark,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            title,
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+              letterSpacing: -0.45,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -432,21 +576,32 @@ class _MenuRow extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         child: SizedBox(
-          height: 56,
+          height: 54,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: Sp.lg),
             child: Row(
               children: [
-                Icon(
-                  icon,
-                  size: 20,
-                  color: danger ? AppColors.danger : AppColors.inkMuted,
+                Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: danger
+                        ? AppColors.dangerSoft
+                        : AppColors.surfaceSoft,
+                    borderRadius: BorderRadius.circular(9),
+                  ),
+                  child: Icon(
+                    icon,
+                    size: 17,
+                    color: danger ? AppColors.danger : AppColors.ink,
+                  ),
                 ),
                 const SizedBox(width: Sp.md),
                 Expanded(
                   child: Text(
                     label,
                     style: text.bodyMedium?.copyWith(
+                      fontSize: 13.5,
                       fontWeight: FontWeight.w600,
                       color: color,
                     ),
@@ -459,7 +614,7 @@ class _MenuRow extends StatelessWidget {
                 else
                   const Icon(
                     Icons.chevron_right,
-                    size: 20,
+                    size: 18,
                     color: AppColors.inkMuted,
                   ),
               ],
@@ -772,7 +927,7 @@ class _PolicySheetState extends State<_PolicySheet> {
         children: [
           if (effective.isNotEmpty) ...[
             Text(
-              'Berlaku sejak ${formatDateIso(effective)} · Versi '
+              'Berlaku sejak ${formatDateIso(effective)} Â· Versi '
               '${policy.version}',
               style: text.bodySmall,
             ),
@@ -942,7 +1097,7 @@ String _humanizeKey(String key) {
   return words[0].toUpperCase() + words.substring(1);
 }
 
-/// `6281234567890` → `+62 812-3456-7890`; other shapes keep their digits.
+/// `6281234567890` â†’ `+62 812-3456-7890`; other shapes keep their digits.
 String _formatPhone(String raw) {
   var digits = raw.replaceAll(RegExp(r'\D'), '');
   if (digits.isEmpty) return '';

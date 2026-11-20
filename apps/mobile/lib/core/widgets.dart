@@ -157,11 +157,7 @@ class AppError extends StatelessWidget {
               ),
             ),
             const SizedBox(height: Sp.lg),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: text.bodyLarge,
-            ),
+            Text(message, textAlign: TextAlign.center, style: text.bodyLarge),
             if (onRetry != null) ...[
               const SizedBox(height: Sp.xl),
               PrimaryButton(
@@ -214,10 +210,7 @@ class AppEmpty extends StatelessWidget {
               textAlign: TextAlign.center,
               style: text.bodyLarge?.copyWith(color: AppColors.inkMuted),
             ),
-            if (action != null) ...[
-              const SizedBox(height: Sp.lg),
-              action!,
-            ],
+            if (action != null) ...[const SizedBox(height: Sp.lg), action!],
           ],
         ),
       ),
@@ -272,7 +265,7 @@ class PrimaryButton extends StatelessWidget {
               style: text?.copyWith(
                 color: onPressed == null || loading
                     ? AppColors.inkMuted
-                    : AppColors.onPrimary,
+                    : AppColors.ink,
               ),
             ),
           ),
@@ -295,16 +288,17 @@ class StatusChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final tone = _tone(status, kind);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: Sp.md, vertical: Sp.xs + 2),
+      padding: const EdgeInsets.symmetric(
+        horizontal: Sp.md,
+        vertical: Sp.xs + 2,
+      ),
       decoration: BoxDecoration(
         color: tone.bg,
         borderRadius: BorderRadius.circular(Radii.pill),
       ),
       child: Text(
         tone.label,
-        style: Theme.of(
-          context,
-        ).textTheme.labelSmall?.copyWith(color: tone.fg),
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(color: tone.fg),
       ),
     );
   }
@@ -352,13 +346,32 @@ const _labels = <StatusKind, Map<String, String>>{
   final key = status.toLowerCase();
   final label = _labels[kind]?[key] ?? _humanize(key);
   return switch (key) {
-    'available' || 'confirmed' || 'settled' || 'fully_paid' || 'completed' || 'dp_paid' =>
-      (label: label, fg: AppColors.accent, bg: AppColors.accentSoft),
-    'unconfirmed' || 'pending' || 'held' || 'awaiting_payment' || 'waiting_payment' ||
-    'in_progress' => (label: label, fg: AppColors.warning, bg: AppColors.warningSoft),
-    'blocked' || 'cancelled' || 'canceled' || 'failed' || 'expired' =>
-      (label: label, fg: AppColors.danger, bg: AppColors.dangerSoft),
-    'booked' => (label: label, fg: AppColors.primary, bg: AppColors.primarySoft),
+    'available' ||
+    'confirmed' ||
+    'settled' ||
+    'fully_paid' ||
+    'completed' ||
+    'dp_paid' => (label: label, fg: AppColors.accent, bg: AppColors.accentSoft),
+    'unconfirmed' ||
+    'pending' ||
+    'held' ||
+    'awaiting_payment' ||
+    'waiting_payment' ||
+    'in_progress' => (
+      label: label,
+      fg: AppColors.warning,
+      bg: AppColors.warningSoft,
+    ),
+    'blocked' ||
+    'cancelled' ||
+    'canceled' ||
+    'failed' ||
+    'expired' => (label: label, fg: AppColors.danger, bg: AppColors.dangerSoft),
+    'booked' => (
+      label: label,
+      fg: AppColors.primary,
+      bg: AppColors.primarySoft,
+    ),
     _ => (label: label, fg: AppColors.inkMuted, bg: AppColors.neutralSoft),
   };
 }
