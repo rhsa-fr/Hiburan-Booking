@@ -124,6 +124,31 @@ export type DisputeRow = {
   vendor_name: string | null;
   city: string | null;
   customer_name: string | null;
+  /** FR-122 clawback request attached to this dispute, if any. */
+  clawback_id?: string | null;
+  clawback_status?: string | null;
+  clawback_amount_idr?: string | null;
+  clawback_request_note?: string | null;
+  clawback_requested_by?: string | null;
+  clawback_requested_by_name?: string | null;
+  clawback_requested_at?: Date | null;
+};
+
+/** FR-122: maker-checker record for a post-release clawback. */
+export type DisputeClawbackRow = {
+  id: string;
+  dispute_id: string;
+  booking_id: string;
+  vendor_id: string;
+  amount_idr: string;
+  status: 'requested' | 'approved' | 'rejected';
+  request_note: string;
+  requested_by: string;
+  requested_at: Date;
+  decision_note: string | null;
+  decided_by: string | null;
+  decided_at: Date | null;
+  journal_entry_id: string | null;
 };
 
 export type VendorRow = {

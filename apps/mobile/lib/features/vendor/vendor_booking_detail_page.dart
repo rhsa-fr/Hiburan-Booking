@@ -115,6 +115,63 @@ class _VendorBookingDetailPageState extends State<VendorBookingDetailPage> {
     }
   }
 
+  Future<void> _cancelBooking() async {
+    if (_actionBusy) return;
+    final code = _booking?['code']?.toString() ?? widget.bookingId;
+    final result = await showModalBottomSheet<Map<String, dynamic>>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: VendorColors.cardWhite,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(14)),
+      ),
+      builder: (_) => VendorDeclineSheet(
+        bookingCode: code,
+        title: 'Batalkan Booking',
+        confirmLabel: 'Konfirmasi Batalkan',
+        warning:
+            'Pembatalan tidak otomatis me-refund DP. Admin akan memproses '
+            'refund sesuai kebijakan setelah pembatalan tercatat.',
+      ),
+    );
+    if (result == null || !mounted) return;
+
+    final api = AppScope.of(context).api;
+    setState(() => _actionBusy = true);
+
+    try {
+      const reasonLabels = {
+        'schedule_conflict': 'Jadwal bentrok',
+        'price_mismatch': 'Harga tidak sesuai',
+        'location_out_of_reach': 'Lokasi terlalu jauh',
+        'other': 'Alasan lain',
+      };
+      final note = result['note']?.toString().trim() ?? '';
+      final code = result['reason_code']?.toString() ?? 'other';
+      await api.post(
+        '/bookings/${widget.bookingId}/cancel',
+        body: {
+          'reason': note.isNotEmpty
+              ? note
+              : (reasonLabels[code] ?? 'Alasan lain'),
+          'reason_code': code,
+        },
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Booking dibatalkan. Admin akan menindaklanjuti refund.')),
+      );
+      await _load();
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Gagal membatalkan: ${apiMessage(error)}')),
+      );
+    } finally {
+      if (mounted) setState(() => _actionBusy = false);
+    }
+  }
+
   Future<void> _declineBooking() async {
     if (_actionBusy) return;
     final code = _booking?['code']?.toString() ?? widget.bookingId;
@@ -181,7 +238,8 @@ class _VendorBookingDetailPageState extends State<VendorBookingDetailPage> {
                 tone: vendorToneForStatus(lifecycle),
               ),
       ),
-      bottomNavigationBar: booking != null && (isRequested || isConfirmed)
+      bottomNavigationBar: booking != null &&
+              (isRequested || isConfirmed || lifecycle == 'accepted')
           ? _actionBar(booking)
           : null,
       body: ColoredBox(
@@ -586,6 +644,7 @@ class _VendorBookingDetailPageState extends State<VendorBookingDetailPage> {
   Widget _actionBar(Map<String, dynamic> booking) {
     final lifecycle = booking['lifecycle_status']?.toString() ?? '';
     final isConfirmed = lifecycle == 'confirmed';
+    final isAccepted = lifecycle == 'accepted';
     final deadline = DateTime.tryParse(
       booking['respond_deadline']?.toString() ?? '',
     );
@@ -593,6 +652,8 @@ class _VendorBookingDetailPageState extends State<VendorBookingDetailPage> {
     String? hint;
     if (isConfirmed) {
       hint = 'Tekan saat sudah tiba di lokasi acara.';
+    } else if (isAccepted) {
+      hint = 'Menunggu pembayaran DP. Pembatalan akan melepas slot.';
     } else if (remaining != null) {
       if (remaining.isNegative) {
         hint = 'Batas respons sudah lewat';
@@ -646,10 +707,22 @@ class _VendorBookingDetailPageState extends State<VendorBookingDetailPage> {
             ),
             const SizedBox(height: 9),
           ],
-          if (isConfirmed)
+          if (isConfirmed) ...[
             VendorButton(
               label: 'Saya sudah sampai',
               onPressed: _actionBusy ? null : _checkIn,
+            ),
+            const SizedBox(height: 8),
+            VendorButton(
+              label: 'Batalkan Booking',
+              kind: VendorButtonKind.outlineOnDark,
+              onPressed: _actionBusy ? null : _cancelBooking,
+            ),
+          ] else if (isAccepted)
+            VendorButton(
+              label: 'Batalkan Booking',
+              kind: VendorButtonKind.outlineOnDark,
+              onPressed: _actionBusy ? null : _cancelBooking,
             )
           else
             Row(
@@ -807,9 +880,18 @@ String _headerStatus(String status) => switch (status.toLowerCase()) {
 
 /// Bottom sheet for declining a booking with a reason code.
 class VendorDeclineSheet extends StatefulWidget {
-  const VendorDeclineSheet({super.key, required this.bookingCode});
+  const VendorDeclineSheet({
+    super.key,
+    required this.bookingCode,
+    this.title = 'Tolak Booking',
+    this.confirmLabel = 'Konfirmasi Tolak',
+    this.warning,
+  });
 
   final String bookingCode;
+  final String title;
+  final String confirmLabel;
+  final String? warning;
 
   @override
   State<VendorDeclineSheet> createState() => _VendorDeclineSheetState();
@@ -862,7 +944,7 @@ class _VendorDeclineSheetState extends State<VendorDeclineSheet> {
               children: [
                 Expanded(
                   child: Text(
-                    'Tolak Booking',
+                    widget.title,
                     style: vendorText(size: 17, weight: FontWeight.w800),
                   ),
                 ),
@@ -877,6 +959,21 @@ class _VendorDeclineSheetState extends State<VendorDeclineSheet> {
               'Pesanan ${widget.bookingCode}',
               style: vendorText(size: 12, color: VendorColors.muted),
             ),
+            if (widget.warning != null) ...[
+              const SizedBox(height: VendorSp.sm),
+              Container(
+                padding: const EdgeInsets.all(VendorSp.sm),
+                decoration: BoxDecoration(
+                  color: VendorColors.softFill,
+                  borderRadius: BorderRadius.circular(VendorRadii.sm),
+                  border: Border.all(color: VendorColors.line),
+                ),
+                child: Text(
+                  widget.warning!,
+                  style: vendorText(size: 12, color: VendorColors.ink),
+                ),
+              ),
+            ],
             const SizedBox(height: VendorSp.md),
             for (final reason in _reasons)
               Padding(
@@ -982,7 +1079,7 @@ class _VendorDeclineSheetState extends State<VendorDeclineSheet> {
                   ),
                 ),
                 child: Text(
-                  'Konfirmasi Tolak',
+                  widget.confirmLabel,
                   style: vendorText(
                     size: 13,
                     weight: FontWeight.w700,

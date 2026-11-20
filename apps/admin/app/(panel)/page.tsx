@@ -5,6 +5,7 @@ import { ArrowRight, CalendarDays, ShieldAlert, Wallet } from 'lucide-react';
 import { useState } from 'react';
 import { BookingTrendCard, PaymentMixCard } from '@/components/dashboard/operation-charts';
 import { ActionQueueCard, OperationHealthCard } from '@/components/dashboard/operation-overview';
+import { OpsAlertsBanner } from '@/components/ops/ops-alerts';
 import {
   BlockSkeleton,
   Button,
@@ -54,6 +55,7 @@ export default function DashboardPage() {
             title="Ringkasan operasi"
             description={`${new Intl.DateTimeFormat('id-ID', { dateStyle: 'full' }).format(new Date())} · ringkasan booking masuk, pencairan, dan kesehatan operasi Tarlink.`}
           />
+          <OpsAlertsBanner />
           <StatGrid>
             <KpiCard
               label="Booking masuk hari ini"

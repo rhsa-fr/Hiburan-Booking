@@ -52,10 +52,48 @@ const browser = spawn(
 );
 
 const failures = [];
-const report = { base: BASE, browser: path.basename(BROWSER), headers: {}, ui: {}, cspViolations: [], consoleErrors: [] };
+const report = {
+  base: BASE,
+  browser: path.basename(BROWSER),
+  headers: {},
+  ui: {},
+  nonce: null,
+  nonceFresh: null,
+  scriptsWithNonce: null,
+  scriptsWithoutMatchingNonce: null,
+  cspViolations: [],
+  consoleErrors: []
+};
 
 function fail(message) {
   failures.push(message);
+}
+
+function parseDirectives(csp) {
+  const directives = {};
+  for (const part of csp.split(';')) {
+    const [name, ...values] = part.trim().split(/\s+/);
+    if (name) directives[name] = values.join(' ');
+  }
+  return directives;
+}
+
+// CSP nonce tokens are base64; anything else in there is a malformed header.
+const NONCE_PATTERN = /'nonce-([A-Za-z0-9+/]+={0,2})'/;
+
+function nonceFromCsp(csp) {
+  return (parseDirectives(csp)['script-src'] ?? '').match(NONCE_PATTERN)?.[1] ?? null;
+}
+
+// Freshness is checked with plain fetches instead of the CDP tab: the tab keeps
+// the document it already parsed, so a second navigation can be served from
+// cache or reuse the same rendered header rather than exercising the middleware
+// again. Two independent fetches prove the nonce is minted per request.
+async function fetchLoginNonce() {
+  const response = await fetch(`${BASE}/login`, { redirect: 'follow' });
+  // Drain the body so the socket is released before the next fetch.
+  await response.text();
+  return { status: response.status, nonce: nonceFromCsp(response.headers.get('content-security-policy') ?? '') };
 }
 
 async function devtoolsTarget() {
@@ -168,11 +206,9 @@ async function main() {
     headers[key.toLowerCase()] = value;
   }
   const csp = headers['content-security-policy'] ?? '';
-  const directives = {};
-  for (const part of csp.split(';')) {
-    const [name, ...values] = part.trim().split(/\s+/);
-    if (name) directives[name] = values.join(' ');
-  }
+  const directives = parseDirectives(csp);
+  const nonce = nonceFromCsp(csp);
+  report.nonce = nonce;
 
   report.headers = {
     csp,
@@ -187,6 +223,19 @@ async function main() {
     poweredBy: headers['x-powered-by'] ?? null
   };
 
+  const freshness = [];
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      freshness.push(await fetchLoginNonce());
+    } catch (error) {
+      freshness.push({ status: null, nonce: null, error: String(error?.message ?? error) });
+    }
+  }
+  const freshnessStatuses = freshness.map((entry) => entry.status);
+  const freshNonces = freshness.map((entry) => entry.nonce);
+  report.nonceFresh =
+    freshness.every((entry) => entry.nonce !== null) && freshNonces[0] !== freshNonces[1];
+
   report.ui = await evaluate(`(() => ({
     path: location.pathname,
     title: document.title,
@@ -196,13 +245,44 @@ async function main() {
     webLocks: typeof navigator.locks?.request === 'function'
   }))()`);
 
+  if (nonce) {
+    // getAttribute('nonce') is masked by the HTML spec, so read the IDL property.
+    const scripts = await evaluate(`(() => {
+      const header = ${JSON.stringify(nonce)};
+      const elements = Array.from(document.querySelectorAll('script'));
+      return {
+        withHeaderNonce: elements.filter((script) => script.nonce === header).length,
+        withOtherNonce: elements.filter((script) => script.nonce && script.nonce !== header).length
+      };
+    })()`);
+    report.scriptsWithNonce = scripts.withHeaderNonce;
+    report.scriptsWithoutMatchingNonce = scripts.withOtherNonce;
+  }
+
   report.cspViolations = await evaluate('window.__cspViolations || []');
   report.consoleErrors = consoleErrors;
 
   if (!csp) fail('CSP tidak ada pada respons dokumen');
   if (csp && !directives['default-src']) fail('CSP tanpa default-src');
+  if (!nonce) fail("CSP script-src tanpa 'nonce-<base64>'");
+  if (directives['script-src']?.includes("'unsafe-inline'")) {
+    fail("script-src masih memuat 'unsafe-inline'");
+  }
+  if (directives['script-src'] && !directives['script-src'].includes("'strict-dynamic'")) {
+    fail("script-src tanpa 'strict-dynamic'");
+  }
   if (directives['script-src']?.includes("'unsafe-eval'")) {
     fail("script-src masih memuat 'unsafe-eval' (build produksi tidak boleh)");
+  }
+  if (!report.nonceFresh) {
+    const missing = freshNonces.some((value) => value === null);
+    const detail = missing
+      ? 'nonce tidak ada pada salah satu respons'
+      : 'dua permintaan /login mengembalikan nonce yang sama';
+    fail(`nonce tidak segar: ${detail} (status ${JSON.stringify(freshnessStatuses)})`);
+  }
+  if (nonce && report.scriptsWithNonce === 0) {
+    fail('tidak ada <script> yang memakai nonce dari header dokumen');
   }
   if ((headers['x-frame-options'] ?? '').toUpperCase() !== 'DENY') {
     fail('X-Frame-Options bukan DENY');

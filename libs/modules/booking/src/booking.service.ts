@@ -1188,6 +1188,91 @@ export class BookingService {
     });
   }
 
+  /**
+   * Refund succeeded: the money went back to the customer, so the booking must
+   * stop claiming `dp_paid`/`fully_paid`.
+   *
+   * - A whole-booking refund on a closed booking still inside the dispute
+   *   window ends at `refunded` / `not_eligible` (P-04, P-09).
+   * - Every other case moves to `partially_refunded` (P-06/P-08). That also
+   *   covers a refund after release: `completed` + `partially_refunded` +
+   *   `released` is a legal combination, and the clawback flow owns the
+   *   settlement axis from there.
+   *
+   * The amount is only used for the history note; the caller decides `isFullRefund`
+   * from the captured/refunded totals so a partial refund of a later
+   * settlement cannot look like a full one.
+   */
+  async applyRefundSucceeded(
+    input: {
+      bookingId: string;
+      amountIdr: bigint;
+      isFullRefund: boolean;
+      now: Date;
+    },
+    client?: PoolClient
+  ): Promise<void> {
+    if (client) {
+      await this.applyRefundSucceededWithin(client, input);
+      return;
+    }
+    await withTransaction((tx) => this.applyRefundSucceededWithin(tx, input));
+  }
+
+  /** The P-04/P-06/P-08/P-09 effects, always executed on the given client. */
+  private async applyRefundSucceededWithin(
+    client: PoolClient,
+    input: { bookingId: string; amountIdr: bigint; isFullRefund: boolean; now: Date }
+  ): Promise<void> {
+    const row = await this.repo.findByIdForUpdate(client, input.bookingId);
+    if (!row) throw new AppError('NOT_FOUND', `Booking ${input.bookingId} tidak ditemukan`);
+
+    // Idempotency: a retried finalize must not fail and must not write twice.
+    if (row.payment_status === 'refunded') return;
+    // Nothing was captured (unpaid): the refund path already validates this.
+    if (row.payment_status === 'unpaid') return;
+
+    const terminalLifecycle =
+      row.lifecycle_status === 'cancelled' ||
+      row.lifecycle_status === 'rejected' ||
+      row.lifecycle_status === 'expired' ||
+      row.lifecycle_status === 'no_show' ||
+      row.lifecycle_status === 'completed';
+    const openSettlement = row.settlement_status === 'held' || row.settlement_status === 'disputed';
+    const closesBooking = input.isFullRefund && terminalLifecycle && openSettlement;
+
+    const action: BookingAction = closesBooking
+      ? row.payment_status === 'partially_refunded'
+        ? 'payment.refund_succeeded_final'
+        : 'payment.refund_succeeded'
+      : 'payment.refund_succeeded_partial';
+
+    const result = applyTransition(bookingStateFromRow(row), action, {
+      actor: 'system',
+      now: input.now
+    });
+
+    const next = await this.repo.updateStatus(client, input.bookingId, {
+      payment_status: result.next.payment_status,
+      settlement_status: result.next.settlement_status
+    });
+
+    await this.writeHistory(
+      client,
+      input.bookingId,
+      result,
+      action,
+      'system',
+      null,
+      `Refund ${input.amountIdr.toString()} berhasil`
+    );
+
+    // No outbox event yet: the notification templates cover payment and
+    // booking lifecycle events, not refunds. Reuse this row_version when the
+    // template lands instead of inventing an event the relay cannot render.
+    void next;
+  }
+
   async getById(id: string, user: AuthUser): Promise<BookingDetailView> {
     const row = await this.repo.findById(id);
     if (!row) throw new AppError('NOT_FOUND', `Booking ${id} tidak ditemukan`);

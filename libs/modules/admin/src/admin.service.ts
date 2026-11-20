@@ -14,7 +14,7 @@ import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { getPool, withTransaction } from '@tarlink/core/db';
 import { AppError } from '@tarlink/core/errors';
-import { postEntry } from '@tarlink/modules/ledger';
+import { postEntry, buildClawbackEntries } from '@tarlink/modules/ledger';
 import { PaymentService } from '@tarlink/modules/payment';
 import {
   IdempotencyService,
@@ -32,6 +32,7 @@ import type {
   BookingFilters,
   DashboardSummary,
   DisputeOverview,
+  DisputeClawbackResult,
   JournalEntry,
   LedgerData,
   Operator,
@@ -214,6 +215,47 @@ function parseResolveDisputeBody(body: unknown): ResolveDisputeBody {
           ? 'Nominal refund harus bilangan bulat lebih dari 0.'
           : 'Putusan sengketa tidak valid.';
     throw new AppError('VALIDATION_ERROR', message, parsed.error.issues);
+  }
+  return parsed.data;
+}
+
+/* ------------------------------------------------------- FR-122 clawback */
+
+/** PRD FR-122: a post-release claim may be filed up to 30 days after release. */
+const CLAWBACK_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
+const REQUEST_CLAWBACK_BODY = z.object({
+  amount_idr: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  note: z.string().trim().min(10).max(1000)
+});
+
+const DECIDE_CLAWBACK_BODY = z.object({
+  note: z.string().trim().min(10).max(1000)
+});
+
+function parseRequestClawbackBody(body: unknown): z.infer<typeof REQUEST_CLAWBACK_BODY> {
+  const parsed = REQUEST_CLAWBACK_BODY.safeParse(body);
+  if (!parsed.success) {
+    const field = parsed.error.issues[0]?.path[0];
+    throw new AppError(
+      'VALIDATION_ERROR',
+      field === 'amount_idr'
+        ? 'Nominal clawback harus bilangan bulat lebih dari 0.'
+        : 'Catatan pengajuan clawback wajib 10-1000 karakter.',
+      parsed.error.issues
+    );
+  }
+  return parsed.data;
+}
+
+function parseDecideClawbackBody(body: unknown): z.infer<typeof DECIDE_CLAWBACK_BODY> {
+  const parsed = DECIDE_CLAWBACK_BODY.safeParse(body);
+  if (!parsed.success) {
+    throw new AppError(
+      'VALIDATION_ERROR',
+      'Catatan keputusan clawback wajib 10-1000 karakter.',
+      parsed.error.issues
+    );
   }
   return parsed.data;
 }
@@ -1074,9 +1116,6 @@ export class AdminService {
       const bookings = await this.repository.lockBookings(client, [locked.booking_id]);
       const booking = bookings[0];
       if (!booking) throw new AppError('NOT_FOUND', 'Booking sengketa tidak ditemukan.');
-      if (booking.settlement_status !== 'disputed') {
-        throw new AppError('CONFLICT', 'Dana booking ini tidak sedang dalam status sengketa.');
-      }
       if (booking.lifecycle_status !== 'completed' && booking.lifecycle_status !== 'no_show') {
         throw new AppError(
           'CONFLICT',
@@ -1086,34 +1125,61 @@ export class AdminService {
 
       const paymentStatus =
         input.resolution === 'refund_full' ? 'refunded' : 'partially_refunded';
-      await this.repository.setBookingRefundStatus(client, {
-        bookingId: booking.id,
-        paymentStatus,
-        settlementStatus: 'not_eligible'
-      });
-      await this.repository.insertStatusHistory(client, {
-        bookingId: booking.id,
-        axis: 'payment',
-        from: booking.payment_status,
-        to: paymentStatus,
-        event:
-          input.resolution === 'refund_full'
-            ? 'payment.refund_succeeded'
-            : 'payment.refund_succeeded_partial',
-        actorId: context.actorId,
-        actorRole: context.actorRole,
-        note: input.note
-      });
-      await this.repository.insertStatusHistory(client, {
-        bookingId: booking.id,
-        axis: 'settlement',
-        from: 'disputed',
-        to: 'not_eligible',
-        event: 'dispute.resolved_refund',
-        actorId: context.actorId,
-        actorRole: context.actorRole,
-        note: input.note
-      });
+
+      // The refund is executed BEFORE this transaction and, when it finalizes
+      // immediately (below the approval threshold), the payment module has
+      // already applied `applyRefundSucceeded`: the booking is at the target
+      // payment status and settlement is already `not_eligible`. Rejecting that
+      // state here would answer 409 after the money has moved, leaving the
+      // dispute open forever. Instead, only write the axes that are still
+      // behind, so the decision stays idempotent.
+      const paymentChanged = booking.payment_status !== paymentStatus;
+      const settlementChanged = booking.settlement_status !== 'not_eligible';
+
+      // Only a disputed settlement may be closed by this decision. A refund
+      // that already finalized has closed it, which is why that case is skipped.
+      if (settlementChanged && booking.settlement_status !== 'disputed') {
+        throw new AppError('CONFLICT', 'Dana booking ini tidak sedang dalam status sengketa.');
+      }
+
+      if (paymentChanged) {
+        await this.repository.setBookingRefundStatus(client, {
+          bookingId: booking.id,
+          paymentStatus,
+          settlementStatus: 'not_eligible'
+        });
+        await this.repository.insertStatusHistory(client, {
+          bookingId: booking.id,
+          axis: 'payment',
+          from: booking.payment_status,
+          to: paymentStatus,
+          event:
+            input.resolution === 'refund_full'
+              ? 'payment.refund_succeeded'
+              : 'payment.refund_succeeded_partial',
+          actorId: context.actorId,
+          actorRole: context.actorRole,
+          note: input.note
+        });
+      } else if (settlementChanged) {
+        await this.repository.setBookingSettlement(client, {
+          bookingId: booking.id,
+          settlementStatus: 'not_eligible'
+        });
+      }
+
+      if (settlementChanged) {
+        await this.repository.insertStatusHistory(client, {
+          bookingId: booking.id,
+          axis: 'settlement',
+          from: booking.settlement_status,
+          to: 'not_eligible',
+          event: 'dispute.resolved_refund',
+          actorId: context.actorId,
+          actorRole: context.actorRole,
+          note: input.note
+        });
+      }
       await this.repository.markDisputeResolved(client, {
         disputeId,
         resolution,
@@ -1163,6 +1229,323 @@ export class AdminService {
         journal_entry_id: refund.journal_entry_id
       };
     });
+  }
+
+  /* ------------------------------------------------------- FR-122 clawback */
+
+  /**
+   * Step 1 of the maker-checker pair. Records the claim and validates the
+   * window, the released amount, and that the vendor payout already settled.
+   * No money moves until a different admin approves.
+   */
+  async requestDisputeClawback(
+    disputeId: string,
+    body: unknown,
+    context: ResolveDisputeContext
+  ): Promise<DisputeClawbackResult> {
+    const input = parseRequestClawbackBody(body);
+    const amountIdr = BigInt(input.amount_idr);
+    const now = new Date();
+
+    return withTransaction(async (client) => {
+      const dispute = await this.repository.lockDispute(client, disputeId);
+      if (!dispute) throw new AppError('NOT_FOUND', 'Sengketa tidak ditemukan.');
+      if (!OPEN_DISPUTE_STATUSES.has(dispute.status)) {
+        throw new AppError('CONFLICT', 'Sengketa ini sudah diputuskan.');
+      }
+
+      const bookings = await this.repository.lockBookings(client, [dispute.booking_id]);
+      const booking = bookings[0];
+      if (!booking) throw new AppError('NOT_FOUND', 'Booking sengketa tidak ditemukan.');
+      this.assertClawbackEligible(booking, now);
+
+      if (!(await this.repository.hasPaidPayout(booking.id))) {
+        throw new AppError(
+          'CONFLICT',
+          'Payout booking ini belum dicairkan. Gunakan refund atau pelepasan dana, bukan clawback.'
+        );
+      }
+
+      const ceilingIdr = await this.repository.releasedVendorAmountIdr(booking.id);
+      if (ceilingIdr <= 0n) {
+        throw new AppError('CONFLICT', 'Tidak ada dana vendor yang bisa ditarik untuk booking ini.');
+      }
+      if (amountIdr > ceilingIdr) {
+        throw new AppError(
+          'VALIDATION_ERROR',
+          'Nominal clawback melebihi dana yang sudah dicairkan.',
+          { released_vendor_amount_idr: idrToJson(ceilingIdr, 'clawback.ceiling_idr') }
+        );
+      }
+
+      if (await this.repository.findClawbackByDispute(client, disputeId, { forUpdate: true })) {
+        throw new AppError('CONFLICT', 'Sudah ada pengajuan clawback untuk sengketa ini.');
+      }
+
+      const clawback = await this.repository.insertClawback(client, {
+        disputeId,
+        bookingId: booking.id,
+        vendorId: booking.vendor_id,
+        amountIdr,
+        requestNote: input.note,
+        requestedBy: context.actorId
+      });
+      if (!clawback) {
+        throw new AppError('CONFLICT', 'Pengajuan clawback bentrok dengan permintaan lain.');
+      }
+
+      await this.repository.insertAudit(client, {
+        actorId: context.actorId,
+        actorRole: context.actorRole,
+        action: 'dispute.clawback_requested',
+        entityType: 'dispute',
+        entityId: disputeId,
+        beforeState: {
+          status: dispute.status,
+          settlement_status: booking.settlement_status,
+          released_at: booking.released_at?.toISOString() ?? null
+        },
+        afterState: {
+          clawback_id: clawback.id,
+          amount_idr: idrToJson(amountIdr, 'clawback.amount_idr'),
+          requested_by: context.actorId,
+          note: input.note
+        },
+        requestId: context.requestId
+      });
+
+      return {
+        dispute_id: disputeId,
+        clawback_id: clawback.id,
+        status: 'requested',
+        amount_idr: idrToJson(amountIdr, 'clawback.amount_idr'),
+        journal_entry_id: null
+      };
+    });
+  }
+
+  /**
+   * Step 2. A different finance/super admin approves; the ledger recognition +
+   * disbursement entries, the booking settlement, the dispute, and the audit
+   * row commit together. The customer disbursement itself happens outside this
+   * table (manual transfer), which is exactly what the ledger records.
+   */
+  async approveDisputeClawback(
+    disputeId: string,
+    body: unknown,
+    context: ResolveDisputeContext
+  ): Promise<DisputeClawbackResult> {
+    const input = parseDecideClawbackBody(body);
+    const occurredAt = new Date();
+
+    return withTransaction(async (client) => {
+      const dispute = await this.repository.lockDispute(client, disputeId);
+      if (!dispute) throw new AppError('NOT_FOUND', 'Sengketa tidak ditemukan.');
+      if (!OPEN_DISPUTE_STATUSES.has(dispute.status)) {
+        throw new AppError('CONFLICT', 'Sengketa ini sudah diputuskan.');
+      }
+
+      const clawback = await this.repository.findClawbackByDispute(client, disputeId, {
+        forUpdate: true
+      });
+      if (!clawback) throw new AppError('NOT_FOUND', 'Pengajuan clawback tidak ditemukan.');
+      if (clawback.status !== 'requested') {
+        throw new AppError('CONFLICT', 'Pengajuan clawback sudah diputuskan.');
+      }
+      if (clawback.requested_by === context.actorId) {
+        throw new AppError(
+          'FORBIDDEN',
+          'Clawback harus disetujui admin lain. Kamu tidak boleh menyetujui pengajuanmu sendiri.'
+        );
+      }
+
+      const bookings = await this.repository.lockBookings(client, [dispute.booking_id]);
+      const booking = bookings[0];
+      if (!booking) throw new AppError('NOT_FOUND', 'Booking sengketa tidak ditemukan.');
+      if (booking.settlement_status !== 'disputed') {
+        throw new AppError('CONFLICT', 'Dana booking ini tidak sedang dalam status sengketa.');
+      }
+
+      const amountIdr = BigInt(clawback.amount_idr);
+      const memo = `Clawback sengketa ${booking.code}: ${input.note}`;
+      const drafts = buildClawbackEntries({
+        disputeId,
+        bookingId: booking.id,
+        vendorId: clawback.vendor_id,
+        amountIdr,
+        occurredAt,
+        memo
+      });
+
+      const postedIds: string[] = [];
+      for (const draft of drafts) {
+        const posted = await postEntry(client, draft);
+        if (!posted.inserted) {
+          throw new AppError(
+            'CONFLICT',
+            `Jurnal clawback untuk ${booking.code} sudah ada. Periksa rekonsiliasi.`
+          );
+        }
+        postedIds.push(posted.id);
+      }
+
+      const marked = await this.repository.markBookingClawedBack(
+        client,
+        booking.id,
+        occurredAt
+      );
+      if (!marked) {
+        throw new AppError('CONFLICT', 'Status settlement berubah saat clawback disimpan.');
+      }
+
+      await this.repository.markDisputeClawbackResolved(client, {
+        disputeId,
+        amountIdr,
+        resolvedBy: clawback.requested_by,
+        approvedBy: context.actorId,
+        note: input.note
+      });
+
+      const decided = await this.repository.decideClawback(client, {
+        clawbackId: clawback.id,
+        status: 'approved',
+        decisionNote: input.note,
+        decidedBy: context.actorId,
+        journalEntryId: postedIds[0] ?? null
+      });
+      if (!decided) {
+        throw new AppError('CONFLICT', 'Pengajuan clawback berubah sebelum disetujui.');
+      }
+
+      await this.repository.insertStatusHistory(client, {
+        bookingId: booking.id,
+        axis: 'settlement',
+        from: 'disputed',
+        to: 'clawed_back',
+        event: 'dispute.resolved_clawback',
+        actorId: context.actorId,
+        actorRole: context.actorRole,
+        note: input.note
+      });
+      await this.repository.enqueueDisputeResolved(client, {
+        disputeId,
+        bookingId: booking.id,
+        bookingCode: booking.code,
+        status: 'resolved',
+        resolution: 'clawback'
+      });
+      await this.repository.insertAudit(client, {
+        actorId: context.actorId,
+        actorRole: context.actorRole,
+        action: 'dispute.clawback_approved',
+        entityType: 'dispute',
+        entityId: disputeId,
+        beforeState: {
+          status: dispute.status,
+          settlement_status: 'disputed',
+          clawback_status: 'requested',
+          requested_by: clawback.requested_by
+        },
+        afterState: {
+          status: 'resolved',
+          settlement_status: 'clawed_back',
+          clawback_status: 'approved',
+          amount_idr: idrToJson(amountIdr, 'clawback.amount_idr'),
+          journal_entry_ids: postedIds,
+          note: input.note
+        },
+        requestId: context.requestId
+      });
+
+      return {
+        dispute_id: disputeId,
+        clawback_id: clawback.id,
+        status: 'approved',
+        amount_idr: idrToJson(amountIdr, 'clawback.amount_idr'),
+        journal_entry_id: postedIds[0] ?? null
+      };
+    });
+  }
+
+  /** Rejects (or withdraws) a claim; the dispute stays open for another path. */
+  async rejectDisputeClawback(
+    disputeId: string,
+    body: unknown,
+    context: ResolveDisputeContext
+  ): Promise<DisputeClawbackResult> {
+    const input = parseDecideClawbackBody(body);
+
+    return withTransaction(async (client) => {
+      const dispute = await this.repository.lockDispute(client, disputeId);
+      if (!dispute) throw new AppError('NOT_FOUND', 'Sengketa tidak ditemukan.');
+      if (!OPEN_DISPUTE_STATUSES.has(dispute.status)) {
+        throw new AppError('CONFLICT', 'Sengketa ini sudah diputuskan.');
+      }
+
+      const clawback = await this.repository.findClawbackByDispute(client, disputeId, {
+        forUpdate: true
+      });
+      if (!clawback) throw new AppError('NOT_FOUND', 'Pengajuan clawback tidak ditemukan.');
+      if (clawback.status !== 'requested') {
+        throw new AppError('CONFLICT', 'Pengajuan clawback sudah diputuskan.');
+      }
+
+      const decided = await this.repository.decideClawback(client, {
+        clawbackId: clawback.id,
+        status: 'rejected',
+        decisionNote: input.note,
+        decidedBy: context.actorId,
+        journalEntryId: null
+      });
+      if (!decided) {
+        throw new AppError('CONFLICT', 'Pengajuan clawback berubah sebelum ditolak.');
+      }
+
+      await this.repository.insertAudit(client, {
+        actorId: context.actorId,
+        actorRole: context.actorRole,
+        action: 'dispute.clawback_rejected',
+        entityType: 'dispute',
+        entityId: disputeId,
+        beforeState: {
+          status: dispute.status,
+          clawback_status: 'requested',
+          requested_by: clawback.requested_by
+        },
+        afterState: { clawback_status: 'rejected', note: input.note },
+        requestId: context.requestId
+      });
+
+      return {
+        dispute_id: disputeId,
+        clawback_id: clawback.id,
+        status: 'rejected',
+        amount_idr: idrToJson(BigInt(clawback.amount_idr), 'clawback.amount_idr'),
+        journal_entry_id: null
+      };
+    });
+  }
+
+  /** Guards shared by the request step. The window is checked when filing. */
+  private assertClawbackEligible(booking: BookingRow, now: Date): void {
+    if (booking.lifecycle_status !== 'completed' && booking.lifecycle_status !== 'no_show') {
+      throw new AppError('CONFLICT', 'Clawback hanya untuk acara yang sudah selesai.');
+    }
+    if (booking.settlement_status !== 'disputed') {
+      throw new AppError('CONFLICT', 'Dana booking ini tidak sedang dalam status sengketa.');
+    }
+    if (!booking.released_at) {
+      throw new AppError('CONFLICT', 'Clawback hanya untuk dana yang sudah dicairkan.');
+    }
+    if (now.getTime() > booking.released_at.getTime() + CLAWBACK_WINDOW_MS) {
+      throw new AppError('CONFLICT', 'Jendela klaim clawback 30 hari sudah lewat.');
+    }
+    if (
+      booking.payment_status !== 'fully_paid' &&
+      booking.payment_status !== 'partially_refunded'
+    ) {
+      throw new AppError('CONFLICT', 'Clawback memerlukan pembayaran yang sudah lunas.');
+    }
   }
 
   async audit(): Promise<AuditLog> {

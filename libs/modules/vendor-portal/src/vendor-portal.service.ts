@@ -11,6 +11,12 @@ import {
 } from '@tarlink/modules/catalog';
 import { MEDIA_NOT_APPROVED_CODE } from './media.contracts';
 import { MediaRepository } from './media.repository';
+import {
+  EARNINGS_EXPORT_MAX_ROWS,
+  buildEarningsExport,
+  resolveEarningsPeriod,
+  type EarningsExportResult
+} from './earnings-export';
 import type {
   CreatePackageBody,
   UpdatePackageBody,
@@ -216,5 +222,30 @@ export class VendorPortalService {
         page_size: safePageSize
       }
     };
+  }
+
+  /**
+   * FR-126. Defaults to the current WIB month, caps the row count, and renders
+   * the CSV from the release ledger lines (see `earnings-export.ts`).
+   */
+  async exportEarnings(
+    userId: string,
+    query: Record<string, unknown>
+  ): Promise<EarningsExportResult> {
+    const vendor = await this.requireVendor(userId);
+    const period = resolveEarningsPeriod(query);
+    const rows = await this.repo.listEarningsForExport(
+      vendor.id,
+      period.from,
+      period.to,
+      EARNINGS_EXPORT_MAX_ROWS + 1
+    );
+    if (rows.length > EARNINGS_EXPORT_MAX_ROWS) {
+      throw new AppError(
+        'VALIDATION_ERROR',
+        `Ekspor maksimal ${EARNINGS_EXPORT_MAX_ROWS} baris. Persempit rentang tanggal.`
+      );
+    }
+    return buildEarningsExport(period, rows);
   }
 }

@@ -395,13 +395,21 @@ export default function PayoutsPage() {
               />
             ) : eligible ? (
               <div className="space-y-3">
-                <div className="grid gap-3 rounded-card border border-border bg-subtle p-4 sm:grid-cols-3">
+                <div className="grid gap-3 rounded-card border border-border bg-subtle p-4 sm:grid-cols-2 lg:grid-cols-4">
                   <div>
                     <p className="text-xs uppercase tracking-[0.1em] text-textSecondary">
-                      Nominal tersedia
+                      Hak vendor
                     </p>
                     <p className="tnum mt-1 text-lg font-semibold text-textMain">
                       {formatIDR(eligible.amount_idr)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.1em] text-textSecondary">
+                      Bisa dicairkan
+                    </p>
+                    <p className="tnum mt-1 text-lg font-semibold text-textMain">
+                      {formatIDR(eligible.payable_idr)}
                     </p>
                   </div>
                   <div>
@@ -790,7 +798,7 @@ export default function PayoutsPage() {
               </div>
 
               {detailQuery.data.status === 'paid' ? (
-                <p className="flex items-center gap-2 text-sm text-ok">
+                <p className="flex items-center gap-2 text-sm text-okInk">
                   <CheckCircle2 aria-hidden className="h-4 w-4" />
                   Dana sudah dicairkan
                   {detailQuery.data.paid_at

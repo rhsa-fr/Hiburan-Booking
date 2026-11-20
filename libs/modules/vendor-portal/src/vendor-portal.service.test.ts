@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { AppError } from '@tarlink/core/errors';
 import type { CatalogService } from '@tarlink/modules/catalog';
 import { MEDIA_NOT_APPROVED_CODE } from './media.contracts';
+import { EARNINGS_EXPORT_MAX_ROWS } from './earnings-export';
 import { MediaRepository } from './media.repository';
 import type { MediaService } from './media.service';
 import { VendorPortalController } from './vendor-portal.controller';
@@ -320,6 +321,127 @@ describe('VendorPortalService', () => {
       expect(result.settled.items).toHaveLength(1);
       expect('total_count' in result.settled.items[0]!).toBe(false);
       expect(result.settled.items[0]!.id).toBe(BOOKING_ID);
+    });
+  });
+
+  describe('exportEarnings (FR-126)', () => {
+    const exportRow = {
+      booking_id: BOOKING_ID,
+      code: 'TL-2611-001',
+      event_title: 'Resepsi Pernikahan',
+      event_start_date: '2026-11-14',
+      released_at: new Date('2026-11-15T03:00:00Z'),
+      gmv_idr: '10000000',
+      commission_idr: '500000',
+      service_fee_idr: '200000',
+      vendor_entitlement_idr: '9300000',
+      clawback_idr: '0',
+      payout_amount_idr: '9300000',
+      payout_status: 'paid',
+      payout_paid_at: new Date('2026-11-16T03:00:00Z')
+    };
+
+    it('renders the CSV from ledger rows and asks one row over the cap', async () => {
+      const list = vi.fn().mockResolvedValue([exportRow]);
+      const { service } = createService({
+        findVendorByOwner: vi.fn().mockResolvedValue(MOCK_VENDOR),
+        listEarningsForExport: list
+      });
+
+      const result = await service.exportEarnings(USER_ID, {
+        from: '2026-11-01',
+        to: '2026-11-30'
+      });
+
+      expect(list).toHaveBeenCalledWith(
+        VENDOR_ID,
+        '2026-11-01',
+        '2026-11-30',
+        EARNINGS_EXPORT_MAX_ROWS + 1
+      );
+      expect(result.row_count).toBe(1);
+      expect(result.totals.net_vendor_idr).toBe(9_300_000);
+      expect(result.csv).toContain('TL-2611-001');
+    });
+
+    it('rejects a range whose row count exceeds the cap', async () => {
+      const rows = Array.from({ length: EARNINGS_EXPORT_MAX_ROWS + 1 }, () => exportRow);
+      const { service } = createService({
+        findVendorByOwner: vi.fn().mockResolvedValue(MOCK_VENDOR),
+        listEarningsForExport: vi.fn().mockResolvedValue(rows)
+      });
+
+      await expect(
+        service.exportEarnings(USER_ID, { from: '2026-01-01', to: '2026-12-31' })
+      ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    });
+  });
+
+  describe('VendorPortalController export', () => {
+    const exportRow = {
+      booking_id: BOOKING_ID,
+      code: 'TL-2611-001',
+      event_title: 'Resepsi Pernikahan',
+      event_start_date: '2026-11-14',
+      released_at: new Date('2026-11-15T03:00:00Z'),
+      gmv_idr: '10000000',
+      commission_idr: '500000',
+      service_fee_idr: '200000',
+      vendor_entitlement_idr: '9300000',
+      clawback_idr: '0',
+      payout_amount_idr: '9300000',
+      payout_status: 'paid',
+      payout_paid_at: new Date('2026-11-16T03:00:00Z')
+    };
+    const user = { id: USER_ID, roles: ['vendor_owner'] } as any;
+
+    it('sends the CSV as a downloadable attachment', async () => {
+      const { controller } = createController({
+        findVendorByOwner: vi.fn().mockResolvedValue(MOCK_VENDOR),
+        listEarningsForExport: vi.fn().mockResolvedValue([exportRow])
+      });
+      const headers: Record<string, string> = {};
+      const res = {
+        setHeader: (name: string, value: string) => {
+          headers[name] = value;
+        }
+      };
+
+      const body = await controller.exportEarnings(
+        { from: '2026-11-01', to: '2026-11-30' },
+        res as any,
+        user
+      );
+
+      expect(headers['Content-Type']).toBe('text/csv; charset=utf-8');
+      expect(headers['Content-Disposition']).toBe(
+        'attachment; filename="pendapatan-vendor-2026-11-01_2026-11-30.csv"'
+      );
+      expect(headers['Cache-Control']).toBe('no-store');
+      expect(typeof body).toBe('string');
+      expect(body).toContain('TL-2611-001');
+    });
+
+    it('returns the preview payload when format=json', async () => {
+      const { controller } = createController({
+        findVendorByOwner: vi.fn().mockResolvedValue(MOCK_VENDOR),
+        listEarningsForExport: vi.fn().mockResolvedValue([exportRow])
+      });
+      const res = { setHeader: () => undefined };
+
+      const body = await controller.exportEarnings(
+        { from: '2026-11-01', to: '2026-11-30', format: 'json' },
+        res as any,
+        user
+      );
+
+      expect(body).toMatchObject({
+        data: {
+          filename: 'pendapatan-vendor-2026-11-01_2026-11-30.csv',
+          row_count: 1,
+          source: 'release_journal'
+        }
+      });
     });
   });
 

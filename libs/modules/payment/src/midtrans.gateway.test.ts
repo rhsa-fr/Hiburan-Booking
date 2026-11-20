@@ -28,6 +28,21 @@ function gateway(response: unknown, status = 200) {
   return { instance, calls: fetch.calls };
 }
 
+function sequencedFetch(responses: Array<{ body: unknown; status?: number }>) {
+  const calls: Array<{ url: string; init: RequestInit }> = [];
+  let index = 0;
+  const impl = (async (input: string | URL | Request, init?: RequestInit) => {
+    calls.push({ url: String(input), init: init ?? {} });
+    const next = responses[Math.min(index, responses.length - 1)];
+    index += 1;
+    return new Response(JSON.stringify(next?.body ?? {}), {
+      status: next?.status ?? 200,
+      headers: { 'content-type': 'application/json' }
+    });
+  }) as typeof fetch;
+  return { impl, calls };
+}
+
 function bodyOf(call: { init: RequestInit }): Record<string, unknown> {
   return JSON.parse(String(call.init.body)) as Record<string, unknown>;
 }
@@ -222,5 +237,143 @@ describe('MidtransGateway', () => {
       })
     ).rejects.toThrow(/tidak mendukung refund/);
     expect(calls).toHaveLength(0);
+  });
+
+  it('returns the raw QR payload when Midtrans sends qr_string', async () => {
+    const { instance } = gateway({
+      status_code: '201',
+      transaction_id: 'tx-qris',
+      order_id: 'order-1',
+      transaction_status: 'pending',
+      qr_string: '00020101021226670016COM.GOJEK.WWW011893600',
+      actions: [
+        { name: 'generate-qr-code-v2', method: 'GET', url: 'https://example.test/qr.png' }
+      ]
+    });
+
+    const result = await instance.createCharge({
+      paymentId: 'payment-1',
+      orderId: 'order-1',
+      amountIdr: 1_200_000n,
+      method: 'qris',
+      expiresAt: EXPIRES
+    });
+
+    expect(result.instruction).toMatchObject({
+      type: 'qris',
+      qr_url: 'https://example.test/qr.png',
+      qr_string: '00020101021226670016COM.GOJEK.WWW011893600'
+    });
+  });
+
+  it('expires a pending transaction at the provider', async () => {
+    const responses = sequencedFetch([
+      {
+        body: {
+          status_code: '407',
+          status_message: 'Success, transaction has expired',
+          transaction_status: 'expire',
+          order_id: 'order-1'
+        }
+      }
+    ]);
+    const instance = new MidtransGateway({
+      serverKey: SERVER_KEY,
+      fetchImpl: responses.impl,
+      now: () => NOW
+    });
+
+    await expect(instance.expireCharge('order-1')).resolves.toBeUndefined();
+
+    expect(responses.calls).toHaveLength(1);
+    expect(responses.calls[0]?.url).toBe('https://api.sandbox.midtrans.com/v2/order-1/expire');
+    expect(responses.calls[0]?.init.method).toBe('POST');
+  });
+
+  it('does not report success for a body-level 412', async () => {
+    const responses = sequencedFetch([
+      {
+        body: {
+          status_code: '412',
+          status_message: 'Merchant cannot modify the status of the transaction'
+        }
+      },
+      { body: { status_code: '200', transaction_status: 'pending', order_id: 'order-1' } }
+    ]);
+    const instance = new MidtransGateway({
+      serverKey: SERVER_KEY,
+      fetchImpl: responses.impl,
+      now: () => NOW
+    });
+
+    await expect(instance.expireCharge('order-1')).rejects.toMatchObject({
+      code: 'UPSTREAM_ERROR'
+    });
+    expect(responses.calls.map((call) => call.url)).toEqual([
+      'https://api.sandbox.midtrans.com/v2/order-1/expire',
+      'https://api.sandbox.midtrans.com/v2/order-1/status'
+    ]);
+  });
+
+  it('refuses to expire a transaction that is already paid', async () => {
+    const responses = sequencedFetch([
+      {
+        body: { status_code: '412', status_message: 'Transaction status not allowed' },
+        status: 412
+      },
+      {
+        body: {
+          status_code: '200',
+          transaction_status: 'settlement',
+          order_id: 'order-1',
+          gross_amount: '1200000.00'
+        }
+      }
+    ]);
+    const instance = new MidtransGateway({
+      serverKey: SERVER_KEY,
+      fetchImpl: responses.impl,
+      now: () => NOW
+    });
+
+    await expect(instance.expireCharge('order-1')).rejects.toMatchObject({
+      code: 'CONFLICT'
+    });
+    expect(responses.calls.map((call) => call.url)).toEqual([
+      'https://api.sandbox.midtrans.com/v2/order-1/expire',
+      'https://api.sandbox.midtrans.com/v2/order-1/status'
+    ]);
+  });
+
+  it('treats an already expired or unknown transaction as safe to release', async () => {
+    const responses = sequencedFetch([
+      {
+        body: { status_code: '412', status_message: 'Transaction status not allowed' },
+        status: 412
+      },
+      { body: { status_code: '200', transaction_status: 'expire' } }
+    ]);
+    const instance = new MidtransGateway({
+      serverKey: SERVER_KEY,
+      fetchImpl: responses.impl,
+      now: () => NOW
+    });
+
+    await expect(instance.expireCharge('order-1')).resolves.toBeUndefined();
+  });
+
+  it('fetches the current transaction status from Midtrans', async () => {
+    const { instance, calls } = gateway({
+      status_code: '200',
+      transaction_status: 'pending',
+      order_id: 'order-1',
+      transaction_id: 'tx-1'
+    });
+
+    const result = await instance.fetchStatus('order-1');
+
+    expect(calls[0]?.url).toBe('https://api.sandbox.midtrans.com/v2/order-1/status');
+    expect(calls[0]?.init.method).toBe('GET');
+    expect(result).toMatchObject({ transaction_status: 'pending' });
   });
 });

@@ -22,6 +22,7 @@ vi.mock('@tarlink/modules/ledger', async (importOriginal) => {
 import type { PoolClient } from 'pg';
 import { AppError } from '@tarlink/core/errors';
 import type { PaymentService } from '@tarlink/modules/payment';
+import { postEntry } from '@tarlink/modules/ledger';
 import { AdminRepository } from './admin.repository';
 import { AdminService } from './admin.service';
 import type { BookingRow, DisputeRow, PaymentRow } from './rows';
@@ -94,7 +95,56 @@ function harness() {
     ]),
     enqueueDisputeResolved: vi.fn(async () => undefined),
     insertStatusHistory: vi.fn(async () => undefined),
-    insertAudit: vi.fn(async () => undefined)
+    insertAudit: vi.fn(async () => undefined),
+    // FR-122 clawback
+    releasedVendorAmountIdr: vi.fn(async () => 12_000_000n),
+    hasPaidPayout: vi.fn(async () => true),
+    findClawbackByDispute: vi.fn(async () => null),
+    insertClawback: vi.fn(async (_client: unknown, input: {
+      disputeId: string;
+      bookingId: string;
+      vendorId: string;
+      amountIdr: bigint;
+      requestNote: string;
+      requestedBy: string;
+    }) => ({
+      id: 'clawback-1',
+      dispute_id: input.disputeId,
+      booking_id: input.bookingId,
+      vendor_id: input.vendorId,
+      amount_idr: input.amountIdr.toString(),
+      status: 'requested' as const,
+      request_note: input.requestNote,
+      requested_by: input.requestedBy,
+      requested_at: new Date(),
+      decision_note: null,
+      decided_by: null,
+      decided_at: null,
+      journal_entry_id: null
+    })),
+    decideClawback: vi.fn(async (_client: unknown, input: {
+      clawbackId: string;
+      status: 'approved' | 'rejected';
+      decisionNote: string;
+      decidedBy: string;
+      journalEntryId: string | null;
+    }) => ({
+      id: input.clawbackId,
+      dispute_id: DISPUTE_ID,
+      booking_id: BOOKING_ID,
+      vendor_id: booking.vendor_id,
+      amount_idr: '1600000',
+      status: input.status,
+      request_note: 'Klaim clawback uji.',
+      requested_by: '99999999-9999-4999-8999-999999999999',
+      requested_at: new Date(),
+      decision_note: input.decisionNote,
+      decided_by: input.decidedBy,
+      decided_at: new Date(),
+      journal_entry_id: input.journalEntryId
+    })),
+    markBookingClawedBack: vi.fn(async () => true),
+    markDisputeClawbackResolved: vi.fn(async () => undefined)
   };
   const payments = {
     refund: vi.fn(async () => ({
@@ -219,6 +269,227 @@ describe('AdminService.resolveDispute', () => {
       status: 'resolved',
       resolution: 'refund_full'
     });
+  });
+
+  it('still resolves the dispute when the refund already moved the booking', async () => {
+    const { service, repository } = harness();
+    // Below the approval threshold the payment module finalizes the refund in
+    // the same request, so `applyRefundSucceeded` has already closed both axes.
+    repository.lockBookings.mockResolvedValueOnce([
+      { ...booking, payment_status: 'refunded', settlement_status: 'not_eligible' }
+    ]);
+
+    const result = await service.resolveDispute(
+      DISPUTE_ID,
+      { resolution: 'refund_full', note: 'Refund penuh sudah dieksekusi provider.' },
+      { actorId: ACTOR, actorRole: 'admin_super', requestId: null }
+    );
+
+    expect(result.refund_id).toBe('refund-1');
+    expect(repository.setBookingRefundStatus).not.toHaveBeenCalled();
+    expect(repository.setBookingSettlement).not.toHaveBeenCalled();
+    expect(repository.insertStatusHistory).not.toHaveBeenCalled();
+    expect(repository.markDisputeResolved).toHaveBeenCalledTimes(1);
+    expect(repository.enqueueDisputeResolved).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes only the settlement when a partial refund already changed the payment axis', async () => {
+    const { service, repository } = harness();
+    repository.lockBookings.mockResolvedValueOnce([
+      { ...booking, payment_status: 'partially_refunded' }
+    ]);
+
+    await service.resolveDispute(
+      DISPUTE_ID,
+      { resolution: 'refund_partial', amount_idr: 1_000_000, note: 'Refund sebagian disepakati.' },
+      { actorId: ACTOR, actorRole: 'admin_super', requestId: null }
+    );
+
+    expect(repository.setBookingRefundStatus).not.toHaveBeenCalled();
+    expect(repository.setBookingSettlement).toHaveBeenCalledWith(expect.anything(), {
+      bookingId: BOOKING_ID,
+      settlementStatus: 'not_eligible'
+    });
+    expect(repository.insertStatusHistory).toHaveBeenCalledTimes(1);
+    expect(repository.insertStatusHistory).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        axis: 'settlement',
+        from: 'disputed',
+        to: 'not_eligible',
+        event: 'dispute.resolved_refund'
+      })
+    );
+  });
+});
+
+describe('AdminService clawback (FR-122)', () => {
+  const OTHER_ADMIN = '99999999-9999-4999-8999-999999999999';
+  const releasedRecently = () => new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+  const requestedClawback = {
+    id: 'clawback-1',
+    dispute_id: DISPUTE_ID,
+    booking_id: BOOKING_ID,
+    vendor_id: booking.vendor_id,
+    amount_idr: '1600000',
+    status: 'requested' as const,
+    request_note: 'Klaim clawback uji.',
+    requested_by: OTHER_ADMIN,
+    requested_at: new Date(),
+    decision_note: null,
+    decided_by: null,
+    decided_at: null,
+    journal_entry_id: null
+  };
+
+  beforeEach(() => vi.clearAllMocks());
+
+  it('rejects a claim outside the 30-day window', async () => {
+    const { service, repository } = harness();
+    repository.lockBookings.mockResolvedValueOnce([
+      { ...booking, released_at: new Date('2026-01-01T00:00:00.000Z') }
+    ]);
+
+    await expect(
+      service.requestDisputeClawback(
+        DISPUTE_ID,
+        { amount_idr: 1_000_000, note: 'Klaim lewat jendela 30 hari.' },
+        { actorId: ACTOR, actorRole: 'admin_finance', requestId: null }
+      )
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(repository.insertClawback).not.toHaveBeenCalled();
+  });
+
+  it('rejects a claim when the payout has not settled', async () => {
+    const { service, repository } = harness();
+    repository.lockBookings.mockResolvedValueOnce([
+      { ...booking, released_at: releasedRecently() }
+    ]);
+    repository.hasPaidPayout.mockResolvedValueOnce(false);
+
+    await expect(
+      service.requestDisputeClawback(
+        DISPUTE_ID,
+        { amount_idr: 1_000_000, note: 'Klaim sebelum payout dicairkan.' },
+        { actorId: ACTOR, actorRole: 'admin_finance', requestId: null }
+      )
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(repository.insertClawback).not.toHaveBeenCalled();
+  });
+
+  it('rejects an amount above the released vendor payable', async () => {
+    const { service, repository } = harness();
+    repository.lockBookings.mockResolvedValueOnce([
+      { ...booking, released_at: releasedRecently() }
+    ]);
+    repository.releasedVendorAmountIdr.mockResolvedValueOnce(1_000_000n);
+
+    await expect(
+      service.requestDisputeClawback(
+        DISPUTE_ID,
+        { amount_idr: 1_500_000, note: 'Nominal melebihi dana yang dicairkan.' },
+        { actorId: ACTOR, actorRole: 'admin_finance', requestId: null }
+      )
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+  });
+
+  it('files a claim without moving money', async () => {
+    const { service, repository } = harness();
+    repository.lockBookings.mockResolvedValueOnce([
+      { ...booking, released_at: releasedRecently() }
+    ]);
+
+    const result = await service.requestDisputeClawback(
+      DISPUTE_ID,
+      { amount_idr: 1_600_000, note: 'Klaim pasca-pencairan sesuai bukti baru.' },
+      { actorId: ACTOR, actorRole: 'admin_finance', requestId: null }
+    );
+
+    expect(repository.insertClawback).toHaveBeenCalledWith(expect.anything(), {
+      disputeId: DISPUTE_ID,
+      bookingId: BOOKING_ID,
+      vendorId: booking.vendor_id,
+      amountIdr: 1_600_000n,
+      requestNote: 'Klaim pasca-pencairan sesuai bukti baru.',
+      requestedBy: ACTOR
+    });
+    expect(result).toMatchObject({ status: 'requested', amount_idr: 1_600_000 });
+    expect(vi.mocked(postEntry)).not.toHaveBeenCalled();
+  });
+
+  it('refuses self-approval (maker-checker)', async () => {
+    const { service, repository } = harness();
+    repository.findClawbackByDispute.mockResolvedValueOnce({
+      ...requestedClawback,
+      requested_by: ACTOR
+    });
+
+    await expect(
+      service.approveDisputeClawback(
+        DISPUTE_ID,
+        { note: 'Menyetujui klaim sendiri.' },
+        { actorId: ACTOR, actorRole: 'admin_finance', requestId: null }
+      )
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(vi.mocked(postEntry)).not.toHaveBeenCalled();
+  });
+
+  it('posts the clawback entries and settles the booking when a second admin approves', async () => {
+    const { service, repository } = harness();
+    repository.findClawbackByDispute.mockResolvedValueOnce(requestedClawback);
+
+    const result = await service.approveDisputeClawback(
+      DISPUTE_ID,
+      { note: 'Bukti cukup; clawback penuh disetujui.' },
+      { actorId: ACTOR, actorRole: 'admin_finance', requestId: null }
+    );
+
+    expect(vi.mocked(postEntry)).toHaveBeenCalledTimes(2);
+    expect(repository.markBookingClawedBack).toHaveBeenCalledWith(
+      expect.anything(),
+      BOOKING_ID,
+      expect.any(Date)
+    );
+    expect(repository.markDisputeClawbackResolved).toHaveBeenCalledWith(expect.anything(), {
+      disputeId: DISPUTE_ID,
+      amountIdr: 1_600_000n,
+      resolvedBy: OTHER_ADMIN,
+      approvedBy: ACTOR,
+      note: 'Bukti cukup; clawback penuh disetujui.'
+    });
+    expect(repository.insertStatusHistory).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        from: 'disputed',
+        to: 'clawed_back',
+        event: 'dispute.resolved_clawback'
+      })
+    );
+    expect(repository.enqueueDisputeResolved).toHaveBeenCalledWith(expect.anything(), {
+      disputeId: DISPUTE_ID,
+      bookingId: BOOKING_ID,
+      bookingCode: 'BK-261103-ABCD',
+      status: 'resolved',
+      resolution: 'clawback'
+    });
+    expect(result).toMatchObject({ status: 'approved', amount_idr: 1_600_000 });
+  });
+
+  it('rejecting a claim leaves the dispute open and moves no money', async () => {
+    const { service, repository } = harness();
+    repository.findClawbackByDispute.mockResolvedValueOnce(requestedClawback);
+
+    const result = await service.rejectDisputeClawback(
+      DISPUTE_ID,
+      { note: 'Bukti tidak cukup untuk klaim pasca-pencairan.' },
+      { actorId: ACTOR, actorRole: 'admin_finance', requestId: null }
+    );
+
+    expect(result).toMatchObject({ status: 'rejected' });
+    expect(repository.markBookingClawedBack).not.toHaveBeenCalled();
+    expect(repository.markDisputeClawbackResolved).not.toHaveBeenCalled();
+    expect(vi.mocked(postEntry)).not.toHaveBeenCalled();
   });
 });
 

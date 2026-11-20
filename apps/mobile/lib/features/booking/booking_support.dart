@@ -47,6 +47,7 @@ String paymentText(String status) => switch (status.toLowerCase()) {
   'pending' => 'Menunggu bayar',
   'dp_paid' => 'DP lunas',
   'fully_paid' => 'Lunas',
+  'partially_refunded' => 'Refund sebagian',
   'failed' => 'Gagal',
   'refunded' => 'Dikembalikan',
   'expired' => 'Kedaluwarsa',
@@ -71,7 +72,8 @@ PillTone bookingPillTone(String status) => switch (status.toLowerCase()) {
   'waiting_payment' ||
   'open' ||
   'investigating' ||
-  'awaiting_evidence' => PillTone.warning,
+  'awaiting_evidence' ||
+  'partially_refunded' => PillTone.warning,
   'cancelled' ||
   'canceled' ||
   'rejected' ||

@@ -10,12 +10,13 @@ import {
   Put,
   Query,
   Req,
+  Res,
   UploadedFile,
   UseGuards,
   UseInterceptors
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import { AuthGuard, Roles, RolesGuard } from '@tarlink/platform/auth';
 import { CurrentUser, type AuthUser as BookingAuthUser } from '../../booking/src/current-user.decorator';
 import { AppError } from '@tarlink/core/errors';
@@ -263,5 +264,28 @@ export class VendorPortalController {
     const page = Math.max(1, parseInt(String(query.page ?? '1'), 10) || 1);
     const pageSize = Math.min(100, Math.max(1, parseInt(String(query.page_size ?? '20'), 10) || 20));
     return { data: await this.svc.getEarnings(user.sub ?? user.id, page, pageSize) };
+  }
+
+  /**
+   * FR-126. `format=json` returns the CSV plus totals for the mobile preview;
+   * without it the same bytes are sent as a download with an attachment name.
+   */
+  @Get('earnings/export')
+  @Roles('vendor_owner')
+  async exportEarnings(
+    @Query() q: unknown,
+    @Res({ passthrough: true }) res: Response,
+    @CurrentUser() user: AuthUser
+  ) {
+    const query = typeof q === 'object' && q !== null ? (q as Record<string, unknown>) : {};
+    const result = await this.svc.exportEarnings(user.sub ?? user.id, query);
+    if (String(query.format ?? 'csv') === 'json') {
+      return { data: result };
+    }
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    return result.csv;
   }
 }

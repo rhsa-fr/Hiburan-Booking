@@ -36,6 +36,21 @@ export interface BookingPaymentPort {
   applyDpPaid(input: DpPaidInput, client?: PoolClient): Promise<void>;
   /** Settlement: `dp_paid` -> `fully_paid`. Owned by the booking module too. */
   applyFullyPaid(input: FullyPaidInput, client?: PoolClient): Promise<void>;
+  /**
+   * Refund landed: `dp_paid`/`fully_paid` -> `partially_refunded`, or
+   * `refunded`/`not_eligible` when the whole booking is refunded while the
+   * dispute window is still open. `isFullRefund` is decided by the payment
+   * module from captured vs refunded totals, never per single payment.
+   */
+  applyRefundSucceeded(input: RefundSucceededInput, client?: PoolClient): Promise<void>;
+}
+
+/** Refund input: the booking module owns the payment/settlement axes. */
+export interface RefundSucceededInput {
+  readonly bookingId: string;
+  readonly amountIdr: bigint;
+  readonly isFullRefund: boolean;
+  readonly now: Date;
 }
 
 type ApplyTransition = (input: FullyPaidInput, client?: PoolClient) => Promise<void>;
@@ -66,6 +81,8 @@ export function asBookingPaymentPort(booking: BookingService): BookingPaymentPor
             'CONFLICT',
             'the settlement transition is owned by the booking module (BookingService.applyFullyPaid is not published)'
           );
-        }
+        },
+    applyRefundSucceeded: (input: RefundSucceededInput, client?: PoolClient): Promise<void> =>
+      booking.applyRefundSucceeded(input, client)
   };
 }

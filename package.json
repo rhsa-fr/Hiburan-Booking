@@ -6,7 +6,7 @@
     "apps/*"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=24"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.api.json --noEmit",
@@ -18,14 +18,18 @@
     "verify:db": "vite-node scripts/verify-db.ts",
     "migrate": "vite-node scripts/migrate-cli.ts",
     "migrate:dry": "vite-node scripts/migrate-cli.ts --dry-run",
+    "migrate:prod": "node dist/api/scripts/migrate-cli.js",
+    "verify:prod": "node scripts/preflight.mjs",
     "smoke:booking": "vite-node scripts/smoke-booking.ts",
     "smoke:admin": "vite-node scripts/smoke-admin.ts",
     "smoke:catalog": "vite-node scripts/smoke-catalog.ts",
     "smoke:settle": "vite-node scripts/smoke-settle.ts",
+    "smoke:ledger": "node --env-file=.env scripts/smoke-payment-ledger.mjs",
+    "smoke:payment": "node --env-file=.env scripts/smoke-payment-e2e.mjs",
     "verify:admin": "node scripts/verify-admin-headers.mjs",
     "dev:api": "nest start --watch",
     "dev:admin": "npm -w apps/admin run dev",
-    "build:api": "tsc -p apps/api/tsconfig.json",
+    "build:api": "tsc -p tsconfig.api.json",
     "build:worker": "tsc -p apps/worker/tsconfig.json",
     "start:worker": "node dist/worker/apps/worker/src/main.js",
     "build:admin": "npm -w apps/admin run build",

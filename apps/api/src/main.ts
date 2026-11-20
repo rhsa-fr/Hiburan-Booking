@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { NestFactory } from '@nestjs/core';
 import { attachChatGateway, ChatService } from '@tarlink/modules/chat';
+import { ModerationService } from '@tarlink/modules/moderation';
 import { getPool } from '@tarlink/core/db';
 import { AppModule } from './app.module';
 import { loadConfig } from './core/config';
@@ -62,11 +63,14 @@ async function bootstrap(): Promise<void> {
   await app.listen(cfg.PORT);
   // Chat is a WebSocket upgrade on the same HTTP server (ADR 0011). It is
   // attached after listen because the underlying server only exists then.
+  const moderation = app.get(ModerationService);
   attachChatGateway(app.getHttpServer() as Server, {
     service: app.get(ChatService),
     pool: getPool(),
     jwtSecret: cfg.JWT_SECRET,
-    allowedOrigins
+    allowedOrigins,
+    // FR-142: pesan dari pengguna yang diblokir tidak dikirim ke socket itu.
+    isBlocked: (viewerId: string, senderId: string) => moderation.isBlocked(viewerId, senderId)
   });
   // eslint-disable-next-line no-console
   console.log(`tarlink api listening on :${cfg.PORT}`);

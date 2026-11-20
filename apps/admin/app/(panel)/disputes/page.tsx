@@ -23,7 +23,7 @@ import {
   TableSkeleton,
   TitleBlock
 } from '@/components/ui';
-import { getDisputes, resolveDispute } from '@/lib/api';
+import { approveDisputeClawback, getDisputes, rejectDisputeClawback, requestDisputeClawback, resolveDispute } from '@/lib/api';
 import { nowIso, relativeFrom } from '@/lib/clock';
 import { formatDateTimeID, formatIDR } from '@/lib/format';
 import type { DisputeRecord, ResolveDisputeInput } from '@/lib/types';
@@ -55,6 +55,11 @@ export default function DisputesPage() {
   const [amount, setAmount] = useState('');
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [clawbackDecision, setClawbackDecision] = useState<{
+    dispute: DisputeRecord;
+    action: 'approve' | 'reject';
+  } | null>(null);
+  const [clawbackNote, setClawbackNote] = useState('');
 
   function openResolve(dispute: DisputeRecord): void {
     setTarget(dispute);
@@ -72,19 +77,30 @@ export default function DisputesPage() {
       return;
     }
     const numeric = Number(amount.replace(/[^\d]/g, ''));
-    if (resolution === 'refund_partial' && (!Number.isInteger(numeric) || numeric <= 0)) {
-      setFormError('Nominal refund sebagian harus lebih dari 0.');
+    if (
+      (resolution === 'refund_partial' || resolution === 'clawback') &&
+      (!Number.isInteger(numeric) || numeric <= 0)
+    ) {
+      setFormError(
+        resolution === 'clawback'
+          ? 'Nominal clawback harus lebih dari 0.'
+          : 'Nominal refund sebagian harus lebih dari 0.'
+      );
       return;
     }
 
     setBusy(true);
     setFormError(null);
     try {
-      await resolveDispute(target.id, {
-        resolution,
-        note: trimmed,
-        ...(resolution === 'refund_partial' ? { amount_idr: numeric } : {})
-      });
+      if (resolution === 'clawback') {
+        await requestDisputeClawback(target.id, { amount_idr: numeric, note: trimmed });
+      } else {
+        await resolveDispute(target.id, {
+          resolution,
+          note: trimmed,
+          ...(resolution === 'refund_partial' ? { amount_idr: numeric } : {})
+        });
+      }
       setTarget(null);
       setNote('');
       setAmount('');
@@ -92,6 +108,41 @@ export default function DisputesPage() {
     } catch (submitError) {
       setFormError(
         submitError instanceof Error ? submitError.message : 'Gagal menyimpan putusan sengketa.'
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function openClawbackDecision(
+    dispute: DisputeRecord,
+    action: 'approve' | 'reject'
+  ): void {
+    setClawbackDecision({ dispute, action });
+    setClawbackNote('');
+    setFormError(null);
+  }
+
+  async function submitClawbackDecision(): Promise<void> {
+    if (!clawbackDecision) return;
+    const trimmed = clawbackNote.trim();
+    if (trimmed.length < 10) {
+      setFormError('Catatan keputusan minimal 10 karakter.');
+      return;
+    }
+
+    setBusy(true);
+    setFormError(null);
+    try {
+      const call =
+        clawbackDecision.action === 'approve' ? approveDisputeClawback : rejectDisputeClawback;
+      await call(clawbackDecision.dispute.id, { note: trimmed });
+      setClawbackDecision(null);
+      setClawbackNote('');
+      await refetch();
+    } catch (submitError) {
+      setFormError(
+        submitError instanceof Error ? submitError.message : 'Gagal menyimpan keputusan clawback.'
       );
     } finally {
       setBusy(false);
@@ -190,6 +241,15 @@ export default function DisputesPage() {
                         <p className="text-[13px] text-textSecondary">
                           Dibuka {formatDateTimeID(dispute.opened_at)}
                         </p>
+                        {dispute.clawback ? (
+                          <p className="mt-1 text-[13px] text-textSecondary">
+                            Clawback {formatIDR(dispute.clawback.amount_idr)} · diajukan{' '}
+                            {dispute.clawback.requested_by_name}
+                            {dispute.clawback.status === 'requested'
+                              ? ' · menunggu admin lain'
+                              : ''}
+                          </p>
+                        ) : null}
                       </TableCell>
                       <TableCell>
                         <StatusBadge tone={DISPUTE_STATUS_TONES[dispute.status] ?? 'muted'}>
@@ -220,7 +280,24 @@ export default function DisputesPage() {
                         </span>
                       </TableCell>
                       <TableCell align="right">
-                        {dispute.status === 'open' ? (
+                        {dispute.status === 'open' &&
+                        dispute.clawback?.status === 'requested' ? (
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => openClawbackDecision(dispute, 'reject')}
+                            >
+                              Tolak
+                            </Button>
+                            <Button
+                              size="sm"
+                              onClick={() => openClawbackDecision(dispute, 'approve')}
+                            >
+                              Setujui
+                            </Button>
+                          </div>
+                        ) : dispute.status === 'open' ? (
                           <Button variant="outline" size="sm" onClick={() => openResolve(dispute)}>
                             Putuskan
                           </Button>
@@ -265,12 +342,13 @@ export default function DisputesPage() {
               <option value="release_to_vendor">Lepas dana ke vendor</option>
               <option value="refund_full">Refund penuh</option>
               <option value="refund_partial">Refund sebagian</option>
+              <option value="clawback">Clawback pasca-pencairan (maker-checker)</option>
             </select>
 
-            {resolution === 'refund_partial' ? (
+            {resolution === 'refund_partial' || resolution === 'clawback' ? (
               <>
                 <label htmlFor="dispute-amount" className="mt-3 block text-[13px] font-semibold text-textMain">
-                  Nominal refund (Rp)
+                  {resolution === 'clawback' ? 'Nominal clawback (Rp)' : 'Nominal refund (Rp)'}
                 </label>
                 <input
                   id="dispute-amount"
@@ -280,6 +358,12 @@ export default function DisputesPage() {
                   placeholder="Contoh: 500000"
                   className="mt-1 w-full rounded-field border border-border bg-surface px-3 py-2 text-[14px] text-textMain"
                 />
+                {resolution === 'clawback' ? (
+                  <p className="mt-1 text-[13px] text-textSecondary">
+                    Maksimal dana vendor yang sudah dicairkan. Pengajuan ini belum memindahkan
+                    uang; admin lain harus menyetujuinya.
+                  </p>
+                ) : null}
               </>
             ) : null}
 
@@ -302,7 +386,71 @@ export default function DisputesPage() {
                 Batal
               </Button>
               <Button onClick={() => void submitResolve()} disabled={busy}>
-                {busy ? 'Menyimpan…' : 'Simpan putusan'}
+                {busy
+                  ? 'Menyimpan…'
+                  : resolution === 'clawback'
+                    ? 'Ajukan clawback'
+                    : 'Simpan putusan'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {clawbackDecision ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`${clawbackDecision.action === 'approve' ? 'Setujui' : 'Tolak'} clawback ${clawbackDecision.dispute.booking_code}`}
+            className="w-full max-w-lg rounded-card border border-border bg-surface p-5 shadow-xl"
+          >
+            <h2 className="text-[18px] font-semibold text-textMain">
+              {clawbackDecision.action === 'approve' ? 'Setujui' : 'Tolak'} clawback{' '}
+              {clawbackDecision.dispute.booking_code}
+            </h2>
+            <p className="mt-1 text-[13px] text-textSecondary">
+              Nominal {formatIDR(clawbackDecision.dispute.clawback?.amount_idr ?? 0)} · diajukan{' '}
+              {clawbackDecision.dispute.clawback?.requested_by_name ?? 'admin'}
+            </p>
+            {clawbackDecision.action === 'approve' ? (
+              <p className="mt-2 text-[13px] text-textSecondary">
+                Persetujuan harus dilakukan admin lain. Sistem akan menolak jika kamu pengaju
+                klaim ini.
+              </p>
+            ) : null}
+
+            <label
+              htmlFor="clawback-note"
+              className="mt-4 block text-[13px] font-semibold text-textMain"
+            >
+              Catatan keputusan (min. 10 karakter)
+            </label>
+            <textarea
+              id="clawback-note"
+              value={clawbackNote}
+              onChange={(event) => setClawbackNote(event.target.value)}
+              rows={4}
+              className="mt-1 w-full rounded-field border border-border bg-surface px-3 py-2 text-[14px] text-textMain"
+              placeholder="Pertimbangan bukti dan alasan keputusan."
+            />
+
+            {formError ? <p className="mt-2 text-[13px] text-danger">{formError}</p> : null}
+
+            <div className="mt-5 flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setClawbackDecision(null)}
+                disabled={busy}
+              >
+                Batal
+              </Button>
+              <Button onClick={() => void submitClawbackDecision()} disabled={busy}>
+                {busy
+                  ? 'Menyimpan…'
+                  : clawbackDecision.action === 'approve'
+                    ? 'Setujui clawback'
+                    : 'Tolak clawback'}
               </Button>
             </div>
           </div>

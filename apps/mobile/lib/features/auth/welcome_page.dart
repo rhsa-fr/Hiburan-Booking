@@ -92,7 +92,7 @@ class WelcomePage extends StatelessWidget {
                               'Hiburan panggung\nuntuk acaramu.',
                               style: TextStyle(
                                 color: Colors.white,
-                                fontSize: 28,
+                                fontSize: 24,
                                 height: 1.08,
                                 fontWeight: FontWeight.w800,
                                 letterSpacing: -1.2,
@@ -122,8 +122,13 @@ class WelcomePage extends StatelessWidget {
                       return SingleChildScrollView(
                         padding: const EdgeInsets.fromLTRB(20, 10, 20, 16),
                         child: ConstrainedBox(
+                          // A short window (a small browser tab, a split screen)
+                          // leaves less than the 26 dp the padding eats; a
+                          // negative minHeight asserts inside ConstrainedBox.
                           constraints: BoxConstraints(
-                            minHeight: body.maxHeight - 26,
+                            minHeight: body.maxHeight > 26
+                                ? body.maxHeight - 26
+                                : 0,
                           ),
                           child: IntrinsicHeight(
                             child: Column(
@@ -231,9 +236,7 @@ class _WelcomeFeature extends StatelessWidget {
             decoration: BoxDecoration(
               color: AppColors.lime.withValues(alpha: 0.13),
               borderRadius: BorderRadius.circular(9),
-              border: Border.all(
-                color: AppColors.lime.withValues(alpha: 0.18),
-              ),
+              border: Border.all(color: AppColors.lime.withValues(alpha: 0.18)),
             ),
             child: Icon(icon, size: 16, color: AppColors.lime),
           ),

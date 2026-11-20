@@ -22,19 +22,23 @@ import {
   TableHead,
   TableHeadCell,
   TableRow,
-  TableSkeleton
+  TableSkeleton,
+  Textarea
 } from '@/components/ui';
 import type { BadgeTone } from '@/components/ui';
 import {
   getReconciliationRun,
   listReconciliationRuns,
+  resolveReconciliationDiff,
   runReconciliation,
   type ReconciliationClassification,
+  type ReconciliationDiff,
   type ReconciliationProvider,
+  type ReconciliationResolution,
   type ReconciliationRunStatus,
   type ReconciliationSeverity
 } from '@/lib/api';
-import { formatCalendarDayID, formatIDR, formatNumber } from '@/lib/format';
+import { formatCalendarDayID, formatDateTimeID, formatIDR, formatNumber } from '@/lib/format';
 
 const PAGE_SIZE = 20;
 
@@ -79,6 +83,14 @@ const SEVERITY_TONES: Record<ReconciliationSeverity, BadgeTone> = {
   critical: 'danger'
 };
 
+/** FR-131 fase 2: keputusan yang boleh diambil atas satu temuan. */
+const RESOLUTION_LABELS: Record<ReconciliationResolution, string> = {
+  accepted: 'Selisih diterima (didokumentasikan)',
+  ignored: 'Bukan temuan nyata',
+  referred: 'Diteruskan ke finance/provider',
+  corrected: 'Dibetulkan di luar sistem'
+};
+
 /** Kemarin menurut kalender WIB; tanggal awal yang wajar untuk laporan harian. */
 function yesterdayWib(): string {
   const now = new Date(Date.now() + 7 * 60 * 60 * 1000);
@@ -115,12 +127,19 @@ function amountOrDash(value: number | null): string {
   return value === null ? '—' : formatIDR(value);
 }
 
+function isOverdue(diff: ReconciliationDiff): boolean {
+  return diff.resolved_at === null && diff.due_at !== null && Date.parse(diff.due_at) < Date.now();
+}
+
 export function ReconciliationView() {
   const queryClient = useQueryClient();
   const [provider, setProvider] = useState<ReconciliationProvider>('midtrans');
   const [reportDate, setReportDate] = useState(yesterdayWib);
   const [page, setPage] = useState(1);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [resolveTarget, setResolveTarget] = useState<ReconciliationDiff | null>(null);
+  const [resolution, setResolution] = useState<ReconciliationResolution>('accepted');
+  const [note, setNote] = useState('');
 
   const runsQuery = useQuery({
     queryKey: ['reconciliation-runs', page],
@@ -146,6 +165,20 @@ export function ReconciliationView() {
     }
   });
 
+  const resolveMutation = useMutation({
+    mutationFn: (input: { diffId: string; resolution: ReconciliationResolution; note: string }) =>
+      resolveReconciliationDiff(input.diffId, {
+        resolution: input.resolution,
+        note: input.note
+      }),
+    onSuccess: () => {
+      setResolveTarget(null);
+      setNote('');
+      void queryClient.invalidateQueries({ queryKey: ['reconciliation-run', selectedRunId] });
+      void queryClient.invalidateQueries({ queryKey: ['reconciliation-runs'] });
+    }
+  });
+
   const runs = runsQuery.data?.items ?? [];
   const total = runsQuery.data?.total ?? 0;
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -155,6 +188,12 @@ export function ReconciliationView() {
     ? runMutation.error instanceof Error
       ? runMutation.error.message
       : 'Rekonsiliasi gagal dijalankan. Coba lagi.'
+    : null;
+
+  const resolveErrorMessage = resolveMutation.isError
+    ? resolveMutation.error instanceof Error
+      ? resolveMutation.error.message
+      : 'Keputusan gagal disimpan. Coba lagi.'
     : null;
 
   return (
@@ -343,7 +382,11 @@ export function ReconciliationView() {
                 ? `${formatCalendarDayID(detail.report_date)} · ${providerLabel(detail.provider)} · ${
                     detail.diff_count === 0
                       ? `tidak ada temuan, semua ${formatNumber(detail.checked_count)} baris cocok.`
-                      : `${formatNumber(detail.diff_count)} temuan dari ${formatNumber(detail.checked_count)} baris diperiksa.`
+                      : `${formatNumber(detail.diff_count)} temuan dari ${formatNumber(detail.checked_count)} baris diperiksa${
+                          detail.open_diff_count > 0
+                            ? `, ${formatNumber(detail.open_diff_count)} belum diselesaikan.`
+                            : ', semuanya sudah diselesaikan.'
+                        }`
                   }`
                 : 'Memuat detail run…'
             }
@@ -378,7 +421,7 @@ export function ReconciliationView() {
               <Table
                 label="Daftar temuan rekonsiliasi untuk run terpilih"
                 maxHeight="max-h-[55vh]"
-                className="min-w-[860px]"
+                className="min-w-[1100px]"
               >
                 <TableHead>
                   <TableRow>
@@ -388,50 +431,185 @@ export function ReconciliationView() {
                     <TableHeadCell align="right">Gateway</TableHeadCell>
                     <TableHeadCell align="right">Ledger</TableHeadCell>
                     <TableHeadCell align="right">Delta</TableHeadCell>
+                    <TableHeadCell>SLA</TableHeadCell>
+                    <TableHeadCell>Status</TableHeadCell>
+                    <TableHeadCell align="right">Aksi</TableHeadCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {detail.diffs.map((diff) => (
-                    <TableRow key={diff.id}>
-                      <TableCell>{classificationLabel(diff.classification)}</TableCell>
-                      <TableCell>
-                        <StatusBadge tone={severityTone(diff.severity)}>
-                          {severityLabel(diff.severity)}
-                        </StatusBadge>
-                      </TableCell>
-                      <TableCell>
-                        <span className="block max-w-[280px] truncate text-[13px] text-textSecondary">
-                          {diff.external_id ?? '—'}
-                        </span>
-                      </TableCell>
-                      <TableCell align="right">
-                        <span className="tnum whitespace-nowrap">
-                          {amountOrDash(diff.gateway_amount_idr)}
-                        </span>
-                      </TableCell>
-                      <TableCell align="right">
-                        <span className="tnum whitespace-nowrap">
-                          {amountOrDash(diff.ledger_amount_idr)}
-                        </span>
-                      </TableCell>
-                      <TableCell align="right">
-                        <span
-                          className={clsx(
-                            'tnum whitespace-nowrap font-semibold',
-                            diff.delta_idr !== null && diff.delta_idr !== 0
-                              ? 'text-danger'
-                              : 'text-textMain'
+                  {detail.diffs.map((diff) => {
+                    const overdue = isOverdue(diff);
+                    return (
+                      <TableRow key={diff.id}>
+                        <TableCell>{classificationLabel(diff.classification)}</TableCell>
+                        <TableCell>
+                          <StatusBadge tone={severityTone(diff.severity)}>
+                            {severityLabel(diff.severity)}
+                          </StatusBadge>
+                        </TableCell>
+                        <TableCell>
+                          <span className="block max-w-[280px] truncate text-[13px] text-textSecondary">
+                            {diff.external_id ?? '—'}
+                          </span>
+                        </TableCell>
+                        <TableCell align="right">
+                          <span className="tnum whitespace-nowrap">
+                            {amountOrDash(diff.gateway_amount_idr)}
+                          </span>
+                        </TableCell>
+                        <TableCell align="right">
+                          <span className="tnum whitespace-nowrap">
+                            {amountOrDash(diff.ledger_amount_idr)}
+                          </span>
+                        </TableCell>
+                        <TableCell align="right">
+                          <span
+                            className={clsx(
+                              'tnum whitespace-nowrap font-semibold',
+                              diff.delta_idr !== null && diff.delta_idr !== 0
+                                ? 'text-danger'
+                                : 'text-textMain'
+                            )}
+                          >
+                            {amountOrDash(diff.delta_idr)}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <span
+                            className={clsx(
+                              'whitespace-nowrap text-[13px]',
+                              overdue ? 'font-semibold text-danger' : 'text-textSecondary'
+                            )}
+                          >
+                            {diff.due_at === null ? '—' : formatDateTimeID(diff.due_at)}
+                            {overdue ? ' · lewat' : ''}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          {diff.classification === 'matched' ? (
+                            <StatusBadge tone="muted">Cocok</StatusBadge>
+                          ) : diff.resolved_at === null ? (
+                            <StatusBadge tone="soft">Terbuka</StatusBadge>
+                          ) : (
+                            <span
+                              title={diff.resolution_note ?? undefined}
+                              className="inline-flex"
+                            >
+                              <StatusBadge tone="ok">
+                                {diff.resolution === null
+                                  ? 'Selesai'
+                                  : RESOLUTION_LABELS[diff.resolution]}
+                              </StatusBadge>
+                            </span>
                           )}
-                        >
-                          {amountOrDash(diff.delta_idr)}
-                        </span>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                        </TableCell>
+                        <TableCell align="right">
+                          {diff.classification === 'matched' ? (
+                            <span className="text-[13px] text-textSecondary">—</span>
+                          ) : diff.resolved_at === null ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              ariaLabel={`Selesaikan temuan ${diff.external_id ?? diff.id}`}
+                              disabled={resolveMutation.isPending}
+                              onClick={() => {
+                                setResolveTarget(diff);
+                                setResolution('accepted');
+                                setNote('');
+                              }}
+                            >
+                              Selesaikan
+                            </Button>
+                          ) : (
+                            <span className="text-[13px] text-textSecondary">
+                              {formatDateTimeID(diff.resolved_at)}
+                            </span>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             )
           ) : null}
+        </Card>
+      ) : null}
+
+      {selectedRunId && resolveTarget ? (
+        <Card>
+          <CardHeader
+            icon={<CheckCircle2 aria-hidden className="h-[17px] w-[17px]" />}
+            title="Selesaikan temuan"
+            description={`${classificationLabel(resolveTarget.classification)} · ${
+              resolveTarget.external_id ?? resolveTarget.id
+            } · delta ${amountOrDash(resolveTarget.delta_idr)}`}
+            action={
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={resolveMutation.isPending}
+                onClick={() => setResolveTarget(null)}
+              >
+                Batal
+              </Button>
+            }
+          />
+          <CardBody className="space-y-4">
+            <div className="grid gap-4 md:grid-cols-2">
+              <Select
+                id="reconciliation-resolution"
+                label="Keputusan"
+                value={resolution}
+                disabled={resolveMutation.isPending}
+                onChange={(event) =>
+                  setResolution(event.target.value as ReconciliationResolution)
+                }
+              >
+                {(Object.keys(RESOLUTION_LABELS) as ReconciliationResolution[]).map((value) => (
+                  <option key={value} value={value}>
+                    {RESOLUTION_LABELS[value]}
+                  </option>
+                ))}
+              </Select>
+              <div className="flex items-end text-[13px] text-textSecondary">
+                Temuan yang sudah diputuskan tidak bisa diubah lagi; catatan peninjau
+                pertama disimpan di audit log.
+              </div>
+            </div>
+            <Textarea
+              id="reconciliation-resolution-note"
+              label="Catatan penyelesaian"
+              hint="Minimal 5 karakter. Jelaskan bukti atau tindakan yang sudah dilakukan."
+              maxLength={1000}
+              value={note}
+              disabled={resolveMutation.isPending}
+              onChange={(event) => setNote(event.target.value)}
+              placeholder="Contoh: selisih Rp2.000 adalah biaya kanal Midtrans, bukti transfer dilampirkan di tiket FIN-123."
+            />
+            {resolveErrorMessage ? <Alert tone="danger">{resolveErrorMessage}</Alert> : null}
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                disabled={resolveMutation.isPending}
+                onClick={() => setResolveTarget(null)}
+              >
+                Batal
+              </Button>
+              <Button
+                disabled={resolveMutation.isPending || note.trim().length < 5}
+                onClick={() =>
+                  resolveMutation.mutate({
+                    diffId: resolveTarget.id,
+                    resolution,
+                    note: note.trim()
+                  })
+                }
+              >
+                {resolveMutation.isPending ? 'Menyimpan…' : 'Simpan keputusan'}
+              </Button>
+            </div>
+          </CardBody>
         </Card>
       ) : null}
     </div>

@@ -66,6 +66,15 @@ describe('money routes are guarded', () => {
     ) as string[] | undefined;
     expect(roles).toBeUndefined();
   });
+
+  it('requires an admin role on the manual refund route', () => {
+    const roles = Reflect.getMetadata(
+      ROLES_KEY,
+      PaymentController.prototype.refundManual
+    ) as string[] | undefined;
+    expect(roles).toContain('admin_finance');
+    expect(roles).toContain('admin_super');
+  });
 });
 
 describe('the PJP webhook route stays open for the provider', () => {
@@ -165,6 +174,16 @@ describe('PaymentController methods', () => {
         paid_at: null
       },
       payment_instruction: { type: 'qris' as const, expires_at: '2026-10-21T10:00:00.000Z' }
+    }),
+    abandonPendingPayment: async () => ({
+      cancelled: true,
+      payment_id: 'pay-dp-1'
+    }),
+    syncPaymentStatus: async () => ({ status: 'paid', updated: true }),
+    refundManual: async () => ({
+      id: 'refund-1',
+      status: 'succeeded',
+      is_manual: true
     })
   };
 
@@ -207,5 +226,60 @@ describe('PaymentController methods', () => {
   it('dpByBooking defaults to dp when kind is omitted', async () => {
     const res = await controller.dpByBooking(validUuid, undefined, authReq);
     expect(res.data.payment.kind).toBe('dp');
+  });
+
+  it('abandonPending validates the body and delegates to the service', async () => {
+    await expect(
+      controller.abandonPending({ booking_id: 'bad', kind: 'dp' }, authReq)
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+
+    await expect(
+      controller.abandonPending({ booking_id: validUuid, kind: 'refund' }, authReq)
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+
+    const res = await controller.abandonPending(
+      { booking_id: validUuid, kind: 'dp' },
+      authReq
+    );
+    expect(res.data).toEqual({ cancelled: true, payment_id: 'pay-dp-1' });
+  });
+
+  it('syncPayment validates the body and delegates to the service', async () => {
+    await expect(
+      controller.syncPayment({ booking_id: 'bad', kind: 'settlement' }, authReq)
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+
+    await expect(
+      controller.syncPayment({ booking_id: validUuid, kind: 'unknown' }, authReq)
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+
+    const res = await controller.syncPayment(
+      { booking_id: validUuid, kind: 'settlement' },
+      authReq
+    );
+    expect(res.data).toEqual({ status: 'paid', updated: true });
+  });
+
+  it('refundManual validates the body and delegates to the service', async () => {
+    await expect(
+      controller.refundManual(
+        validUuid,
+        { amount_idr: 500_000, reason: 'ok', transfer_ref: '' },
+        'key-1',
+        authReq
+      )
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+
+    const res = await controller.refundManual(
+      validUuid,
+      {
+        amount_idr: '500000',
+        reason: 'transfer balik sebagian',
+        transfer_ref: 'TRF-0001'
+      },
+      'key-1234567890abcdef',
+      authReq
+    );
+    expect(res.data).toMatchObject({ id: 'refund-1', status: 'succeeded', is_manual: true });
   });
 });

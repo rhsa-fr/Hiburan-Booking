@@ -11,6 +11,7 @@ import '../../core/chat_socket.dart';
 import '../../core/format.dart';
 import '../../core/ui.dart';
 import '../../core/widgets.dart';
+import '../moderation/report_sheet.dart';
 
 /// Thread chat per booking. History comes from REST; new messages arrive on the
 /// WebSocket and are also stored by the API before the server broadcasts them.
@@ -276,6 +277,57 @@ class _ChatPageState extends State<ChatPage> {
     return error.userMessage;
   }
 
+  /// Menu moderasi untuk satu pesan: laporkan isinya (FR-123) atau blokir
+  /// pengirimnya (FR-142).
+  Future<void> _openMessageActions(ChatMessage message) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      useSafeArea: true,
+      backgroundColor: AppColors.card,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.flag_outlined),
+              title: const Text('Laporkan pesan ini'),
+              subtitle: const Text('Ditinjau moderator maksimal 1×24 jam'),
+              onTap: () => Navigator.of(sheetContext).pop('report'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.block_outlined),
+              title: const Text('Blokir pengirim'),
+              subtitle: const Text('Pesannya tidak ditampilkan lagi'),
+              onTap: () => Navigator.of(sheetContext).pop('block'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (!mounted || action == null) return;
+
+    if (action == 'report') {
+      await showReportSheet(
+        context,
+        targetKind: ReportTargetKind.chatMessage,
+        targetId: message.id,
+        targetLabel: 'Pesan ${message.roleLabel}',
+        bookingId: widget.bookingId,
+      );
+      return;
+    }
+
+    final blocked = await confirmAndBlockUser(
+      context,
+      userId: message.senderId,
+      name: message.roleLabel,
+    );
+    if (blocked && mounted) {
+      await _load();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
@@ -345,10 +397,14 @@ class _ChatPageState extends State<ChatPage> {
           );
         }
         final message = _messages[index - (_nextBefore == null ? 0 : 1)];
-        return _Bubble(
-          message: message,
-          own: ownId != null && message.senderId == ownId,
-          text: text,
+        final own = ownId != null && message.senderId == ownId;
+        final bubble = _Bubble(message: message, own: own, text: text);
+        if (own) return bubble;
+        // FR-123/FR-142: tekan lama pesan orang lain untuk melaporkan isinya
+        // atau memblokir pengirimnya.
+        return GestureDetector(
+          onLongPress: () => _openMessageActions(message),
+          child: bubble,
         );
       },
     );

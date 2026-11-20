@@ -8,6 +8,7 @@ stitch_tarlink_live_entertainment_app/
 .env
 .env.*
 !.env.example
+!.env.*.example
 *.pem
 *.key
 
@@ -24,6 +25,8 @@ build/
 # Konfigurasi & artefak agen lokal (bukan bagian produk)
 .commandcode/
 .opencode/
+.tmp-*
+shots/
 
 # Draf desain sementara & arsip diagnostik
 docs/_tmp_*.html

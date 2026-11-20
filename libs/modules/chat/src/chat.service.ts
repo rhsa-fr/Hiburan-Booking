@@ -90,7 +90,7 @@ export class ChatService {
     const cursor = query.before ? decodeChatCursor(query.before) : null;
 
     // One extra row tells us whether an older page exists without a count query.
-    const rows = await this.repository.listMessages(bookingId, {
+    const rows = await this.repository.listMessages(bookingId, user.id, {
       beforeCreatedAt: cursor?.createdAt ?? null,
       beforeId: cursor?.id ?? null,
       limit: query.limit + 1

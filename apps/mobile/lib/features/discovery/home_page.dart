@@ -138,7 +138,7 @@ class _Beranda extends StatefulWidget {
 }
 
 class _BerandaState extends State<_Beranda> {
-  static const _previewCount = 3;
+  static const _previewCount = 4;
 
   final _vendors = <VendorSummary>[];
 
@@ -147,6 +147,7 @@ class _BerandaState extends State<_Beranda> {
   String? _bookingError;
   int _vendorGeneration = 0;
   int _bookingGeneration = 0;
+  int _vendorTotal = 0;
   bool _started = false;
   bool _loadingVendors = true;
 
@@ -189,6 +190,7 @@ class _BerandaState extends State<_Beranda> {
         _vendors
           ..clear()
           ..addAll(result.items);
+        _vendorTotal = result.total;
         _loadingVendors = false;
         _vendorsError = null;
       });
@@ -284,7 +286,7 @@ class _BerandaState extends State<_Beranda> {
             onSearch: widget.onSearch,
             onOpenProfile: widget.onOpenProfile,
             onOpenBrowse: () => widget.onOpenBrowse(''),
-            vendorCount: _vendors.length,
+            vendorCount: _vendorTotal == 0 ? _vendors.length : _vendorTotal,
           ),
           Expanded(child: _content()),
         ],
@@ -324,13 +326,19 @@ class _BerandaState extends State<_Beranda> {
             const SizedBox(height: Sp.md),
           ],
           if (active != null) ...[
-            Text(
-              'Booking aktif',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-                letterSpacing: -0.2,
-              ),
+            Row(
+              children: [
+                const IconBadge(icon: Icons.confirmation_number_outlined),
+                const SizedBox(width: Sp.md),
+                Text(
+                  'Booking aktif',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.2,
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: Sp.md),
             _ActiveBookingCard(
@@ -343,11 +351,13 @@ class _BerandaState extends State<_Beranda> {
           const SizedBox(height: Sp.xl),
           Row(
             children: [
+              const IconBadge(icon: Icons.storefront_outlined),
+              const SizedBox(width: Sp.md),
               Expanded(
                 child: Text(
                   'Vendor Siap Tanggap',
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontSize: 18,
+                    fontSize: 16,
                     fontWeight: FontWeight.w700,
                     letterSpacing: -0.2,
                   ),
@@ -373,12 +383,7 @@ class _BerandaState extends State<_Beranda> {
               ),
             ],
           ),
-          const SizedBox(height: Sp.xs),
-          Text(
-            'Pilih grup, cek jadwal, lalu amankan tanggal acara.',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-          const SizedBox(height: Sp.md),
+          const SizedBox(height: Sp.sm),
           if (_vendorsError != null) ...[
             InfoStrip(
               message: _vendorsError!,
@@ -420,13 +425,29 @@ class _BerandaState extends State<_Beranda> {
                   ),
                 ),
               ),
-          const SizedBox(height: Sp.xl),
-          const _GuaranteeCard(),
+          const SizedBox(height: Sp.lg),
+          OutlinedButton.icon(
+            onPressed: () => widget.onOpenBrowse(''),
+            icon: const Icon(Icons.storefront_outlined, size: 18),
+            label: const Text('Lihat semua vendor'),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size.fromHeight(46),
+              side: const BorderSide(color: AppColors.lineStrong),
+              foregroundColor: AppColors.ink,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(Radii.sm),
+              ),
+              textStyle: Theme.of(
+                context,
+              ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
+            ),
+          ),
+          const SizedBox(height: Sp.lg),
+          const _TrustPanel(),
         ],
       ),
     );
   }
-
 }
 
 class _HomeHeader extends StatelessWidget {
@@ -483,34 +504,40 @@ class _HomeHeader extends StatelessWidget {
               _ProfileButton(onTap: onOpenProfile),
             ],
           ),
-          const SizedBox(height: 12),
-          Text(
-            formatDate(now),
-            style: const TextStyle(
-              fontSize: 9.5,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 1.2,
-              color: Colors.white54,
-            ),
+          const SizedBox(height: 14),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Expanded(
+                child: Text(
+                  firstName == null ? '$greeting.' : '$greeting, $firstName',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    height: 1.15,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.7,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+              const SizedBox(width: Sp.sm),
+              Text(
+                formatDate(now),
+                style: const TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.3,
+                  color: Colors.white54,
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 2),
-          Text(
-            firstName == null ? '$greeting.' : '$greeting, $firstName',
-            style: const TextStyle(
-              fontSize: 19,
-              fontWeight: FontWeight.w800,
-              letterSpacing: -0.6,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 7),
           Row(
             children: [
-              const Icon(
-                Icons.place_outlined,
-                size: 14,
-                color: AppColors.lime,
-              ),
+              const Icon(Icons.place_outlined, size: 14, color: AppColors.lime),
               const SizedBox(width: 4),
               Expanded(
                 child: Text(
@@ -524,29 +551,22 @@ class _HomeHeader extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(width: 6),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: AppColors.limeSoft,
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: const Text(
-                  'Siap',
-                  style: TextStyle(
-                    fontSize: 9.5,
-                    fontWeight: FontWeight.w800,
-                    color: AppColors.ink,
+              if (vendorCount > 0) ...[
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: const BoxDecoration(
+                    color: AppColors.lime,
+                    shape: BoxShape.circle,
                   ),
                 ),
-              ),
-              if (vendorCount > 0) ...[
                 const SizedBox(width: 6),
                 Text(
                   '$vendorCount grup aktif',
                   style: TextStyle(
                     fontSize: 10.5,
-                    color: Colors.white.withValues(alpha: 0.45),
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white.withValues(alpha: 0.62),
                   ),
                 ),
               ],
@@ -609,56 +629,78 @@ class _CategoryShortcuts extends StatelessWidget {
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     final items =
-        <({String label, IconData icon, Color tint, Color ink, String category})>[
-      (
-        label: 'Tarling\nDangdut',
-        icon: Icons.queue_music,
-        tint: AppColors.primarySoft,
-        ink: AppColors.primaryDeep,
-        category: 'tarling',
-      ),
-      (
-        label: 'Organ\nTunggal',
-        icon: Icons.piano,
-        tint: AppColors.secondarySoft,
-        ink: AppColors.secondary,
-        category: 'organ-tunggal',
-      ),
-      (
-        label: 'Seni\nTradisi',
-        icon: Icons.theater_comedy,
-        tint: AppColors.tertiarySoft,
-        ink: AppColors.tertiary,
-        category: 'seni-tradisi',
-      ),
-      (
-        label: 'Pendukung\nAcara',
-        icon: Icons.speaker_group_outlined,
-        tint: AppColors.secondarySoft,
-        ink: AppColors.secondary,
-        category: 'pendukung-acara',
-      ),
-    ];
+        <
+          ({
+            String label,
+            IconData icon,
+            Color tint,
+            Color ink,
+            String category,
+          })
+        >[
+          (
+            label: 'Tarling\nDangdut',
+            icon: Icons.queue_music,
+            tint: AppColors.primarySoft,
+            ink: AppColors.primaryDeep,
+            category: 'tarling',
+          ),
+          (
+            label: 'Organ\nTunggal',
+            icon: Icons.piano,
+            tint: AppColors.secondarySoft,
+            ink: AppColors.secondary,
+            category: 'organ-tunggal',
+          ),
+          (
+            label: 'Seni\nTradisi',
+            icon: Icons.theater_comedy,
+            tint: AppColors.tertiarySoft,
+            ink: AppColors.tertiary,
+            category: 'seni-tradisi',
+          ),
+          (
+            label: 'Pendukung\nAcara',
+            icon: Icons.speaker_group_outlined,
+            tint: AppColors.secondarySoft,
+            ink: AppColors.secondary,
+            category: 'pendukung-acara',
+          ),
+        ];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Kategori Panggung',
-          style: text.titleMedium?.copyWith(
-            fontSize: 18,
-            fontWeight: FontWeight.w700,
-            letterSpacing: -0.2,
-          ),
+        Row(
+          children: [
+            const IconBadge(icon: Icons.grid_view_rounded),
+            const SizedBox(width: Sp.md),
+            Text(
+              'Kategori',
+              style: text.titleMedium?.copyWith(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                letterSpacing: -0.2,
+              ),
+            ),
+            const Spacer(),
+            Flexible(
+              child: Text(
+                'Ketuk untuk jelajah',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.end,
+                style: text.bodySmall?.copyWith(color: AppColors.inkMuted),
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: Sp.md),
         Row(
           children: [
             Expanded(child: _tile(context, text, items[0])),
             const SizedBox(width: Sp.sm),
-            Expanded(
-              child: _tile(context, text, items[1], featured: true),
-            ),
+            Expanded(child: _tile(context, text, items[1], featured: true)),
           ],
         ),
         const SizedBox(height: Sp.sm),
@@ -676,13 +718,7 @@ class _CategoryShortcuts extends StatelessWidget {
   Widget _tile(
     BuildContext context,
     TextTheme text,
-    ({
-      String label,
-      IconData icon,
-      Color tint,
-      Color ink,
-      String category,
-    })
+    ({String label, IconData icon, Color tint, Color ink, String category})
     item, {
     bool featured = false,
   }) {
@@ -690,49 +726,43 @@ class _CategoryShortcuts extends StatelessWidget {
       color: featured ? AppColors.ink : AppColors.card,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(Radii.sm),
-        side: BorderSide(
-          color: featured ? AppColors.ink : AppColors.line,
-        ),
+        side: BorderSide(color: featured ? AppColors.ink : AppColors.line),
       ),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: () => onOpenCategory(item.category),
-        child: SizedBox(
-          height: 72,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            child: Row(
-              children: [
-                Container(
-                  width: 30,
-                  height: 30,
-                  decoration: BoxDecoration(
-                    color: featured ? AppColors.lime : item.tint,
-                    borderRadius: BorderRadius.circular(7),
-                  ),
-                  child: Icon(
-                    item.icon,
-                    size: 16,
-                    color: featured ? AppColors.ink : item.ink,
+        child: Container(
+          height: 52,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          child: Row(
+            children: [
+              Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: featured ? AppColors.lime : item.tint,
+                  borderRadius: BorderRadius.circular(7),
+                ),
+                child: Icon(
+                  item.icon,
+                  size: 16,
+                  color: featured ? AppColors.ink : item.ink,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  item.label.replaceAll('\n', ' '),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: text.labelMedium?.copyWith(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                    color: featured ? AppColors.onPrimary : AppColors.ink,
                   ),
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    item.label,
-                    maxLines: 2,
-                    style: text.labelSmall?.copyWith(
-                      fontSize: 11,
-                      height: 1.2,
-                      fontWeight: FontWeight.w700,
-                      color: featured
-                          ? AppColors.onPrimary
-                          : AppColors.ink,
-                    ),
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
@@ -740,8 +770,8 @@ class _CategoryShortcuts extends StatelessWidget {
   }
 }
 
-class _GuaranteeCard extends StatelessWidget {
-  const _GuaranteeCard();
+class _TrustPanel extends StatelessWidget {
+  const _TrustPanel();
 
   @override
   Widget build(BuildContext context) {
@@ -750,62 +780,100 @@ class _GuaranteeCard extends StatelessWidget {
       padding: const EdgeInsets.all(Sp.md),
       decoration: BoxDecoration(
         color: AppColors.surfaceTint,
-        borderRadius: BorderRadius.circular(Radii.sm),
+        borderRadius: BorderRadius.circular(Radii.lg),
         border: Border.all(color: AppColors.line),
       ),
-      child: Row(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: const BoxDecoration(
-              color: AppColors.secondary,
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.shield_outlined,
-              size: 20,
-              color: AppColors.onPrimary,
-            ),
-          ),
-          const SizedBox(width: Sp.md),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Jaminan Tanggap Sahibul Hajat',
-                  style: text.labelMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.ink,
-                  ),
+          Row(
+            children: [
+              const Icon(
+                Icons.verified_user_outlined,
+                size: 16,
+                color: AppColors.secondary,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                'Jaminan Tarlink',
+                style: text.labelMedium?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.ink,
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  'DP ditahan PJP berizin sampai acara selesai, lalu diteruskan ke vendor.',
-                  style: text.bodySmall?.copyWith(height: 1.4),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
-          const SizedBox(width: Sp.sm),
+          const SizedBox(height: Sp.md),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _pillar(
+                context,
+                Icons.lock_outline,
+                'DP ditahan',
+                'lewat PJP berizin',
+              ),
+              const SizedBox(width: Sp.sm),
+              _pillar(
+                context,
+                Icons.event_available_outlined,
+                'Jadwal jelas',
+                '45 hari ke depan',
+              ),
+              const SizedBox(width: Sp.sm),
+              _pillar(
+                context,
+                Icons.chat_bubble_outline,
+                'Chat vendor',
+                'langsung in-app',
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _pillar(
+    BuildContext context,
+    IconData icon,
+    String title,
+    String caption,
+  ) {
+    final text = Theme.of(context).textTheme;
+    return Expanded(
+      child: Column(
+        children: [
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            width: 30,
+            height: 30,
             decoration: BoxDecoration(
               color: AppColors.card,
-              borderRadius: BorderRadius.circular(6),
+              borderRadius: BorderRadius.circular(8),
               border: Border.all(color: AppColors.line),
             ),
-            child: Text(
-              'PJP\nRekber',
-              textAlign: TextAlign.center,
-              style: text.labelSmall?.copyWith(
-                fontSize: 9,
-                height: 1.2,
-                color: AppColors.secondary,
-                fontWeight: FontWeight.w700,
-              ),
+            child: Icon(icon, size: 16, color: AppColors.secondary),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: text.labelSmall?.copyWith(
+              fontSize: 10.5,
+              fontWeight: FontWeight.w800,
+              color: AppColors.ink,
+            ),
+          ),
+          const SizedBox(height: 1),
+          Text(
+            caption,
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            style: text.labelSmall?.copyWith(
+              fontSize: 9.5,
+              fontWeight: FontWeight.w500,
+              height: 1.25,
+              color: AppColors.inkMuted,
             ),
           ),
         ],
@@ -824,6 +892,20 @@ class _ActiveBookingCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     final pill = _paymentPill(booking.paymentStatus);
+    final total = booking.totalCustomerIdr;
+    final paid = total - booking.outstandingIdr;
+    final paidClamped = paid < 0 ? 0 : (paid > total ? total : paid);
+    final paidRatio = total <= 0 ? 0.0 : paidClamped / total;
+    final slot = booking.firstSlot;
+    final eventDate = slot == null ? null : DateTime.tryParse(slot.date);
+    final today = DateTime.now();
+    final daysLeft = eventDate == null
+        ? null
+        : DateTime(
+            eventDate.year,
+            eventDate.month,
+            eventDate.day,
+          ).difference(DateTime(today.year, today.month, today.day)).inDays;
 
     return Container(
       decoration: BoxDecoration(
@@ -842,74 +924,151 @@ class _ActiveBookingCard extends StatelessWidget {
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-        onTap: onOpen,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.lg, Sp.lg, Sp.xs),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          booking.vendor.displayName,
-                          style: text.titleLarge,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
+          onTap: onOpen,
+          child: Padding(
+            padding: const EdgeInsets.all(Sp.lg),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        booking.vendor.displayName,
+                        style: text.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: -0.2,
                         ),
-                        const SizedBox(height: 2),
-                        Text(
-                          booking.code,
-                          style: text.labelMedium?.copyWith(
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: Sp.sm),
+                    StatusPill(label: pill.label, tone: pill.tone),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Text(
+                      booking.code,
+                      style: text.labelSmall?.copyWith(
+                        color: AppColors.inkMuted,
+                        letterSpacing: 0.4,
+                      ),
+                    ),
+                    if (eventDate != null) ...[
+                      Text(
+                        ' · ',
+                        style: text.labelSmall?.copyWith(
+                          color: AppColors.inkMuted,
+                        ),
+                      ),
+                      Flexible(
+                        child: Text(
+                          formatDate(eventDate),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: text.labelSmall?.copyWith(
                             color: AppColors.inkMuted,
-                            letterSpacing: 0.4,
+                          ),
+                        ),
+                      ),
+                      if (daysLeft != null && daysLeft >= 0) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 5,
+                            vertical: 1,
+                          ),
+                          decoration: BoxDecoration(
+                            color: AppColors.limeSoft,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            daysLeft == 0 ? 'Hari ini' : 'H-$daysLeft',
+                            style: text.labelSmall?.copyWith(
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.w800,
+                              color: AppColors.ink,
+                            ),
                           ),
                         ),
                       ],
-                    ),
-                  ),
-                  const SizedBox(width: Sp.md),
-                  StatusPill(label: pill.label, tone: pill.tone),
-                ],
-              ),
-              const SizedBox(height: Sp.md),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Expanded(
-                    child: Text(
-                      'Sisa yang harus dibayar',
-                      style: text.bodySmall,
-                    ),
-                  ),
-                  const SizedBox(width: Sp.md),
-                  Text(
-                    rupiahTight(booking.outstandingIdr),
-                    style: text.titleLarge?.copyWith(
-                      color: AppColors.primary,
-                      fontFeatures: _tabularFigures,
-                    ),
-                  ),
-                ],
-              ),
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton(
-                  onPressed: onOpen,
-                  style: TextButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: Sp.sm),
-                    minimumSize: const Size(0, 48),
-                  ),
-                  child: const Text('Lihat booking'),
+                    ],
+                  ],
                 ),
-              ),
-            ],
+                const SizedBox(height: Sp.md),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Sisa pembayaran',
+                            style: text.bodySmall?.copyWith(
+                              color: AppColors.inkMuted,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            rupiahTight(booking.outstandingIdr),
+                            style: text.titleLarge?.copyWith(
+                              fontSize: 19,
+                              fontWeight: FontWeight.w800,
+                              color: AppColors.primary,
+                              fontFeatures: _tabularFigures,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: Sp.md),
+                    FilledButton(
+                      onPressed: onOpen,
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(0, 40),
+                        padding: const EdgeInsets.symmetric(horizontal: Sp.lg),
+                        backgroundColor: AppColors.ink,
+                        foregroundColor: AppColors.onPrimary,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(Radii.sm),
+                        ),
+                        textStyle: text.labelMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      child: const Text('Lihat booking'),
+                    ),
+                  ],
+                ),
+                if (total > 0) ...[
+                  const SizedBox(height: Sp.md),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(Radii.pill),
+                    child: LinearProgressIndicator(
+                      value: paidRatio,
+                      minHeight: 6,
+                      backgroundColor: AppColors.surfaceHigh,
+                      valueColor: const AlwaysStoppedAnimation<Color>(
+                        AppColors.accent,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    paid >= total
+                        ? 'Lunas ${rupiahTight(total)}'
+                        : 'Sudah dibayar ${rupiahTight(paidClamped)} dari ${rupiahTight(total)}',
+                    style: text.bodySmall?.copyWith(color: AppColors.inkMuted),
+                  ),
+                ],
+              ],
+            ),
           ),
-        ),
         ),
       ),
     );

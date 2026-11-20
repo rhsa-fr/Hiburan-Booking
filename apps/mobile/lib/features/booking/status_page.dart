@@ -173,8 +173,9 @@ class _BookingStatusPageState extends State<BookingStatusPage>
         raw = await api.get('/payments/by-booking/${widget.bookingId}');
       }
       final data = _asMap(raw);
-      final paymentMap =
-          data['payment'] != null ? _asMap(data['payment']) : data;
+      final paymentMap = data['payment'] != null
+          ? _asMap(data['payment'])
+          : data;
       final restored = PaymentView(
         payment: Payment.fromJson(paymentMap),
         instruction: data['payment_instruction'] == null
@@ -239,6 +240,25 @@ class _BookingStatusPageState extends State<BookingStatusPage>
     if (!mounted || !_resumed || _fetching) return;
     final route = ModalRoute.of(context);
     if (route != null && !route.isCurrent) return;
+
+    // Webhook tidak bisa menjangkau localhost. Selama masih ada tagihan
+    // pending, server diminta menarik status ke provider dulu; di produksi
+    // webhook tetap yang utama dan panggilan ini hanya no-op yang aman.
+    final booking = _booking;
+    if (booking != null && _payment?.payment.status == 'pending') {
+      try {
+        await AppScope.of(context).api.post(
+          '/payments/sync',
+          body: {
+            'booking_id': booking.id,
+            'kind': booking.paymentStatus == 'dp_paid' ? 'settlement' : 'dp',
+          },
+        );
+      } on ApiException {
+        // Cek status bersifat best-effort; kegagalan tidak boleh memblokir UI.
+      }
+    }
+
     await _fetch(silent: true);
   }
 
@@ -314,12 +334,15 @@ class _BookingStatusPageState extends State<BookingStatusPage>
     if (booking == null || booking.lifecycleStatus != 'confirmed') {
       return false;
     }
-    final parsed = DateTime.tryParse(booking.event.startDate) ??
+    final parsed =
+        DateTime.tryParse(booking.event.startDate) ??
         (booking.slots.isNotEmpty
             ? DateTime.tryParse(booking.slots.first.date)
             : null);
     if (parsed == null) return false;
-    final session = booking.slots.isNotEmpty ? booking.slots.first.session : null;
+    final session = booking.slots.isNotEmpty
+        ? booking.slots.first.session
+        : null;
     final hour = session == 'night' ? 19 : 8;
     final eventStart = DateTime(parsed.year, parsed.month, parsed.day, hour);
     return DateTime.now().isAfter(eventStart.add(const Duration(hours: 2)));
@@ -411,8 +434,9 @@ class _BookingStatusPageState extends State<BookingStatusPage>
         body: {'booking_id': booking.id, 'method': _method},
       );
       final data = _asMap(raw);
-      final paymentMap =
-          data['payment'] != null ? _asMap(data['payment']) : data;
+      final paymentMap = data['payment'] != null
+          ? _asMap(data['payment'])
+          : data;
       final result = PaymentView(
         payment: Payment.fromJson(paymentMap),
         instruction: data['payment_instruction'] == null
@@ -624,15 +648,15 @@ class _BookingStatusPageState extends State<BookingStatusPage>
             constraints: const BoxConstraints(maxWidth: 560),
             child: Column(
               children: [
-                StageHeader.back(
-                  context: context,
-                  title: 'Detail pesanan',
-                ),
+                StageHeader.back(context: context, title: 'Detail pesanan'),
                 Expanded(
                   child: _loading
                       ? const Padding(
                           padding: EdgeInsets.all(Sp.lg),
-                          child: AppLoading(rows: 3, label: 'Memuat status booking'),
+                          child: AppLoading(
+                            rows: 3,
+                            label: 'Memuat status booking',
+                          ),
                         )
                       : AppError(
                           message: _loadError ?? 'Booking belum bisa dimuat.',
@@ -705,10 +729,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
       bottom: Row(
         children: [
           Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: Sp.sm,
-              vertical: 5,
-            ),
+            padding: const EdgeInsets.symmetric(horizontal: Sp.sm, vertical: 5),
             decoration: BoxDecoration(
               color: AppColors.surfaceTint,
               borderRadius: BorderRadius.circular(8),
@@ -767,7 +788,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
             child: Text(
               _headline(booking),
               style: text.headlineSmall?.copyWith(
-                fontSize: 22,
+                fontSize: 19,
                 fontWeight: FontWeight.w700,
                 letterSpacing: -0.3,
               ),
@@ -794,10 +815,33 @@ class _BookingStatusPageState extends State<BookingStatusPage>
       _moneyBlock(booking),
       const SizedBox(height: Sp.lg),
       if (booking.lifecycleStatus == 'requested') ...[
-        const InfoStrip(
-          message: 'Menunggu vendor menerima. Kamu belum perlu membayar.',
+        SectionPanel(
           icon: Icons.schedule,
-          tone: InfoTone.primary,
+          title: 'Menunggu jawaban vendor',
+          caption: 'Booking sudah dikirim. Kamu belum perlu membayar.',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _waitingStep(
+                icon: Icons.check_circle_outline,
+                title: 'Permintaan dikirim',
+                caption: 'Booking ${booking.code} sudah masuk ke vendor.',
+                done: true,
+              ),
+              const SizedBox(height: Sp.md),
+              _waitingStep(
+                icon: Icons.storefront_outlined,
+                title: 'Vendor menerima',
+                caption: 'Setelah diterima, tombol bayar DP muncul di sini.',
+              ),
+              const SizedBox(height: Sp.md),
+              _waitingStep(
+                icon: Icons.payments_outlined,
+                title: 'Bayar DP',
+                caption: 'Selesaikan DP sebelum batas waktu yang tertera.',
+              ),
+            ],
+          ),
         ),
         const SizedBox(height: Sp.lg),
       ],
@@ -815,6 +859,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
         _paymentSection(booking, text),
         const SizedBox(height: Sp.xl),
       ],
+      _RefundStatusCard(bookingId: widget.bookingId),
       SectionHeader(
         title: 'Perjalanan booking',
         caption: 'Diperbarui mengikuti status dari sistem.',
@@ -863,6 +908,42 @@ class _BookingStatusPageState extends State<BookingStatusPage>
           'tanggal lain.',
     _ => null,
   };
+
+  Widget _waitingStep({
+    required IconData icon,
+    required String title,
+    required String caption,
+    bool done = false,
+  }) {
+    final text = Theme.of(context).textTheme;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        IconBadge(
+          icon: icon,
+          tone: done ? IconBadgeTone.success : IconBadgeTone.neutral,
+          size: 32,
+        ),
+        const SizedBox(width: Sp.md),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: text.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                caption,
+                style: text.bodySmall?.copyWith(color: AppColors.inkMuted),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
 
   Widget _moneyBlock(BookingView booking) {
     final total =
@@ -985,7 +1066,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
                         fit: BoxFit.scaleDown,
                         alignment: Alignment.centerRight,
                         child: Text(
-                          rupiah(outstanding),
+                          rupiahTight(outstanding),
                           style: text.titleLarge?.copyWith(
                             fontFeatures: _tabularFigures,
                           ),
@@ -1106,6 +1187,43 @@ class _BookingStatusPageState extends State<BookingStatusPage>
     );
   }
 
+  /// Melepas tagihan pending lalu kembali ke pemilihan metode. Server menolak
+  /// kalau tagihan sudah dibayar (harus refund, bukan switch).
+  Future<void> _changePaymentMethod(BookingView booking) async {
+    if (_paying) return;
+    final api = AppScope.of(context).api;
+    final settlement = booking.paymentStatus == 'dp_paid';
+    setState(() {
+      _paying = true;
+      _payError = null;
+    });
+    try {
+      await api.post(
+        '/payments/abandon',
+        body: {
+          'booking_id': booking.id,
+          'kind': settlement ? 'settlement' : 'dp',
+        },
+      );
+      if (!mounted) return;
+      setState(() {
+        _payment = null;
+        _paying = false;
+        _idempotencyKey = null;
+        _keyMethod = null;
+        _weakSignal = false;
+      });
+      _syncPolling();
+      _syncTick();
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _paying = false;
+        _payError = error.message;
+      });
+    }
+  }
+
   Widget _instructionView(
     BookingView booking,
     PaymentView view,
@@ -1144,6 +1262,22 @@ class _BookingStatusPageState extends State<BookingStatusPage>
             'lain.',
             style: text.bodyMedium,
           ),
+        const SizedBox(height: Sp.md),
+        const Divider(height: 1),
+        TextButton.icon(
+          onPressed: _paying ? null : () => _changePaymentMethod(booking),
+          icon: const Icon(Icons.swap_horiz, size: 18),
+          label: Text(
+            _paying ? 'Mengganti metode…' : 'Ganti metode pembayaran',
+          ),
+        ),
+        if (_payError != null) ...[
+          const SizedBox(height: Sp.xs),
+          Semantics(
+            liveRegion: true,
+            child: AppError(message: _payError!, compact: true),
+          ),
+        ],
       ],
     );
   }
@@ -1200,8 +1334,29 @@ class _BookingStatusPageState extends State<BookingStatusPage>
     double size, {
     bool isSettlement = false,
   }) {
-    final label =
-        isSettlement ? 'Kode QRIS pelunasan sisa' : 'Kode QRIS pembayaran DP';
+    final label = isSettlement
+        ? 'Kode QRIS pelunasan sisa'
+        : 'Kode QRIS pembayaran DP';
+    // Payload QR dirender lokal: gambar dari Midtrans tidak mengirim header
+    // CORS sehingga gagal di build web.
+    final payload = instruction.qrString;
+    if (payload != null && payload.isNotEmpty) {
+      return QrImageView(
+        data: payload,
+        version: QrVersions.auto,
+        size: size,
+        backgroundColor: AppColors.card,
+        eyeStyle: const QrEyeStyle(
+          eyeShape: QrEyeShape.square,
+          color: AppColors.ink,
+        ),
+        dataModuleStyle: const QrDataModuleStyle(
+          dataModuleShape: QrDataModuleShape.square,
+          color: AppColors.ink,
+        ),
+        semanticsLabel: label,
+      );
+    }
     final url = instruction.qrUrl;
     if (url != null) {
       return Image.network(
@@ -1229,20 +1384,15 @@ class _BookingStatusPageState extends State<BookingStatusPage>
         ),
       );
     }
-    return QrImageView(
-      data: instruction.qrString!,
-      version: QrVersions.auto,
-      size: size,
-      backgroundColor: AppColors.card,
-      eyeStyle: const QrEyeStyle(
-        eyeShape: QrEyeShape.square,
-        color: AppColors.ink,
+    return SizedBox(
+      width: size,
+      height: size,
+      child: const Center(
+        child: Text(
+          'Kode QR belum tersedia. Muat ulang halaman ini.',
+          textAlign: TextAlign.center,
+        ),
       ),
-      dataModuleStyle: const QrDataModuleStyle(
-        dataModuleShape: QrDataModuleShape.square,
-        color: AppColors.ink,
-      ),
-      semanticsLabel: label,
     );
   }
 
@@ -1267,10 +1417,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
         ),
         if (instruction.billerCode != null) ...[
           const SizedBox(height: Sp.xs),
-          Text(
-            'Kode biller ${instruction.billerCode}',
-            style: text.bodySmall,
-          ),
+          Text('Kode biller ${instruction.billerCode}', style: text.bodySmall),
         ],
         const SizedBox(height: Sp.md),
         OutlinedButton.icon(
@@ -1316,11 +1463,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
                     borderRadius: BorderRadius.circular(Radii.sm),
                     border: Border.all(color: AppColors.line),
                   ),
-                  child: _qrImage(
-                    instruction,
-                    240,
-                    isSettlement: isSettlement,
-                  ),
+                  child: _qrImage(instruction, 240, isSettlement: isSettlement),
                 ),
               ),
               const SizedBox(height: Sp.lg),
@@ -1361,7 +1504,11 @@ class _BookingStatusPageState extends State<BookingStatusPage>
       ),
       (
         title: 'DP diterima',
-        caption: null,
+        caption: dpDone
+            ? 'DP sudah masuk ke rekening PJP'
+            : closed
+            ? 'Booking ditutup sebelum DP masuk'
+            : 'Menunggu pembayaran DP',
         state: dpDone
             ? _StepState.done
             : closed
@@ -1370,7 +1517,11 @@ class _BookingStatusPageState extends State<BookingStatusPage>
       ),
       (
         title: 'Dikonfirmasi vendor',
-        caption: null,
+        caption: confirmed
+            ? 'Jadwal dikunci vendor'
+            : dpDone && !closed
+            ? 'Menunggu konfirmasi vendor'
+            : 'Berjalan setelah DP diterima',
         state: confirmed
             ? _StepState.done
             : dpDone && !closed
@@ -1379,7 +1530,10 @@ class _BookingStatusPageState extends State<BookingStatusPage>
       ),
       (
         title: 'Acara',
-        caption: null,
+        caption: eventDone
+            ? 'Acara selesai'
+            : '${formatDateIso(booking.event.startDate)}'
+                  '${booking.slots.isEmpty ? '' : ' · ${booking.slots.length} sesi'}',
         state: eventDone
             ? _StepState.done
             : confirmed && !closed
@@ -1579,7 +1733,10 @@ class _BookingStatusPageState extends State<BookingStatusPage>
           ],
         ),
         const SizedBox(height: 2),
-        Text('Dibuka ${formatDateIso(dispute.openedAt)}', style: text.bodySmall),
+        Text(
+          'Dibuka ${formatDateIso(dispute.openedAt)}',
+          style: text.bodySmall,
+        ),
         if (dispute.description.trim().isNotEmpty) ...[
           const SizedBox(height: Sp.sm),
           Text(dispute.description, style: text.bodyMedium),
@@ -1598,6 +1755,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
 
   Widget _actionBar(BookingView booking, TextTheme text) {
     final digits = whatsappDigits(booking.vendor.whatsapp);
+    final hasMore = digits != null || _canCancel || _canNoShow;
     return StickyActionBar(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1608,63 +1766,112 @@ class _BookingStatusPageState extends State<BookingStatusPage>
             icon: Icons.forum_outlined,
             onPressed: _openChat,
           ),
-          if (digits != null) ...[
-            const SizedBox(height: Sp.sm),
-            OutlinedButton.icon(
-              onPressed: _openWhatsApp,
-              icon: const Icon(Icons.chat_outlined, size: 20),
-              label: const Text('WhatsApp (cadangan)'),
-              style: OutlinedButton.styleFrom(
-                minimumSize: const Size.fromHeight(48),
-                foregroundColor: AppColors.primary,
-                side: const BorderSide(color: AppColors.line),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(Radii.sm),
+          // One primary action per screen: WhatsApp, cancel and no-show live
+          // behind one sheet instead of stacking three buttons over the page.
+          if (hasMore) ...[
+            const SizedBox(height: 2),
+            TextButton.icon(
+              onPressed: () => _openMoreActions(booking, digits),
+              icon: const Icon(Icons.more_horiz, size: 20),
+              label: const Text('Opsi lain'),
+              style: TextButton.styleFrom(
+                minimumSize: const Size.fromHeight(44),
+                foregroundColor: AppColors.inkMuted,
+                textStyle: text.labelMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
                 ),
-              ),
-            ),
-          ],
-          if (_canCancel) ...[
-            const SizedBox(height: Sp.sm),
-            OutlinedButton.icon(
-              onPressed: _cancelBusy ? null : _cancel,
-              icon: const Icon(Icons.close, size: 20),
-              label: Text(_cancelBusy ? 'Membatalkan…' : 'Batalkan booking'),
-              style: OutlinedButton.styleFrom(
-                minimumSize: const Size.fromHeight(52),
-                foregroundColor: AppColors.danger,
-                side: const BorderSide(color: AppColors.danger),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(Radii.sm),
-                ),
-                textStyle: text.labelLarge?.copyWith(color: AppColors.danger),
-              ),
-            ),
-          ],
-          if (_canNoShow) ...[
-            const SizedBox(height: Sp.sm),
-            OutlinedButton.icon(
-              onPressed: _noShowBusy ? null : _noShow,
-              icon: const Icon(Icons.warning_amber_rounded, size: 20),
-              label: Text(
-                _noShowBusy
-                    ? 'Menandai tidak hadir…'
-                    : 'Tandai vendor tidak hadir',
-              ),
-              style: OutlinedButton.styleFrom(
-                minimumSize: const Size.fromHeight(52),
-                foregroundColor: AppColors.warning,
-                side: const BorderSide(color: AppColors.warning),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(Radii.sm),
-                ),
-                textStyle: text.labelLarge?.copyWith(color: AppColors.warning),
               ),
             ),
           ],
         ],
       ),
     );
+  }
+
+  Future<void> _openMoreActions(BookingView booking, String? digits) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      useSafeArea: true,
+      builder: (sheetContext) {
+        final text = Theme.of(sheetContext).textTheme;
+        Widget option({
+          required IconData icon,
+          required String label,
+          required String hint,
+          required String value,
+          Color? color,
+        }) {
+          return ListTile(
+            leading: Icon(icon, color: color ?? AppColors.ink),
+            title: Text(
+              label,
+              style: text.titleSmall?.copyWith(
+                fontWeight: FontWeight.w700,
+                color: color,
+              ),
+            ),
+            subtitle: Text(hint, style: text.bodySmall),
+            trailing: const Icon(Icons.chevron_right, size: 20),
+            contentPadding: const EdgeInsets.symmetric(horizontal: Sp.lg),
+            onTap: () => Navigator.pop(sheetContext, value),
+          );
+        }
+
+        return SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(Sp.lg, 0, Sp.lg, Sp.sm),
+                child: Text(
+                  'Opsi lain',
+                  style: text.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              if (digits != null)
+                option(
+                  icon: Icons.chat_outlined,
+                  label: 'WhatsApp (cadangan)',
+                  hint: 'Kalau chat di aplikasi belum dibalas.',
+                  value: 'whatsapp',
+                ),
+              if (_canNoShow)
+                option(
+                  icon: Icons.warning_amber_rounded,
+                  label: 'Tandai vendor tidak hadir',
+                  hint: 'Acara tidak berjalan sesuai jadwal.',
+                  value: 'no_show',
+                  color: AppColors.warning,
+                ),
+              if (_canCancel)
+                option(
+                  icon: Icons.close,
+                  label: 'Batalkan booking',
+                  hint: 'Pembatalan mengikuti kebijakan refund.',
+                  value: 'cancel',
+                  color: AppColors.danger,
+                ),
+              const SizedBox(height: Sp.sm),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (!mounted || action == null) return;
+    switch (action) {
+      case 'whatsapp':
+        await _openWhatsApp();
+      case 'no_show':
+        await _noShow();
+      case 'cancel':
+        await _cancel();
+    }
   }
 }
 
@@ -2237,6 +2444,108 @@ class _NoShowSheetState extends State<_NoShowSheet> {
                 ),
               ],
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RefundStatusCard extends StatefulWidget {
+  const _RefundStatusCard({required this.bookingId});
+
+  final String bookingId;
+
+  @override
+  State<_RefundStatusCard> createState() => _RefundStatusCardState();
+}
+
+class _RefundStatusCardState extends State<_RefundStatusCard> {
+  Map<String, dynamic>? _refund;
+  bool _loaded = false;
+
+  static const _labels = <String, String>{
+    'requested': 'Menunggu persetujuan',
+    'approved': 'Disetujui',
+    'processing': 'Diproses',
+    'succeeded': 'Selesai',
+    'failed': 'Gagal',
+    'rejected': 'Ditolak',
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    // AppScope is an InheritedNotifier; reading it during initState would
+    // register a dependency before the first frame. Load after the first frame.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _load();
+    });
+  }
+
+  Future<void> _load() async {
+    try {
+      final raw = await AppScope.of(context).api.get(
+        '/payments/refunds/by-booking/${widget.bookingId}',
+      );
+      final data = raw is Map ? raw.cast<String, dynamic>() : null;
+      final refund = data?['refund'];
+      if (!mounted) return;
+      setState(() {
+        _refund = refund is Map ? refund.cast<String, dynamic>() : null;
+        _loaded = true;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loaded = true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final refund = _refund;
+    if (!_loaded || refund == null) return const SizedBox.shrink();
+    final text = Theme.of(context).textTheme;
+    final amount = (refund['amount_idr'] as num?)?.toInt() ?? 0;
+    final status = refund['status']?.toString() ?? '';
+    final manual = refund['is_manual'] == true;
+    final transfer = refund['transfer_ref']?.toString();
+    final reason = refund['reason_note']?.toString();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: Sp.xl),
+      child: BookingPanel(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(child: Text('Refund', style: text.titleMedium)),
+                Text(
+                  _labels[status] ?? status,
+                  style: text.labelLarge?.copyWith(color: AppColors.ink),
+                ),
+              ],
+            ),
+            const SizedBox(height: Sp.xs),
+            Text(rupiahTight(amount), style: text.titleLarge),
+            if (reason != null && reason.isNotEmpty) ...[
+              const SizedBox(height: Sp.xs),
+              Text(reason, style: text.bodyMedium),
+            ],
+            if (manual) ...[
+              const SizedBox(height: Sp.xs),
+              Text(
+                'Transfer manual${transfer == null || transfer.isEmpty ? '' : ' · $transfer'}',
+                style: text.bodySmall,
+              ),
+            ],
+            if (refund['transferred_at'] != null) ...[
+              const SizedBox(height: Sp.xs),
+              Text(
+                'Ditransfer ${formatDateIso(refund['transferred_at'].toString())}',
+                style: text.bodySmall,
+              ),
+            ],
           ],
         ),
       ),

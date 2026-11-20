@@ -146,6 +146,27 @@ export interface VendorSettledBookingRow {
   total_count: number;
 }
 
+/**
+ * One row of the FR-126 export. Money cells are the ledger lines of the
+ * booking's `release` entry, not recomputed from booking columns, so the CSV
+ * totals match the ledger exactly.
+ */
+export interface VendorEarningsExportRow {
+  booking_id: string;
+  code: string;
+  event_title: string;
+  event_start_date: string;
+  released_at: Date | string;
+  gmv_idr: string;
+  commission_idr: string;
+  service_fee_idr: string;
+  vendor_entitlement_idr: string;
+  clawback_idr: string;
+  payout_amount_idr: string | null;
+  payout_status: string | null;
+  payout_paid_at: Date | string | null;
+}
+
 const VENDOR_PROFILE_COLUMNS = `
   v.id,
   v.display_name,
@@ -428,6 +449,70 @@ export class VendorPortalRepository {
        ORDER BY b.released_at DESC NULLS LAST
        LIMIT $2 OFFSET $3`,
       [vendorId, limit, offset]
+    );
+  }
+
+  /**
+   * FR-126 export rows for one vendor. `from`/`to` are WIB calendar dates; the
+   * caller passes `limit + 1` to detect an oversized range without loading it
+   * all into memory.
+   */
+  async listEarningsForExport(
+    vendorId: string,
+    from: string,
+    to: string,
+    limit: number
+  ): Promise<VendorEarningsExportRow[]> {
+    if (!isUuid(vendorId)) return [];
+    return query<VendorEarningsExportRow>(
+      `SELECT b.id AS booking_id,
+              b.code,
+              e.title AS event_title,
+              e.start_date::text AS event_start_date,
+              b.released_at,
+              rel.gmv_idr::text AS gmv_idr,
+              rel.commission_idr::text AS commission_idr,
+              rel.service_fee_idr::text AS service_fee_idr,
+              rel.vendor_entitlement_idr::text AS vendor_entitlement_idr,
+              cb.clawback_idr::text AS clawback_idr,
+              po.amount_idr::text AS payout_amount_idr,
+              po.status AS payout_status,
+              po.paid_at AS payout_paid_at
+         FROM bookings b
+         JOIN events e ON e.id = b.event_id
+         LEFT JOIN LATERAL (
+           SELECT COALESCE(SUM(jl.debit_idr) FILTER (WHERE jl.account_code = '2100'), 0)::bigint AS gmv_idr,
+                  COALESCE(SUM(jl.credit_idr) FILTER (WHERE jl.account_code = '4100'), 0)::bigint AS commission_idr,
+                  COALESCE(SUM(jl.credit_idr) FILTER (WHERE jl.account_code = '4110'), 0)::bigint AS service_fee_idr,
+                  COALESCE(SUM(jl.credit_idr) FILTER (WHERE jl.account_code = '2120'), 0)::bigint AS vendor_entitlement_idr
+             FROM journal_entries je
+             JOIN journal_lines jl ON jl.journal_entry_id = je.id
+            WHERE je.booking_id = b.id
+              AND je.event_type = 'release'
+         ) rel ON true
+         LEFT JOIN LATERAL (
+           SELECT COALESCE(SUM(jl.debit_idr), 0)::bigint AS clawback_idr
+             FROM journal_entries je
+             JOIN journal_lines jl ON jl.journal_entry_id = je.id
+            WHERE je.booking_id = b.id
+              AND je.event_type = 'clawback_recognized'
+              AND jl.account_code = '2120'
+         ) cb ON true
+         LEFT JOIN LATERAL (
+           SELECT pi.amount_idr, p.status::text AS status, p.paid_at
+             FROM payout_items pi
+             JOIN payouts p ON p.id = pi.payout_id
+            WHERE pi.booking_id = b.id
+              AND pi.voided_at IS NULL
+            ORDER BY p.created_at DESC
+            LIMIT 1
+         ) po ON true
+        WHERE b.vendor_id = $1::uuid
+          AND b.released_at >= ($2::date::timestamp AT TIME ZONE 'Asia/Jakarta')
+          AND b.released_at < ((($3::date + 1)::timestamp) AT TIME ZONE 'Asia/Jakarta')
+        ORDER BY b.released_at, b.code
+        LIMIT $4`,
+      [vendorId, from, to, limit]
     );
   }
 }

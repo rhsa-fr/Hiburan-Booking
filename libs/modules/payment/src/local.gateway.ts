@@ -58,4 +58,7 @@ export class LocalPaymentGateway implements PaymentGateway {
       rawPayload: { local: true, refund_key: input.refundKey }
     };
   }
+
+  /** The local gateway leaves no payable charge behind, so this is a no-op. */
+  async expireCharge(): Promise<void> {}
 }

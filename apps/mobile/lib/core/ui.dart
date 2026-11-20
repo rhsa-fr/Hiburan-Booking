@@ -21,15 +21,39 @@ int _stableHash(String value) {
   return hash;
 }
 
-/// Theatrical stage curtain and royal gamelan tones for poster backdrops.
-List<Color> _posterGradient(int seed) {
+/// A stage-night ground plus one coloured beam per poster, picked from the
+/// vendor-name hash so a grup keeps the same poster across launches.
+///
+/// The old pairs were mid-tone maroon and olive; at card size they read as a
+/// placeholder next to the photographs. These grounds sit deep enough that the
+/// monogram and the lime CTA stay the brightest things on the card, while the
+/// beam gives each vendor its own colour signature.
+({List<Color> ground, Color beam}) _posterPalette(int seed) {
   return switch (seed % 6) {
-    0 => const <Color>[Color(0xFF7A1B2E), Color(0xFF571020)],
-    1 => const <Color>[Color(0xFF571020), Color(0xFF380812)],
-    2 => const <Color>[Color(0xFF1E6B4E), Color(0xFF0F3D2C)],
-    3 => const <Color>[Color(0xFF7A1B2E), Color(0xFF3D2500)],
-    4 => const <Color>[Color(0xFF571020), Color(0xFF1E6B4E)],
-    _ => const <Color>[Color(0xFF380812), Color(0xFF7A1B2E)],
+    0 => (
+      ground: const <Color>[Color(0xFF0B1220), Color(0xFF1B2A4A)],
+      beam: const Color(0xFFD9FB4F),
+    ),
+    1 => (
+      ground: const <Color>[Color(0xFF240A16), Color(0xFF451224)],
+      beam: const Color(0xFFF0B45A),
+    ),
+    2 => (
+      ground: const <Color>[Color(0xFF07231C), Color(0xFF0E3B2E)],
+      beam: const Color(0xFF9BE8B8),
+    ),
+    3 => (
+      ground: const <Color>[Color(0xFF241407), Color(0xFF43260C)],
+      beam: const Color(0xFFF2C66D),
+    ),
+    4 => (
+      ground: const <Color>[Color(0xFF08222B), Color(0xFF0C3441)],
+      beam: const Color(0xFF8ED8E8),
+    ),
+    _ => (
+      ground: const <Color>[Color(0xFF101C10), Color(0xFF1D3715)],
+      beam: const Color(0xFFC9F06A),
+    ),
   };
 }
 
@@ -141,12 +165,7 @@ class StageHeader extends StatelessWidget {
                 : null,
           ),
           child: Padding(
-            padding: EdgeInsets.fromLTRB(
-              Sp.lg,
-              topInset + Sp.sm,
-              Sp.lg,
-              Sp.md,
-            ),
+            padding: EdgeInsets.fromLTRB(Sp.lg, topInset + Sp.sm, Sp.lg, Sp.md),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -165,15 +184,16 @@ class StageHeader extends StatelessWidget {
                         children: [
                           Text(
                             title,
-                            style: (leading != null
-                                    ? text.titleLarge
-                                    : text.headlineSmall)
-                                ?.copyWith(
-                                  fontSize: leading != null ? 18 : 22,
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: -0.4,
-                                  color: AppColors.onPrimary,
-                                ),
+                            style:
+                                (leading != null
+                                        ? text.titleLarge
+                                        : text.headlineSmall)
+                                    ?.copyWith(
+                                      fontSize: leading != null ? 16 : 20,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: -0.4,
+                                      color: AppColors.onPrimary,
+                                    ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -199,10 +219,7 @@ class StageHeader extends StatelessWidget {
                     ],
                   ],
                 ),
-                if (bottom != null) ...[
-                  const SizedBox(height: Sp.md),
-                  bottom!,
-                ],
+                if (bottom != null) ...[const SizedBox(height: Sp.md), bottom!],
               ],
             ),
           ),
@@ -236,12 +253,12 @@ class PosterTile extends StatelessWidget {
   final bool compact;
   final String? heroTag;
 
-  Widget _proceduralStage(int seed, BorderRadius borderRadius) {
+  Widget _proceduralStage(int seed, Color beam, BorderRadius borderRadius) {
     return Stack(
       fit: StackFit.expand,
       children: [
         CustomPaint(
-          painter: _StageBandsPainter(seed: seed, compact: compact),
+          painter: _StageBandsPainter(seed: seed, beam: beam, compact: compact),
         ),
         if (!compact)
           Positioned.fill(
@@ -272,11 +289,18 @@ class PosterTile extends StatelessWidget {
                 style: TextStyle(
                   fontFamily: 'Plus Jakarta Sans',
                   fontFamilyFallback: const ['PlusJakartaSans', 'sans-serif'],
-                  fontSize: compact ? 20 : 42,
+                  fontSize: compact ? 20 : 40,
                   height: 1,
                   fontWeight: FontWeight.w700,
-                  letterSpacing: 1.5,
-                  color: AppColors.onPrimary.withValues(alpha: 0.92),
+                  letterSpacing: 2,
+                  color: AppColors.onPrimary.withValues(alpha: 0.94),
+                  shadows: const [
+                    Shadow(
+                      color: Color(0x59000000),
+                      blurRadius: 14,
+                      offset: Offset(0, 2),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -289,6 +313,7 @@ class PosterTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final seed = _stableHash(name);
+    final palette = _posterPalette(seed);
     final side = compact ? 64.0 : height;
     final corner = compact ? Radii.sm : radius;
     final borderRadius = BorderRadius.circular(corner);
@@ -306,7 +331,7 @@ class PosterTile extends StatelessWidget {
             gradient: LinearGradient(
               begin: seed.isEven ? Alignment.topLeft : Alignment.bottomLeft,
               end: seed.isEven ? Alignment.bottomRight : Alignment.topRight,
-              colors: _posterGradient(seed),
+              colors: palette.ground,
             ),
           ),
           child: ClipRRect(
@@ -319,14 +344,14 @@ class PosterTile extends StatelessWidget {
                     imageUrl!.trim(),
                     fit: BoxFit.cover,
                     errorBuilder: (context, error, stackTrace) =>
-                        _proceduralStage(seed, borderRadius),
+                        _proceduralStage(seed, palette.beam, borderRadius),
                     loadingBuilder: (context, child, progress) {
                       if (progress == null) return child;
-                      return _proceduralStage(seed, borderRadius);
+                      return _proceduralStage(seed, palette.beam, borderRadius);
                     },
                   )
                 else
-                  _proceduralStage(seed, borderRadius),
+                  _proceduralStage(seed, palette.beam, borderRadius),
                 if (!compact && hasImg)
                   Positioned.fill(
                     child: IgnorePointer(
@@ -398,17 +423,10 @@ class PosterTile extends StatelessWidget {
         );
 
         if (aspectRatio != null && !compact) {
-          return AspectRatio(
-            aspectRatio: aspectRatio!,
-            child: content,
-          );
+          return AspectRatio(aspectRatio: aspectRatio!, child: content);
         }
 
-        return SizedBox(
-          width: width,
-          height: side,
-          child: content,
-        );
+        return SizedBox(width: width, height: side, child: content);
       },
     );
 
@@ -492,6 +510,321 @@ class SectionHeader extends StatelessWidget {
   }
 }
 
+/// Bordered section surface with an optional icon badge and header.
+/// Keep exactly one level: never put another [SectionPanel] inside it.
+class SectionPanel extends StatelessWidget {
+  const SectionPanel({
+    super.key,
+    required this.child,
+    this.title,
+    this.caption,
+    this.icon,
+    this.leading,
+    this.actionLabel,
+    this.onAction,
+    this.padding = const EdgeInsets.all(Sp.lg),
+  });
+
+  final Widget child;
+  final String? title;
+  final String? caption;
+  final IconData? icon;
+  final Widget? leading;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+  final EdgeInsetsGeometry padding;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return Container(
+      padding: padding,
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(Radii.lg),
+        border: Border.all(color: AppColors.line),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x060F172A),
+            blurRadius: 8,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (title != null) ...[
+            Row(
+              children: [
+                if (leading != null) ...[
+                  leading!,
+                  const SizedBox(width: Sp.md),
+                ] else if (icon != null) ...[
+                  IconBadge(icon: icon!),
+                  const SizedBox(width: Sp.md),
+                ],
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title!,
+                        style: text.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if (caption != null) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          caption!,
+                          style: text.bodySmall?.copyWith(
+                            color: AppColors.inkMuted,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                if (actionLabel != null)
+                  Padding(
+                    padding: const EdgeInsets.only(left: Sp.sm),
+                    child: TextButton(
+                      onPressed: onAction,
+                      style: TextButton.styleFrom(
+                        foregroundColor: AppColors.primary,
+                        padding: const EdgeInsets.symmetric(horizontal: Sp.sm),
+                        minimumSize: const Size(0, 44),
+                        textStyle: text.labelMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      child: Text(actionLabel!),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: Sp.md),
+          ],
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+enum IconBadgeTone { lime, neutral, success, warning, danger }
+
+/// Small tinted square that gives a section a visual anchor.
+class IconBadge extends StatelessWidget {
+  const IconBadge({
+    super.key,
+    required this.icon,
+    this.tone = IconBadgeTone.lime,
+    this.size = 36,
+  });
+
+  final IconData icon;
+  final IconBadgeTone tone;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final (background, foreground) = switch (tone) {
+      IconBadgeTone.lime => (AppColors.limeSoft, AppColors.primary),
+      IconBadgeTone.neutral => (AppColors.neutralSoft, AppColors.inkMuted),
+      IconBadgeTone.success => (AppColors.accentSoft, AppColors.accent),
+      IconBadgeTone.warning => (AppColors.warningSoft, AppColors.warning),
+      IconBadgeTone.danger => (AppColors.dangerSoft, AppColors.danger),
+    };
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(Radii.sm),
+      ),
+      child: Icon(icon, size: size * 0.5, color: foreground),
+    );
+  }
+}
+
+/// Icon + label + value row used inside a [SectionPanel].
+class DetailRow extends StatelessWidget {
+  const DetailRow({
+    super.key,
+    required this.icon,
+    required this.label,
+    this.value,
+    this.trailing,
+  });
+
+  final IconData icon;
+  final String label;
+  final String? value;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Icon(icon, size: 18, color: AppColors.inkMuted),
+        ),
+        const SizedBox(width: Sp.sm),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: text.bodySmall?.copyWith(color: AppColors.inkMuted),
+              ),
+              if (value != null && value!.trim().isNotEmpty) ...[
+                const SizedBox(height: 2),
+                Text(value!, style: text.bodyMedium),
+              ],
+            ],
+          ),
+        ),
+        if (trailing != null) ...[const SizedBox(width: Sp.sm), trailing!],
+      ],
+    );
+  }
+}
+
+/// Selectable row used for payment methods and other single-choice lists.
+class ChoiceTile extends StatelessWidget {
+  const ChoiceTile({
+    super.key,
+    required this.label,
+    this.caption,
+    this.icon,
+    this.selected = false,
+    this.onTap,
+    this.trailing,
+  });
+
+  final String label;
+  final String? caption;
+  final IconData? icon;
+  final bool selected;
+  final VoidCallback? onTap;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return Material(
+      color: selected ? AppColors.limeSoft : AppColors.card,
+      borderRadius: BorderRadius.circular(Radii.lg),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(Radii.lg),
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 56),
+          padding: const EdgeInsets.symmetric(
+            horizontal: Sp.md,
+            vertical: Sp.sm + 2,
+          ),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(Radii.lg),
+            border: Border.all(
+              color: selected ? AppColors.limeDark : AppColors.line,
+              width: selected ? 1.5 : 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              if (icon != null) ...[
+                IconBadge(
+                  icon: icon!,
+                  tone: selected ? IconBadgeTone.lime : IconBadgeTone.neutral,
+                  size: 32,
+                ),
+                const SizedBox(width: Sp.md),
+              ],
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: text.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    if (caption != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        caption!,
+                        style: text.bodySmall?.copyWith(
+                          color: AppColors.inkMuted,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: Sp.sm),
+              trailing ??
+                  Icon(
+                    selected
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_unchecked,
+                    size: 20,
+                    color: selected ? AppColors.primary : AppColors.inkMuted,
+                  ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Numbered/icon badge for the checkout steps.
+class StepBadge extends StatelessWidget {
+  const StepBadge({super.key, required this.step, this.icon, this.size = 34});
+
+  final int step;
+  final IconData? icon;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: AppColors.primary,
+        borderRadius: BorderRadius.circular(Radii.sm),
+      ),
+      alignment: Alignment.center,
+      child: icon == null
+          ? Text(
+              '$step',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                color: AppColors.onPrimary,
+                fontWeight: FontWeight.w700,
+              ),
+            )
+          : Icon(icon, size: size * 0.5, color: AppColors.lime),
+    );
+  }
+}
+
 /// Vendor summary with a deterministic poster. Ratings, response rate, and
 /// category are rendered only when the API actually returns them.
 class VendorCard extends StatelessWidget {
@@ -528,7 +861,7 @@ class VendorCard extends StatelessWidget {
         ? Text(
             _rupiah(vendor.startingPriceIdr),
             style: text.displaySmall?.copyWith(
-              fontSize: 24,
+              fontSize: 21,
               color: AppColors.primary,
               fontWeight: FontWeight.w700,
               fontFeatures: _tabularFigures,
@@ -550,7 +883,7 @@ class VendorCard extends StatelessWidget {
         Text(
           vendor.displayName,
           style: text.titleMedium?.copyWith(
-            fontSize: 18,
+            fontSize: 16,
             fontWeight: FontWeight.w700,
             height: 1.3,
           ),
@@ -623,7 +956,7 @@ class VendorCard extends StatelessWidget {
       ],
     );
 
-    return Semantics(
+    final card = Semantics(
       button: true,
       child: Container(
         decoration: BoxDecoration(
@@ -689,9 +1022,7 @@ class VendorCard extends StatelessWidget {
                             padding: const EdgeInsets.symmetric(
                               horizontal: Sp.md,
                             ),
-                            textStyle: text.labelLarge?.copyWith(
-                              fontSize: 13,
-                            ),
+                            textStyle: text.labelLarge?.copyWith(fontSize: 13),
                           ),
                           child: const Row(
                             mainAxisAlignment: MainAxisAlignment.center,
@@ -707,6 +1038,44 @@ class VendorCard extends StatelessWidget {
                   ),
           ),
         ),
+      ),
+    );
+    return _PressScale(child: card);
+  }
+}
+
+/// Tactile press feedback for a whole card: it dips 1.8% while a finger is
+/// down, then eases back. Pointer up/cancel both reset, so a scroll that starts
+/// on the card never leaves it stuck small.
+class _PressScale extends StatefulWidget {
+  const _PressScale({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_PressScale> createState() => _PressScaleState();
+}
+
+class _PressScaleState extends State<_PressScale> {
+  bool _down = false;
+
+  void _set(bool value) {
+    if (_down == value) return;
+    setState(() => _down = value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final reduce = MediaQuery.disableAnimationsOf(context);
+    return Listener(
+      onPointerDown: (_) => _set(true),
+      onPointerUp: (_) => _set(false),
+      onPointerCancel: (_) => _set(false),
+      child: AnimatedScale(
+        scale: _down && !reduce ? 0.982 : 1,
+        duration: const Duration(milliseconds: 120),
+        curve: Curves.easeOutCubic,
+        child: widget.child,
       ),
     );
   }
@@ -727,9 +1096,7 @@ class _DpPill extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppColors.primarySoft,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: AppColors.primary.withValues(alpha: 0.3),
-        ),
+        border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
       ),
       child: Text(
         'DP $percent%',
@@ -1182,16 +1549,11 @@ class StatusPill extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = _pillColors(tone);
     return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: Sp.sm,
-        vertical: 3,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: Sp.sm, vertical: 3),
       decoration: BoxDecoration(
         color: colors.background,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: colors.foreground.withValues(alpha: 0.22),
-        ),
+        border: Border.all(color: colors.foreground.withValues(alpha: 0.22)),
       ),
       child: Text(
         label,
@@ -1287,23 +1649,27 @@ class MediaGalleryReel extends StatelessWidget {
       children: [
         Row(
           children: [
-            const Icon(Icons.photo_library_outlined, size: 20, color: AppColors.primary),
+            const Icon(
+              Icons.photo_library_outlined,
+              size: 20,
+              color: AppColors.primary,
+            ),
             const SizedBox(width: Sp.xs + 2),
             Text(
               title,
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.2,
-                  ),
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                letterSpacing: -0.2,
+              ),
             ),
             const Spacer(),
             Text(
               '${photoUrls.length} Foto',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: AppColors.inkMuted,
-                    fontWeight: FontWeight.w600,
-                  ),
+                color: AppColors.inkMuted,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ],
         ),
@@ -1335,7 +1701,10 @@ class MediaGalleryReel extends StatelessWidget {
                         fit: BoxFit.cover,
                         errorBuilder: (_, __, ___) => Container(
                           color: AppColors.surfaceSoft,
-                          child: const Icon(Icons.broken_image_outlined, color: AppColors.inkMuted),
+                          child: const Icon(
+                            Icons.broken_image_outlined,
+                            color: AppColors.inkMuted,
+                          ),
                         ),
                       ),
                       Positioned(
@@ -1347,7 +1716,11 @@ class MediaGalleryReel extends StatelessWidget {
                             color: Colors.black.withValues(alpha: 0.6),
                             shape: BoxShape.circle,
                           ),
-                          child: const Icon(Icons.fullscreen, color: Colors.white, size: 16),
+                          child: const Icon(
+                            Icons.fullscreen,
+                            color: Colors.white,
+                            size: 16,
+                          ),
                         ),
                       ),
                     ],
@@ -1384,15 +1757,19 @@ class StageVideoCard extends StatelessWidget {
       children: [
         Row(
           children: [
-            const Icon(Icons.videocam_outlined, size: 20, color: AppColors.primary),
+            const Icon(
+              Icons.videocam_outlined,
+              size: 20,
+              color: AppColors.primary,
+            ),
             const SizedBox(width: Sp.xs + 2),
             Text(
               'Cuplikan Video Pentas',
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.2,
-                  ),
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                letterSpacing: -0.2,
+              ),
             ),
           ],
         ),
@@ -1467,7 +1844,11 @@ class StageVideoCard extends StatelessWidget {
                           ),
                         ],
                       ),
-                      child: const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 36),
+                      child: const Icon(
+                        Icons.play_arrow_rounded,
+                        color: Colors.white,
+                        size: 36,
+                      ),
                     ),
                   ),
                   Positioned(
@@ -1483,7 +1864,8 @@ class StageVideoCard extends StatelessWidget {
                             children: [
                               Text(
                                 'Putar Cuplikan Panggung',
-                                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                style: Theme.of(context).textTheme.titleSmall
+                                    ?.copyWith(
                                       color: Colors.white,
                                       fontWeight: FontWeight.w700,
                                     ),
@@ -1491,8 +1873,11 @@ class StageVideoCard extends StatelessWidget {
                               const SizedBox(height: 2),
                               Text(
                                 'Buka tautan pentas langsung',
-                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                      color: Colors.white.withValues(alpha: 0.8),
+                                style: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(
+                                      color: Colors.white.withValues(
+                                        alpha: 0.8,
+                                      ),
                                       fontSize: 11,
                                     ),
                               ),
@@ -1500,7 +1885,10 @@ class StageVideoCard extends StatelessWidget {
                           ),
                         ),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 5,
+                          ),
                           decoration: BoxDecoration(
                             color: Colors.white.withValues(alpha: 0.25),
                             borderRadius: BorderRadius.circular(Radii.pill),
@@ -1508,7 +1896,11 @@ class StageVideoCard extends StatelessWidget {
                           child: const Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(Icons.open_in_new, color: Colors.white, size: 13),
+                              Icon(
+                                Icons.open_in_new,
+                                color: Colors.white,
+                                size: 13,
+                              ),
                               SizedBox(width: 4),
                               Text(
                                 'Tonton',
@@ -1604,77 +1996,100 @@ class BrandLockup extends StatelessWidget {
   }
 }
 
-/// Diagonal stage-light bands, generated from the same hash as the gradient so
-/// every poster is consistent across launches and devices.
+/// Stage-rig artwork behind a poster: one coloured beam per group, a soft
+/// source glow, a printed halftone texture, and a footlight at the floor line.
+/// Generated from the same name hash as the ground, so a vendor keeps its
+/// poster across launches and devices. Everything is painted flat (no blur
+/// filters), so it stays cheap on low-end Android phones.
 class _StageBandsPainter extends CustomPainter {
-  const _StageBandsPainter({required this.seed, this.compact = false});
+  const _StageBandsPainter({
+    required this.seed,
+    required this.beam,
+    this.compact = false,
+  });
 
   final int seed;
+  final Color beam;
   final bool compact;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final spotCenter = Offset(size.width * 0.35, -size.height * 0.1);
-    final spotRadius = size.longestSide * 0.9;
-    final spot = Paint()
-      ..shader = RadialGradient(
-        colors: [
-          Colors.white.withValues(alpha: compact ? 0.08 : 0.14),
-          Colors.white.withValues(alpha: 0),
-        ],
-      ).createShader(Rect.fromCircle(center: spotCenter, radius: spotRadius));
-    canvas.drawCircle(spotCenter, spotRadius, spot);
+    // The rig sits just above the frame, like a light bar at the front of a
+    // stage; the beams fan down from there.
+    final source = Offset(
+      size.width * (0.30 + (seed % 5) * 0.09),
+      -size.height * 0.14,
+    );
+    final glowRadius = size.longestSide * 0.95;
+    canvas.drawCircle(
+      source,
+      glowRadius,
+      Paint()
+        ..shader = RadialGradient(
+          colors: [
+            beam.withValues(alpha: compact ? 0.24 : 0.34),
+            beam.withValues(alpha: 0.06),
+            Colors.transparent,
+          ],
+          stops: const [0, 0.45, 1],
+        ).createShader(Rect.fromCircle(center: source, radius: glowRadius)),
+    );
 
-    final paint = Paint()..style = PaintingStyle.fill;
-    final slant = size.height * 0.55;
-    final bandCount = compact ? 2 : 3;
-    for (var i = 0; i < bandCount; i++) {
-      final jitter = ((seed >> (i * 5)) & 0x7) / 7;
-      final base = size.width * (0.22 + 0.26 * i) + jitter * size.width * 0.06;
-      final width = size.width * (i == 1 ? 0.20 : 0.12);
+    final beamCount = compact ? 2 : 3;
+    for (var i = 0; i < beamCount; i++) {
+      final t = beamCount == 1 ? 0.5 : i / (beamCount - 1);
+      final jitter = ((seed >> (i * 4)) & 0x3) * 2.0;
+      final footX = size.width * (0.14 + 0.72 * t) + jitter;
+      final footWidth = size.width * (i == 1 ? 0.24 : 0.17);
       final path = Path()
-        ..moveTo(base, size.height)
-        ..lineTo(base + width, size.height)
-        ..lineTo(base + width + slant, 0)
-        ..lineTo(base + slant, 0)
+        ..moveTo(footX - footWidth / 2, size.height)
+        ..lineTo(footX + footWidth / 2, size.height)
+        ..lineTo(source.dx + (i - 1) * size.width * 0.06, source.dy)
         ..close();
-      paint.color = Colors.white.withValues(alpha: 0.05 + i * 0.015);
-      canvas.drawPath(path, paint);
+      canvas.drawPath(
+        path,
+        Paint()
+          ..shader = LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              beam.withValues(alpha: compact ? 0.10 : 0.17),
+              beam.withValues(alpha: 0.02),
+            ],
+          ).createShader(Rect.fromLTWH(0, 0, size.width, size.height)),
+      );
     }
 
-    if (!compact) {
-      final particle = Paint()..style = PaintingStyle.fill;
-      for (var i = 0; i < 18; i++) {
-        final px = (((seed * 31 + i * 97) & 0x7fffffff) % 1000) / 1000.0 * size.width;
-        final py = (((seed * 59 + i * 43) & 0x7fffffff) % 1000) / 1000.0 * size.height;
-        final pr = 1.0 + (i % 3) * 0.6;
-        final alpha = 0.08 + (i % 4) * 0.04;
-        particle.color = Colors.white.withValues(alpha: alpha);
-        canvas.drawCircle(Offset(px, py), pr, particle);
+    // Halftone field in the lower-right corner: the printed-poster texture,
+    // kept off the centre so the monogram stays clean.
+    final dot = Paint()..color = Colors.white.withValues(alpha: 0.06);
+    final step = compact ? 10.0 : 10.0;
+    for (var y = size.height * 0.52; y < size.height; y += step) {
+      for (var x = size.width * 0.56; x < size.width; x += step) {
+        canvas.drawCircle(Offset(x, y), compact ? 0.8 : 1.0, dot);
       }
     }
 
-    final floorRect = Rect.fromLTWH(
-      0,
-      size.height * 0.55,
-      size.width,
-      size.height * 0.45,
+    // Footlight where the stage floor meets the backdrop.
+    final floorY = size.height * (compact ? 0.74 : 0.8);
+    canvas.drawRect(
+      Rect.fromLTWH(0, floorY, size.width, 1.2),
+      Paint()
+        ..shader = LinearGradient(
+          colors: [
+            Colors.transparent,
+            beam.withValues(alpha: 0.45),
+            Colors.transparent,
+          ],
+        ).createShader(Rect.fromLTWH(0, floorY, size.width, 1.2)),
     );
-    final floor = Paint()
-      ..shader = LinearGradient(
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-        colors: [
-          Colors.white.withValues(alpha: 0),
-          Colors.white.withValues(alpha: 0.09),
-        ],
-      ).createShader(floorRect);
-    canvas.drawRect(floorRect, floor);
   }
 
   @override
   bool shouldRepaint(_StageBandsPainter oldDelegate) =>
-      oldDelegate.seed != seed || oldDelegate.compact != compact;
+      oldDelegate.seed != seed ||
+      oldDelegate.beam != beam ||
+      oldDelegate.compact != compact;
 }
 
 /// Modal bottom sheet date picker with Year, Month, and Calendar day selection.
@@ -1717,19 +2132,41 @@ class _TarlinkDatePickerSheet extends StatefulWidget {
   final DateTime lastDate;
 
   @override
-  State<_TarlinkDatePickerSheet> createState() => _TarlinkDatePickerSheetState();
+  State<_TarlinkDatePickerSheet> createState() =>
+      _TarlinkDatePickerSheetState();
 }
 
 class _TarlinkDatePickerSheetState extends State<_TarlinkDatePickerSheet> {
   static const _months = <String>[
-    'Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun',
-    'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des',
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'Mei',
+    'Jun',
+    'Jul',
+    'Agu',
+    'Sep',
+    'Okt',
+    'Nov',
+    'Des',
   ];
-  static const _weekdays = <String>['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'];
+  static const _weekdays = <String>[
+    'Sen',
+    'Sel',
+    'Rab',
+    'Kam',
+    'Jum',
+    'Sab',
+    'Min',
+  ];
+
+  static const _monthChipWidth = 54.0;
 
   late int _selectedYear;
   late int _selectedMonth;
   late DateTime? _selectedDate;
+  final _monthScroll = ScrollController();
 
   @override
   void initState() {
@@ -1737,29 +2174,54 @@ class _TarlinkDatePickerSheetState extends State<_TarlinkDatePickerSheet> {
     _selectedYear = widget.initialDate.year;
     _selectedMonth = widget.initialDate.month;
     _selectedDate = widget.initialDate;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _revealMonth());
+  }
+
+  @override
+  void dispose() {
+    _monthScroll.dispose();
+    super.dispose();
+  }
+
+  /// The month strip is scrolled to the selected month, otherwise the active
+  /// month (for example November) sits off-screen behind January–June.
+  void _revealMonth() {
+    if (!mounted || !_monthScroll.hasClients) return;
+    final offset = (_selectedMonth - 1) * (_monthChipWidth + Sp.xs);
+    final max = _monthScroll.position.maxScrollExtent;
+    _monthScroll.jumpTo(offset.clamp(0.0, max));
+  }
+
+  void _scheduleRevealMonth() {
+    WidgetsBinding.instance.addPostFrameCallback((_) => _revealMonth());
   }
 
   void _onYearChanged(int year) {
     setState(() {
       _selectedYear = year;
-      if (year == widget.firstDate.year && _selectedMonth < widget.firstDate.month) {
+      if (year == widget.firstDate.year &&
+          _selectedMonth < widget.firstDate.month) {
         _selectedMonth = widget.firstDate.month;
       }
-      if (year == widget.lastDate.year && _selectedMonth > widget.lastDate.month) {
+      if (year == widget.lastDate.year &&
+          _selectedMonth > widget.lastDate.month) {
         _selectedMonth = widget.lastDate.month;
       }
       if (_selectedDate != null &&
-          (_selectedDate!.year != _selectedYear || _selectedDate!.month != _selectedMonth)) {
+          (_selectedDate!.year != _selectedYear ||
+              _selectedDate!.month != _selectedMonth)) {
         final days = DateTime(_selectedYear, _selectedMonth + 1, 0).day;
         final day = _selectedDate!.day.clamp(1, days);
         final candidate = DateTime(_selectedYear, _selectedMonth, day);
-        if (!candidate.isBefore(widget.firstDate) && !candidate.isAfter(widget.lastDate)) {
+        if (!candidate.isBefore(widget.firstDate) &&
+            !candidate.isAfter(widget.lastDate)) {
           _selectedDate = candidate;
         } else {
           _selectedDate = null;
         }
       }
     });
+    _scheduleRevealMonth();
   }
 
   void _onMonthChanged(int month) {
@@ -1769,20 +2231,22 @@ class _TarlinkDatePickerSheetState extends State<_TarlinkDatePickerSheet> {
         final days = DateTime(_selectedYear, _selectedMonth + 1, 0).day;
         final day = _selectedDate!.day.clamp(1, days);
         final candidate = DateTime(_selectedYear, _selectedMonth, day);
-        if (!candidate.isBefore(widget.firstDate) && !candidate.isAfter(widget.lastDate)) {
+        if (!candidate.isBefore(widget.firstDate) &&
+            !candidate.isAfter(widget.lastDate)) {
           _selectedDate = candidate;
         } else {
           _selectedDate = null;
         }
       }
     });
+    _scheduleRevealMonth();
   }
 
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     final years = [
-      for (var y = widget.firstDate.year; y <= widget.lastDate.year; y++) y
+      for (var y = widget.firstDate.year; y <= widget.lastDate.year; y++) y,
     ];
 
     final daysInMonth = DateTime(_selectedYear, _selectedMonth + 1, 0).day;
@@ -1806,7 +2270,7 @@ class _TarlinkDatePickerSheetState extends State<_TarlinkDatePickerSheet> {
                       Text(
                         'Pilih Tanggal Acara',
                         style: text.titleMedium?.copyWith(
-                          fontSize: 18,
+                          fontSize: 16,
                           fontWeight: FontWeight.w800,
                           color: AppColors.ink,
                         ),
@@ -1814,7 +2278,9 @@ class _TarlinkDatePickerSheetState extends State<_TarlinkDatePickerSheet> {
                       const SizedBox(height: 2),
                       Text(
                         'Tentukan tahun, bulan, dan hari sewa hiburan.',
-                        style: text.bodySmall?.copyWith(color: AppColors.inkMuted),
+                        style: text.bodySmall?.copyWith(
+                          color: AppColors.inkMuted,
+                        ),
                       ),
                     ],
                   ),
@@ -1832,7 +2298,11 @@ class _TarlinkDatePickerSheetState extends State<_TarlinkDatePickerSheet> {
                       width: 34,
                       height: 34,
                       child: Center(
-                        child: Icon(Icons.close, size: 18, color: AppColors.ink),
+                        child: Icon(
+                          Icons.close,
+                          size: 18,
+                          color: AppColors.ink,
+                        ),
                       ),
                     ),
                   ),
@@ -1842,7 +2312,10 @@ class _TarlinkDatePickerSheetState extends State<_TarlinkDatePickerSheet> {
             const SizedBox(height: Sp.md),
             // Live Selected Date Banner with prominent YEAR
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: Sp.md, vertical: Sp.sm + 2),
+              padding: const EdgeInsets.symmetric(
+                horizontal: Sp.md,
+                vertical: Sp.sm + 2,
+              ),
               decoration: BoxDecoration(
                 color: AppColors.surfaceSoft,
                 borderRadius: BorderRadius.circular(Radii.sm),
@@ -1850,7 +2323,11 @@ class _TarlinkDatePickerSheetState extends State<_TarlinkDatePickerSheet> {
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.event_outlined, size: 18, color: AppColors.primary),
+                  const Icon(
+                    Icons.event_outlined,
+                    size: 18,
+                    color: AppColors.primary,
+                  ),
                   const SizedBox(width: Sp.sm),
                   Expanded(
                     child: Text(
@@ -1859,12 +2336,17 @@ class _TarlinkDatePickerSheetState extends State<_TarlinkDatePickerSheet> {
                           : 'Pilih hari pada kalender',
                       style: text.labelMedium?.copyWith(
                         fontWeight: FontWeight.w700,
-                        color: _selectedDate != null ? AppColors.ink : AppColors.inkMuted,
+                        color: _selectedDate != null
+                            ? AppColors.ink
+                            : AppColors.inkMuted,
                       ),
                     ),
                   ),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
                     decoration: BoxDecoration(
                       color: AppColors.primary,
                       borderRadius: BorderRadius.circular(Radii.sm),
@@ -1909,14 +2391,20 @@ class _TarlinkDatePickerSheetState extends State<_TarlinkDatePickerSheet> {
                           onSelected: (_) => _onYearChanged(y),
                           selectedColor: AppColors.primary,
                           labelStyle: TextStyle(
-                            color: isSelected ? AppColors.onPrimary : AppColors.ink,
-                            fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
+                            color: isSelected
+                                ? AppColors.onPrimary
+                                : AppColors.ink,
+                            fontWeight: isSelected
+                                ? FontWeight.w700
+                                : FontWeight.w600,
                             fontSize: 13,
                           ),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(Radii.sm),
                             side: BorderSide(
-                              color: isSelected ? AppColors.primary : AppColors.line,
+                              color: isSelected
+                                  ? AppColors.primary
+                                  : AppColors.line,
                             ),
                           ),
                           visualDensity: VisualDensity.compact,
@@ -1928,39 +2416,78 @@ class _TarlinkDatePickerSheetState extends State<_TarlinkDatePickerSheet> {
               ],
             ),
             const SizedBox(height: Sp.sm),
-            SizedBox(
-              height: 40,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: 12,
-                separatorBuilder: (_, _) => const SizedBox(width: Sp.xs),
-                itemBuilder: (context, index) {
-                  final m = index + 1;
-                  final isSelected = m == _selectedMonth;
-                  final isDisabled = (_selectedYear == widget.firstDate.year && m < widget.firstDate.month) ||
-                      (_selectedYear == widget.lastDate.year && m > widget.lastDate.month);
-                  return ChoiceChip(
-                    label: Text(_months[index]),
-                    selected: isSelected,
-                    onSelected: isDisabled ? null : (_) => _onMonthChanged(m),
-                    selectedColor: AppColors.primaryContainer,
-                    labelStyle: TextStyle(
-                      color: isDisabled
-                          ? AppColors.lineStrong.withValues(alpha: 0.5)
-                          : (isSelected ? AppColors.onPrimary : AppColors.ink),
-                      fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                      fontSize: 13,
+            Row(
+              children: [
+                Text(
+                  'Bulan:',
+                  style: text.labelSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.5,
+                    color: AppColors.ink,
+                  ),
+                ),
+                const SizedBox(width: Sp.sm),
+                Expanded(
+                  child: SizedBox(
+                    height: 38,
+                    child: ListView.separated(
+                      controller: _monthScroll,
+                      scrollDirection: Axis.horizontal,
+                      itemCount: 12,
+                      separatorBuilder: (_, _) => const SizedBox(width: Sp.xs),
+                      itemBuilder: (context, index) {
+                        final m = index + 1;
+                        final isSelected = m == _selectedMonth;
+                        final isDisabled =
+                            (_selectedYear == widget.firstDate.year &&
+                                m < widget.firstDate.month) ||
+                            (_selectedYear == widget.lastDate.year &&
+                                m > widget.lastDate.month);
+                        return SizedBox(
+                          width: _monthChipWidth,
+                          child: Material(
+                            color: isSelected
+                                ? AppColors.primaryContainer
+                                : AppColors.card,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(Radii.sm),
+                              side: BorderSide(
+                                color: isSelected
+                                    ? AppColors.primaryContainer
+                                    : AppColors.line,
+                              ),
+                            ),
+                            clipBehavior: Clip.antiAlias,
+                            child: InkWell(
+                              onTap: isDisabled
+                                  ? null
+                                  : () => _onMonthChanged(m),
+                              child: Center(
+                                child: Text(
+                                  _months[index],
+                                  style: text.labelMedium?.copyWith(
+                                    color: isDisabled
+                                        ? AppColors.lineStrong.withValues(
+                                            alpha: 0.5,
+                                          )
+                                        : (isSelected
+                                              ? AppColors.onPrimary
+                                              : AppColors.ink),
+                                    fontWeight: isSelected
+                                        ? FontWeight.w700
+                                        : FontWeight.w500,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      },
                     ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(Radii.sm),
-                      side: BorderSide(
-                        color: isSelected ? AppColors.primaryContainer : AppColors.line,
-                      ),
-                    ),
-                    visualDensity: VisualDensity.compact,
-                  );
-                },
-              ),
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: Sp.md),
             Row(
@@ -2002,7 +2529,8 @@ class _TarlinkDatePickerSheetState extends State<_TarlinkDatePickerSheet> {
                   final isPast = date.isBefore(widget.firstDate);
                   final isAfterLast = date.isAfter(widget.lastDate);
                   final isDisabled = isPast || isAfterLast;
-                  final isSelected = _selectedDate != null &&
+                  final isSelected =
+                      _selectedDate != null &&
                       _selectedDate!.year == _selectedYear &&
                       _selectedDate!.month == _selectedMonth &&
                       _selectedDate!.day == day;
@@ -2026,8 +2554,13 @@ class _TarlinkDatePickerSheetState extends State<_TarlinkDatePickerSheet> {
                           style: TextStyle(
                             fontSize: 13,
                             fontFamily: 'Plus Jakarta Sans',
-                            fontFamilyFallback: const ['PlusJakartaSans', 'sans-serif'],
-                            fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                            fontFamilyFallback: const [
+                              'PlusJakartaSans',
+                              'sans-serif',
+                            ],
+                            fontWeight: isSelected
+                                ? FontWeight.w700
+                                : FontWeight.w500,
                             color: isSelected
                                 ? AppColors.onPrimary
                                 : (isDisabled ? AppColors.line : AppColors.ink),

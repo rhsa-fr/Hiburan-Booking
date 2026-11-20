@@ -260,6 +260,59 @@ export class AdminController {
     });
   }
 
+  /** FR-122 step 1: file a post-release clawback claim (no money moves yet). */
+  @Post('disputes/:id/clawback')
+  @HttpCode(200)
+  @Roles(...RESOLVE_ROLES)
+  async requestClawback(
+    @Param('id') disputeId: string,
+    @Body() body: unknown,
+    @Headers('x-request-id') requestId: string | undefined,
+    @Req() request: AuthenticatedRequest
+  ) {
+    const actor = settleActor(request);
+    return this.admin.requestDisputeClawback(disputeId, body, {
+      actorId: actor.id,
+      actorRole: actor.role,
+      requestId: requestId ?? null
+    });
+  }
+
+  /** FR-122 step 2: a different admin approves and the ledger is posted. */
+  @Post('disputes/:id/clawback/approve')
+  @HttpCode(200)
+  @Roles(...RESOLVE_ROLES)
+  async approveClawback(
+    @Param('id') disputeId: string,
+    @Body() body: unknown,
+    @Headers('x-request-id') requestId: string | undefined,
+    @Req() request: AuthenticatedRequest
+  ) {
+    const actor = settleActor(request);
+    return this.admin.approveDisputeClawback(disputeId, body, {
+      actorId: actor.id,
+      actorRole: actor.role,
+      requestId: requestId ?? null
+    });
+  }
+
+  @Post('disputes/:id/clawback/reject')
+  @HttpCode(200)
+  @Roles(...RESOLVE_ROLES)
+  async rejectClawback(
+    @Param('id') disputeId: string,
+    @Body() body: unknown,
+    @Headers('x-request-id') requestId: string | undefined,
+    @Req() request: AuthenticatedRequest
+  ) {
+    const actor = settleActor(request);
+    return this.admin.rejectDisputeClawback(disputeId, body, {
+      actorId: actor.id,
+      actorRole: actor.role,
+      requestId: requestId ?? null
+    });
+  }
+
   @Get('audit')
   async audit(): Promise<AuditLog> {
     return this.admin.audit();

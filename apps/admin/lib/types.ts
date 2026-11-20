@@ -310,6 +310,35 @@ export interface DisputeRecord extends Dispute {
   vendor_name: string;
   city: string;
   customer_name: string;
+  /** FR-122: post-release clawback attached to this dispute, if any. */
+  clawback: DisputeClawback | null;
+}
+
+export interface DisputeClawback {
+  id: string;
+  status: 'requested' | 'approved' | 'rejected';
+  amount_idr: number;
+  request_note: string;
+  requested_by: string;
+  requested_by_name: string;
+  requested_at: string;
+}
+
+export interface RequestDisputeClawbackInput {
+  amount_idr: number;
+  note: string;
+}
+
+export interface DecideDisputeClawbackInput {
+  note: string;
+}
+
+export interface DisputeClawbackResult {
+  dispute_id: string;
+  clawback_id: string;
+  status: 'requested' | 'approved' | 'rejected';
+  amount_idr: number;
+  journal_entry_id: string | null;
 }
 
 export interface DisputeOverview {
@@ -319,7 +348,7 @@ export interface DisputeOverview {
 }
 
 export interface ResolveDisputeInput {
-  resolution: 'release_to_vendor' | 'refund_full' | 'refund_partial' | 'reject';
+  resolution: 'release_to_vendor' | 'refund_full' | 'refund_partial' | 'reject' | 'clawback';
   note: string;
   amount_idr?: number;
 }
@@ -706,6 +735,7 @@ export interface EligiblePayout {
     event_title: string | null;
   }>;
   amount_idr: number;
+  payable_idr: number;
   ledger_payable_idr: number;
   minimum_idr: number;
   eligible: boolean;
@@ -764,3 +794,71 @@ export interface AdminMediaQueue {
   page_size: number;
 }
 
+/* -------------------------------------------------------------------------- */
+/* Operasional (GET /v1/admin/ops/alerts)                                     */
+/* -------------------------------------------------------------------------- */
+
+export type OpsAlertSeverity = 'critical' | 'warning';
+export type OpsStatus = 'ok' | 'attention' | 'critical';
+
+export interface OpsMetric {
+  count: number;
+  oldest_hours: number | null;
+}
+
+export interface OpsAlertItem {
+  key: string;
+  severity: OpsAlertSeverity;
+  title: string;
+  detail: string;
+  hint: string;
+  href: string;
+  count: number;
+  oldest_hours: number | null;
+}
+
+export interface OpsAlerts {
+  generated_at: string;
+  status: OpsStatus;
+  alerts: OpsAlertItem[];
+  metrics: Record<string, OpsMetric>;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Banding takedown (FR-124)                                                  */
+/* -------------------------------------------------------------------------- */
+
+export type AppealStatus = 'pending' | 'accepted' | 'rejected';
+export type AppealTargetType = 'vendor' | 'review' | 'chat_message' | 'vendor_media';
+export type AppealReportAction =
+  | 'no_action'
+  | 'content_removed'
+  | 'content_restored'
+  | 'user_warned';
+
+export interface ReportAppeal {
+  id: string;
+  report_id: string;
+  appellant_id: string;
+  reason: string;
+  evidence_url: string | null;
+  /** Bukti berkas privat sudah dilampirkan; diambil lewat endpoint terpisah (FR-124). */
+  has_evidence_file: boolean;
+  status: AppealStatus;
+  decision_note: string | null;
+  decided_by: string | null;
+  decided_at: string | null;
+  created_at: string;
+  updated_at: string;
+  target_type: AppealTargetType;
+  target_id: string;
+  report_resolution: AppealReportAction | null;
+  report_resolved_at: string | null;
+}
+
+export interface ReportAppealPage {
+  items: ReportAppeal[];
+  total: number;
+  page: number;
+  page_size: number;
+}

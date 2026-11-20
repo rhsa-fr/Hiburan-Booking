@@ -90,7 +90,11 @@ dan sebagai guard unik per pelanggan.
 
 | Method | Path | Keterangan |
 |---|---|---|
-| GET | `/health` | `200` bila API dan DB siap |
+| GET | `/health` | Liveness: `200` selama proses menjawab; tidak menyentuh DB |
+| GET | `/health/ready` | Readiness: `200 { status: "ok", checks: { db: "ok" } }` bila `SELECT 1` berhasil; `503 { status: "degraded", checks: { db: "error" } }` bila DB tidak bisa dihubungi |
+
+`/health/ready` dipakai `HEALTHCHECK` image API; jangan menggantinya dengan
+`/health` karena liveness akan tetap 200 walau DB mati.
 
 ---
 
@@ -552,16 +556,21 @@ sampai gateway menyediakan instruksi deeplink; jangan ditawarkan di UI.
 
 ```json
 {
-  "payment": { "id": "uuid", "status": "pending", "amount_idr": 1500000,
-               "method": "va_bca", "expires_at": "…", "paid_at": null },
-  "instruction": { "type": "va", "bank": "BCA", "va_number": "8808…", "expires_at": "…" }
+  "id": "uuid", "booking_id": "uuid", "kind": "dp", "status": "pending",
+  "amount_idr": 1500000, "currency": "IDR", "method": "va_bca",
+  "provider": "midtrans", "provider_ref": "uuid", "expires_at": "…",
+  "payment_instruction": {
+    "type": "va", "bank": "BCA", "va_number": "8808…", "expires_at": "…"
+  }
 }
 ```
 
 Bentuk `instruction` per rail:
 
-- QRIS Midtrans: `{ "type": "qris", "qr_url": "https://…/qr-code", "expires_at": "…" }`
-  (`qr_url` adalah gambar PNG; klien merender dengan `Image.network`).
+- QRIS Midtrans: `{ "type": "qris", "qr_url": "https://…/qr-code", "qr_string": "<payload EMV>", "expires_at": "…" }`.
+  `qr_string` hanya ada bila Midtrans mengirimkannya; klien **mendahulukan**
+  `qr_string` (render QR lokal) dan memakai `qr_url` sebagai cadangan karena
+  gambar `merchants-app.*.midtrans.com` tidak mengirim header CORS.
 - QRIS gateway lokal: `{ "type": "qris", "qr_string": "…", "expires_at": "…" }`.
 - VA BCA/BNI/BRI: `{ "type": "va", "bank": "BCA", "va_number": "…", "expires_at": "…" }`.
 - Mandiri Bill: `{ "type": "va", "bank": "MANDIRI", "va_number": "<bill_key>",
@@ -595,6 +604,48 @@ Bentuk respons sama dengan DP (`payment` + `payment_instruction`).
 Mengembalikan tagihan pelunasan terakhir untuk booking. `404` bila belum ada tagihan pelunasan.
 Wajib bearer token dan divalidasi kepemilikan booking.
 
+### `POST /payments/abandon`
+
+Melepas tagihan `pending` milik pelanggan supaya ia bisa memilih metode lain.
+
+```json
+{ "booking_id": "uuid", "kind": "dp" }
+```
+
+`kind`: `dp` atau `settlement`. Respons: `{ "data": { "cancelled": true, "payment_id": "uuid" } }`
+atau `{ "data": { "cancelled": false, "payment_id": null } }` bila tidak ada tagihan aktif.
+
+Urutan server:
+
+1. tagihan diakhiri di provider (`POST /v2/{order_id}/expire` untuk Midtrans)
+   **sebelum** baris lokal diubah menjadi `failed` (`failure_code=METHOD_SWITCHED`);
+2. bila provider tidak bisa memastikan tagihan berakhir, respons error dan tagihan
+   tetap `pending` — jangan pernah meninggalkan dua tagihan yang sama-sama bisa dibayar;
+3. tagihan yang sudah dibayar dijawab `409 CONFLICT` (perubahan metode setelah
+   pembayaran berarti refund, bukan switch);
+4. bila pembayaran masuk saat proses berjalan, server menolak pelepasan.
+
+Pembayaran yang telat masuk untuk tagihan yang sudah dilepas tetap diterima
+sebagai pembayaran sah **bila** tahap itu belum dibayar dan tidak ada pembayaran
+lain yang sudah `paid`; tagihan pending lain untuk tahap yang sama ditandai
+`failed` (`SUPERSEDED_BY_LATE_PAYMENT`). Bila sudah ada pembayaran lain, webhook
+dicatat `failed` untuk ditindaklanjuti manual (jangan diam-diam diabaikan).
+
+### `POST /payments/sync`
+
+Menarik status terakhir ke provider dan menerapkannya lewat jalur yang sama
+dengan webhook. Dipakai klien saat webhook tidak bisa menjangkau server
+(mis. `localhost`); di produksi webhook tetap jalur utama.
+
+```json
+{ "booking_id": "uuid", "kind": "dp" }
+```
+
+Respons: `{ "data": { "status": "paid|pending|expired|failed|none", "updated": true } }`.
+Status `expired`/`failed` dari provider menandai tagihan lokal dengan status yang
+sama sehingga instruksi lama tidak lagi tampil sebagai tagihan aktif. Hanya
+pemilik booking yang boleh memanggil; booking orang lain dijawab `403`.
+
 ### `POST /payments/:id/refund`
 
 Peran `admin_finance` / `admin_super`. Body: `{ amount_idr, reason, evidence_url? }`.
@@ -607,8 +658,50 @@ Refund pada atau di bawah ambang dieksekusi langsung seperti sebelumnya.
 
 Untuk Midtrans, refund QRIS dipanggil ke `POST /v2/{order_id}/refund` dengan
 `refund_key` = id refund, lalu status refund langsung difinalkan (`succeeded`) dan
-jurnal `refund_disbursed` diposting. **Refund VA/Mandiri ditolak** karena Midtrans
-tidak mendukung refund bank transfer; catat transfer manual.
+jurnal `refund_disbursed` diposting. **Refund VA/Mandiri tidak didukung gateway**;
+gunakan `POST /payments/:id/refund/manual` di bawah.
+
+Refund yang `succeeded` selalu ikut memindahkan status pembayaran booking:
+
+- Booking yang masih berjalan (`confirmed`/`in_progress`) menjadi
+  `partially_refunded`, meskipun seluruh DP dikembalikan; booking belum selesai,
+  jadi tidak boleh tampil `refunded`.
+- Booking yang sudah selesai/dibatalkan dan seluruh uangnya dikembalikan sebelum
+  dana dilepas menjadi `refunded` + settlement `not_eligible` (transisi P-04/P-09).
+- Booking yang dananya sudah `released` tetap `partially_refunded`; penarikan
+  dana setelah pencairan adalah jalur clawback, bukan refund.
+- Status ditulis dalam transaksi yang sama dengan jurnal, jadi refund gagal
+  (mis. provider menolak) tidak pernah mengubah booking.
+
+### `POST /payments/:id/refund/manual`
+
+Peran `admin_finance` / `admin_super`. Untuk pembayaran yang tidak bisa di-refund
+provider (VA/Mandiri), admin mencatat transfer bank:
+
+```json
+{
+  "amount_idr": 1500000,
+  "reason": "Pembatalan acara, transfer balik via BCA",
+  "transfer_ref": "TRF-20261117-001",
+  "transferred_at": "2026-11-17T10:30:00.000Z",
+  "evidence_url": "https://…"
+}
+```
+
+Aturan:
+- `payment` harus `paid`; nominal tidak boleh melebihi sisa yang belum di-refund.
+- `fee_idr` selalu `0` dan `fee_bearer='platform'`: biaya gateway tidak
+  dipotong dari uang pelanggan.
+- Nominal **> `REFUND_APPROVAL_THRESHOLD_IDR`** berhenti di `requested` tanpa
+  jurnal; admin lain menyetujui lewat `POST /payments/refunds/:id/approve`.
+  Approver wajib berbeda dari pencatat transfer.
+- Nominal di bawah ambang langsung `succeeded` dan memposting jurnal
+  `refund_full_recognized`/`refund_partial_recognized` + `refund_disbursed`
+  dalam satu transaksi.
+- `transfer_ref` wajib; `transferred_at` default waktu server.
+- Respons refund menyertakan `is_manual`, `transfer_ref`, dan `transferred_at`.
+  `POST /payments/refunds/:id/approve` tidak memanggil provider untuk refund
+  manual; ia memfinalkan jurnal dan status.
 
 ### `GET /payments/refunds`
 
@@ -643,6 +736,18 @@ Pengganti kanal WhatsApp/push sementara: worker `outbox` menulis satu baris
 `notifications` per penerima (unik per `outbox:<message_id>:<user_id>`), lalu
 mobile mem-poll endpoint ini dan menampilkan popup saat aplikasi terbuka.
 Tidak ada endpoint kirim manual — isi dibuat dari event `booking.*`.
+
+Sejak migrasi `028`, relay yang sama juga mengirim **email transaksional**
+(FR-051) ke alamat `users.email` pelanggan/vendor untuk setiap event yang punya
+copy in-app. Email tidak menambah endpoint: status kirim hanya tercatat di
+`notification_deliveries` (ops/DB) dan tidak diekspos ke klien. Kegagalan email
+tidak menghapus baris notifikasi in-app; pesan outbox di-retry dengan backoff.
+
+Sejak migrasi `032`, worker `booking_reminders` menulis event
+`booking.reminder_7d` / `booking.reminder_1d` / `booking.reminder_day` untuk booking
+`confirmed`/`in_progress` pada H-7, H-1, dan hari-H (tanggal WIB). Dedupe-nya
+`booking:<booking_id>:reminder:<offset>` di `outbox_messages`, jadi satu pengingat
+per booking per jendela; copy-nya sama untuk in-app dan email. Push FCM belum ada.
 
 ### `GET /notifications`
 
@@ -804,6 +909,7 @@ dari klien, sehingga satu vendor tidak bisa mengubah vendor lain.
 | GET | `/vendor/bookings` | Daftar booking vendor (`page`, `page_size`, `status`) |
 | GET | `/vendor/bookings/:id` | Detail booking milik vendor |
 | GET | `/vendor/earnings` | Saldo tertahan + riwayat pencairan |
+| GET | `/vendor/earnings/export` | CSV pendapatan bulanan (FR-126) |
 | GET | `/vendor/packages` | Semua paket sendiri (termasuk nonaktif) |
 | POST | `/vendor/packages` | Buat paket |
 | PATCH | `/vendor/packages/:id` | Ubah paket milik sendiri |
@@ -866,6 +972,55 @@ sudah Released tetapi belum ditransfer, dan halaman pencairan `settled`:
 berjalan yang disimpan. `pending_payout_idr` adalah jumlah payout berstatus
 `requested`/`approved`/`processing`. `bank_account` bernilai `null` bila belum ada
 rekening terverifikasi.
+
+### `GET /vendor/earnings/export` (FR-126)
+
+Query `from` dan `to` berformat `YYYY-MM-DD` dan ditafsirkan sebagai tanggal WIB.
+Default: awal bulan berjalan sampai hari ini. Rentang maksimal 366 hari dan
+5.000 baris; lebih dari itu dijawab `400 VALIDATION_ERROR`.
+
+Tanpa `format=json`, respons berupa unduhan:
+
+```
+Content-Type: text/csv; charset=utf-8
+Content-Disposition: attachment; filename="pendapatan-vendor-2026-11-01_2026-11-30.csv"
+```
+
+Kolom CSV: `tanggal_lepas`, `kode_booking`, `judul_acara`, `tanggal_acara`,
+`gmv_idr`, `komisi_idr`, `biaya_layanan_idr`, `pendapatan_vendor_idr`,
+`clawback_idr`, `pendapatan_bersih_idr`, `pencairan_idr`, `status_pencairan`,
+`tanggal_pencairan`, diakhiri baris `TOTAL`. Hanya booking dengan `released_at`
+di rentang tersebut yang muncul.
+
+Nilai uang diambil dari jurnal booking, bukan dihitung ulang dari kolom booking:
+GMV = debit `2100`, komisi = kredit `4100`, biaya layanan = kredit `4110`,
+pendapatan vendor = kredit `2120` (jurnal `release`), dan clawback = debit `2120`
+pada jurnal `clawback_recognized`. Baris `TOTAL` menjumlahkan sel yang sama,
+sehingga total laporan cocok dengan ledger (selisih Rp0). CSV memakai BOM UTF-8
+dan CRLF agar terbuka rapi di Excel.
+
+Dengan `format=json` respons berisi pratinjau untuk mobile:
+
+```json
+{
+  "data": {
+    "filename": "pendapatan-vendor-2026-11-01_2026-11-30.csv",
+    "period": { "from": "2026-11-01", "to": "2026-11-30" },
+    "row_count": 12,
+    "source": "release_journal",
+    "totals": {
+      "gmv_idr": 150000000,
+      "commission_idr": 7500000,
+      "service_fee_idr": 3000000,
+      "vendor_entitlement_idr": 139500000,
+      "clawback_idr": 500000,
+      "net_vendor_idr": 139000000,
+      "payout_idr": 93000000
+    },
+    "csv": "\uFEFFtanggal_lepas,kode_booking,..."
+  }
+}
+```
 
 `GET /vendor/bookings` mengembalikan objek halaman langsung (`items`, `total`, `page`,
 `page_size`). Setiap item memuat `code`, tiga status, `total_customer_idr`,
@@ -1028,6 +1183,9 @@ Semua butuh peran `admin`/`operator`.
 | GET | `/admin/payments` | Daftar pembayaran |
 | GET | `/admin/disputes` | Sengketa |
 | POST | `/admin/disputes/:id/resolve` | Putusan sengketa (lihat di bawah) |
+| POST | `/admin/disputes/:id/clawback` | Ajukan clawback pasca-pencairan (FR-122) |
+| POST | `/admin/disputes/:id/clawback/approve` | Setujui clawback (admin lain) |
+| POST | `/admin/disputes/:id/clawback/reject` | Tolak pengajuan clawback |
 | GET | `/admin/audit` | Audit log |
 | GET | `/admin/operators` | Akun operator |
 | GET | `/admin/regions` | Daftar wilayah + jumlah vendor aktif (FR-125) |
@@ -1055,6 +1213,10 @@ Semua butuh peran `admin`/`operator`.
 | POST | `/admin/reconciliation/runs` | Jalankan rekonsiliasi lane payment (body `{ provider, report_date }`) |
 | GET | `/admin/reconciliation/runs` | Daftar run (`page`, `page_size` maks 100) |
 | GET | `/admin/reconciliation/runs/:id` | Detail run + daftar diff |
+| POST | `/admin/reconciliation/diffs/:id/resolve` | Putuskan satu temuan (body `{ resolution, note }`) |
+| GET | `/admin/ops/alerts` | Ringkasan antrean operasional (semua peran admin, read-only) |
+| GET | `/admin/report-appeals` | Antrean banding takedown (`status`, `page`, `page_size`) |
+| POST | `/admin/report-appeals/:id/resolve` | Putuskan banding (`accepted`/`rejected`, support/super) |
 
 `PATCH /admin/vendors/:id` juga menerima `avatar_url`, `banner_url`,
 `photo_urls`, `video_url`. `POST/PATCH .../packages` menerima
@@ -1064,7 +1226,15 @@ Semua butuh peran `admin`/`operator`.
 
 Fase 1 bersifat **read-only**: membandingkan sisi gateway dengan ledger dan
 menyimpan temuan. Tidak ada jurnal yang diposting dan tidak ada baris
-`payments`/`payouts`/`refunds` yang diubah. Peran: `admin_finance`/`admin_super`.
+`payments`/`payouts`/`refunds` yang diubah. Fase 2 menambahkan SLA per temuan dan
+keputusan admin (`resolution`) di atas data yang sama; modul tetap tidak
+memposting jurnal. Peran: `admin_finance`/`admin_super`.
+
+Selain lewat endpoint di bawah, worker menjalankan `reconcile_daily` sekali per
+hari WIB (setelah `recon_hour_wib`, default 07:00) untuk **kemarin**, bila
+`platform_settings.recon_enabled=true`. Run worker memakai `trigger_source=worker`,
+`triggered_by=null`, dan audit `reconciliation.run_daily`. Panggilan manual pada
+tanggal yang sudah dijalankan worker mengembalikan run yang sama (idempoten).
 
 `POST /admin/reconciliation/runs` menerima `{ "provider": "midtrans" | "pjp",
 "report_date": "YYYY-MM-DD" }` (tanggal kalender WIB). Sisi gateway dibaca dari
@@ -1100,9 +1270,19 @@ satu diff selain `matched`. Respons:
 `GET /admin/reconciliation/runs/:id` menambahkan `diffs[]` berisi
 `classification` (`matched`, `duplicate`, `missing_in_ledger`,
 `missing_at_gateway`, `amount_mismatch`), `severity`, `external_id`,
-`gateway_amount_idr`, `ledger_amount_idr`, `delta_idr` (`gateway - ledger`), dan
-`detail`. Temuan `duplicate` tidak menambah total karena total memakai satu
-nilai per `external_id` unik.
+`gateway_amount_idr`, `ledger_amount_idr`, `delta_idr` (`gateway - ledger`),
+`due_at` (SLA: waktu run selesai + `recon_sla_hours`, default 24 jam),
+`resolution`, `resolution_note`, dan `resolved_at`, plus `open_diff_count`
+(jumlah temuan yang belum diputuskan). Temuan `duplicate` tidak menambah total
+karena total memakai satu nilai per `external_id` unik.
+
+`POST /admin/reconciliation/diffs/:id/resolve` menerima
+`{ "resolution": "accepted" | "ignored" | "referred" | "corrected",
+"note": "5-1000 karakter" }`. Keputusan disimpan bersama pelaku dan satu baris
+`audit_logs` (`reconciliation.diff_resolve`). Temuan yang sudah selesai tidak
+bisa diubah: panggilan kedua dijawab `409 CONFLICT`, sehingga catatan peninjau
+pertama tidak tertimpa. Endpoint ini tidak mengubah `payments` maupun ledger —
+koreksi uang tetap aksi manual di luar modul rekonsiliasi.
 
 ### Wilayah (FR-125)
 
@@ -1205,14 +1385,29 @@ Payout bersifat **admin-initiated**: vendor hanya mengelola rekening tujuan. Nom
 dihitung server dari booking `released` yang belum masuk payout lain, lalu dicek
 terhadap saldo ledger `vendor_payable` (2120).
 
+`GET /admin/payouts/eligible?vendor_id=...` mengembalikan dua angka yang berbeda:
+
+- `amount_idr` — total hak vendor dari seluruh booking released yang belum dicairkan;
+- `payable_idr` — bagian yang benar-benar bisa dicairkan, yaitu booking tertua
+  (urut `released_at`) yang **seluruhnya** tertutup saldo ledger. Payout beroperasi
+  per booking utuh, jadi booking yang nominalnya melebihi saldo dilewati, bukan
+  dibayar sebagian.
+
+Bila saldo 2120 negatif karena clawback, `payable_idr` bisa 0 dan `eligible: false`
+dengan alasan `Hak vendor Rp… belum bisa dicairkan: saldo 2120 Rp… (tertahan
+clawback/sengketa)`. Saldo positif dari release berikutnya otomatis dipakai, jadi
+utang clawback memotong payout berikutnya, bukan membekukannya selamanya.
+
 `POST /admin/payouts` (peran `admin_finance`/`admin_super`, header `Idempotency-Key`):
 
 ```json
 { "vendor_id": "uuid", "booking_ids": ["uuid", "uuid"] }
 ```
 
-`booking_ids` opsional; bila dihilangkan, semua booking released yang belum dicairkan
-diambil. Respons berisi `code`, `amount_idr`, `status: "requested"`, `bank`, `items`.
+`booking_ids` opsional; bila dihilangkan, server mengambil subset booking released
+yang tertutup saldo ledger (sama dengan `payable_idr`). Subset eksplisit yang
+nominalnya melebihi saldo dijawab `409`. Respons berisi `code`, `amount_idr`,
+`status: "requested"`, `bank`, `items`.
 
 `POST /admin/payouts/:id/approve` (checker berbeda dari pembuat, header
 `Idempotency-Key`): memposting jurnal `payout_requested` lalu memanggil provider.
@@ -1263,13 +1458,57 @@ putusan memicu refund.
   sebagai `rejected`.
 - `refund_full` — refund seluruh pembayaran DP yang sudah dibayar. Refund
   dieksekusi lebih dulu ke provider; bila provider menolak, sengketa tetap
-  terbuka.
+  terbuka. Bila refund langsung final (nominal di bawah ambang persetujuan),
+  modul payment sudah memindahkan booking ke `refunded`/`not_eligible`; penutupan
+  sengketa kemudian hanya mencatat keputusan tanpa menulis ulang status itu,
+  sehingga tidak ada respons `409` setelah uang keluar.
 - `refund_partial` — wajib menyertakan `amount_idr` dan nilainya harus lebih
-  kecil dari nilai pembayaran.
+  kecil dari nilai pembayaran. Bila refund sudah final, hanya settlement yang
+  ditutup (`disputed → not_eligible`) dan riwayat status pembayaran tidak
+  ditulis dua kali.
 
 Respons memuat `status`, `resolution`, `resolution_amount_idr`,
 `customer_share_idr`, `vendor_share_idr`, dan `journal_entry_id`/`refund_id`
 bila ada.
+
+### Clawback pasca-pencairan (FR-122)
+
+Hanya untuk booking yang payout-nya **sudah dicairkan** dan sengketa dibuka
+maksimal 30 hari setelah `released_at`. Dua langkah, wajib admin berbeda:
+
+1. `POST /admin/disputes/:id/clawback` — `admin_finance`/`admin_super` mengajukan.
+
+   ```json
+   { "amount_idr": 1600000, "note": "Bukti baru menunjukkan vendor tidak hadir." }
+   ```
+
+   `amount_idr` wajib bilangan bulat > 0 dan tidak boleh melebihi dana yang
+   pernah dicairkan ke vendor (kredit `vendor_payable` pada jurnal `release`).
+   Langkah ini **tidak** memindahkan uang.
+
+2. `POST /admin/disputes/:id/clawback/approve` — admin **lain** menyetujui.
+
+   ```json
+   { "note": "Bukti valid; clawback penuh disetujui." }
+   ```
+
+   Dalam satu transaksi: jurnal `clawback_recognized` + `clawback_paid`
+   (vendor_payable negatif, `dispute_reserve` netral, kas platform keluar),
+   `bookings.settlement_status = 'clawed_back'`, `clawback_recovered_at`,
+   riwayat `dispute.resolved_clawback`, sengketa `resolved` dengan
+   `resolution = 'clawback'` + `approved_by`, audit, dan notifikasi.
+   Penyetuju sama dengan pengaju dijawab `403 FORBIDDEN`.
+
+3. `POST /admin/disputes/:id/clawback/reject` — menolak/menarik pengajuan;
+   sengketa tetap terbuka untuk putusan lain.
+
+`GET /admin/disputes` menyertakan objek `clawback` (`id`, `status`,
+`amount_idr`, `request_note`, `requested_by_name`, `requested_at`) atau `null`.
+Saldo `vendor_payable` yang negatif otomatis memotong payout berikutnya: nominal
+payout dibatasi `payable_idr` (lihat bagian Payout vendor), sehingga utang clawback
+harus tertutup dulu oleh release baru sebelum ada booking yang bisa dicairkan.
+Booking released yang haknya habis terserap utang tetap tampil di daftar eligible
+(`amount_idr`) tetapi tidak masuk `payable_idr` sampai saldo kembali positif.
 
 ### `GET/PUT /admin/vendors/:id/categories`
 
@@ -1354,7 +1593,286 @@ Respons (`200 OK`):
 }
 ```
 
+### Ringkasan kesiapan operasional
+
+`GET /v1/admin/ops/alerts` — satu panggilan read-only untuk dashboard `/ops`.
+Semua peran admin (`admin_support`, `admin_finance`, `admin_super`) boleh membaca;
+payload hanya agregat, tanpa data pelanggan, dan tidak mengubah status/uang.
+
+Ambang dihitung di SQL (`ops.repository.ts`), bukan di panel:
+
+| Kunci | Dihitung bila | Ambang |
+|---|---|---|
+| `content_reports` | laporan `open`/`reviewing` | `sla_due_at` lewat |
+| `disputes` | sengketa `open`/`investigating`/`awaiting_evidence` | `sla_due_at` lewat |
+| `reconciliation_diffs` | temuan belum diputuskan | `due_at` lewat |
+| `reconciliation_runs` | run `failed` | 24 jam terakhir |
+| `payouts` | payout `processing` / `approved` | >1 jam / >24 jam |
+| `outbox` | pesan `failed`/`dead` | semua baris |
+| `email` | delivery `email` `failed` | 24 jam terakhir |
+
+Respons (`200 OK`):
+```json
+{
+  "generated_at": "2026-11-08T04:24:18.805Z",
+  "status": "critical",
+  "alerts": [
+    {
+      "key": "content_reports",
+      "severity": "critical",
+      "title": "Laporan konten lewat SLA",
+      "detail": "2 laporan · terlama lewat 30 jam",
+      "hint": "Putuskan laporan di antrean moderasi. Takedown menyembunyikan konten, bukan menghapusnya.",
+      "href": "/reports",
+      "count": 2,
+      "oldest_hours": 30
+    }
+  ],
+  "metrics": {
+    "content_reports": { "count": 2, "oldest_hours": 30 },
+    "disputes": { "count": 0, "oldest_hours": null },
+    "reconciliation_diffs": { "count": 0, "oldest_hours": null },
+    "reconciliation_runs": { "count": 0, "oldest_hours": null },
+    "payouts": { "count": 0, "oldest_hours": null },
+    "outbox": { "count": 1, "oldest_hours": 3 },
+    "email": { "count": 0, "oldest_hours": null },
+    "webhooks": { "count": 0, "oldest_hours": null }
+  }
+}
+```
+
+`status` = `ok` (tidak ada alarm), `attention` (hanya `warning`), atau `critical`
+(ada `critical`). `metrics` memuat **semua** kunci (termasuk nol) supaya antrean
+kosong tetap terlihat. `oldest_hours` dibulatkan ke atas dan `null` saat
+`count = 0`. Urutan `alerts`: kritis dulu, lalu jumlah terbesar. Panel memakai
+endpoint ini di `/ops` (daftar lengkap) dan sebagai banner di dashboard.
+
 ---
+
+## Moderasi UGC (FR-123 / FR-124 / FR-142)
+
+Pelaporan konten oleh pengguna, keputusan moderator, dan blokir pengguna.
+Semua rute butuh bearer token; identitas diambil dari token, bukan header.
+
+Target yang sah: `vendor`, `review`, `chat_message`, `vendor_media`.
+Alasan yang sah: `spam`, `harassment`, `fraud`, `illegal`, `copyright`,
+`impersonation`, `other`.
+
+Aturan yang berlaku di server:
+
+- `detail` wajib 10–2000 karakter (alasan saja tidak cukup untuk ditindak).
+- Satu pelapor hanya boleh punya **satu** laporan terbuka untuk target yang sama;
+  laporan kedua dijawab `409 CONFLICT` sampai yang pertama diputuskan.
+- Pesan chat hanya bisa dilaporkan peserta booking-nya (`403` bila bukan peserta,
+  `404` bila pesannya tidak ada). Konten milik sendiri dijawab `400`.
+- SLA tinjauan: 24 jam, atau 72 jam bila `reason = copyright`.
+
+### `POST /reports`
+
+```json
+{
+  "target_type": "vendor",
+  "target_id": "0e5f…",
+  "reason": "fraud",
+  "detail": "Setelah DP dibayar vendor meminta transfer tambahan ke rekening pribadi.",
+  "evidence_url": "https://contoh.id/bukti.png",
+  "booking_id": "opsional, untuk konteks chat"
+}
+```
+
+`201`:
+
+```json
+{ "data": {
+  "id": "…", "reporter_id": "…", "target_type": "vendor", "target_id": "…",
+  "booking_id": null, "reason": "fraud", "detail": "…", "evidence_url": "…",
+  "status": "open", "resolution": null, "resolution_note": null,
+  "resolved_by": null, "resolved_at": null,
+  "sla_due_at": "2026-11-09T02:00:00.000Z", "overdue": false,
+  "escalated_at": null, "escalated": false,
+  "created_at": "2026-11-08T02:00:00.000Z", "updated_at": "2026-11-08T02:00:00.000Z"
+} }
+```
+
+Maksimal **10 laporan per user per jam**. Percobaan ke-11 dijawab
+`429 RATE_LIMITED` (`{ error: { code: "RATE_LIMITED", … } }`). Limiter berjalan
+in-memory per proses seperti limiter login/refresh; dengan N replika batas
+efektifnya N × 10. Ini hanya perlindungan anti-spam, bukan aturan bisnis.
+
+### `GET /reports?page=1&page_size=20`
+
+Laporan milik pemanggil, terbaru dulu: `{ data: { items, total, page, page_size } }`.
+`overdue` bernilai `true` hanya selama laporan belum diputuskan tetapi `sla_due_at`
+sudah lewat.
+
+### `GET /reports/:id`
+
+Status satu laporan milik pemanggil. Laporan orang lain → `404` (bukan `403`,
+supaya keberadaannya tidak bocor).
+
+### `POST /blocks`
+
+```json
+{ "user_id": "…", "reason": "opsional, 3–200 karakter" }
+```
+
+`201 { data: { user_id, name, reason, created_at } }`. Idempoten: memblokir ulang
+tidak menambah baris.
+
+Blokir hanya memengaruhi tampilan. Riwayat chat (`GET /bookings/:id/chat/messages`)
+menyaring pesan dari pihak yang diblokir, dan gateway `WS /v1/chat/ws` tidak
+mengirim pesan baru dari mereka ke socket itu.
+
+### `DELETE /blocks/:userId` → `204`
+
+Idempoten, termasuk bila blokirnya memang tidak ada.
+
+### `GET /blocks` → `{ data: [ { user_id, name, reason, created_at } ] }`
+
+### `GET /admin/reports`
+
+Query: `status` (`pending` = open+reviewing, atau salah satu status), `reason`,
+`target_type`, `overdue=true`, `page`, `page_size` (maks 100).
+Respons adalah objek halaman apa adanya (tanpa envelope), seperti rute admin lain:
+
+```json
+{ "items": [ { "id": "…", "status": "open", "overdue": true, "…": "…" } ],
+  "total": 1, "page": 1, "page_size": 20 }
+```
+
+Urutan: laporan terbuka yang lewat SLA lebih dulu, lalu `sla_due_at` terdekat.
+Setiap item juga memuat `escalated_at` (null bila belum) dan `escalated`.
+
+### `POST /admin/reports/:id/resolve`
+
+Peran: `admin_support` atau `admin_super` (`admin_finance` hanya boleh membaca).
+
+```json
+{ "action": "content_removed", "note": "Bukti menunjukkan pemerasan; konten diturunkan." }
+```
+
+`action`:
+
+| aksi | efek pada target |
+|---|---|
+| `no_action` | tidak ada perubahan konten (laporan tidak berdasar) |
+| `user_warned` | tidak ada perubahan konten; peringatan tercatat di audit |
+| `content_removed` | `review`/`chat_message` → `hidden_at` diisi; `vendor_media` → `rejected` + kolom publik dibersihkan |
+| `content_restored` | hanya `review`/`chat_message`: `hidden_at` dikosongkan |
+
+`note` wajib ≥10 karakter. Laporan yang sudah diputuskan dijawab `409 CONFLICT`.
+`content_removed` untuk target `vendor` dijawab `400` — penangguhan vendor memakai
+`POST /admin/vendors/:id/suspend` (`admin_super`). Setiap keputusan menulis satu baris
+`audit_logs` (`content_report.<action>`) dan membuat satu notifikasi in-app
+`content_report_resolved` untuk pelapor (dedupe `content_report:<id>:resolved`).
+Catatan moderator tidak dikirim ke pelapor; hanya ringkasan keputusan.
+
+### Eskalasi SLA
+
+View laporan menyertakan `sla_due_at`, `overdue`, `escalated_at`, dan `escalated`.
+Worker `escalate_reports` memindai laporan `open`/`reviewing` yang melewati
+`sla_due_at`, menandai `escalated_at` sekali, lalu mengirim notifikasi in-app
+`content_report_sla_breach` ke setiap admin support/super aktif (dedupe
+`content_report:<id>:sla:<user>`). Eskalasi tidak mengubah status laporan dan tidak
+menyembunyikan konten; keputusan tetap milik moderator.
+
+### Banding takedown (FR-124)
+
+Pemilik konten yang diturunkan boleh mengajukan banding. Berlaku untuk target
+`review`, `chat_message`, dan `vendor_media`; target `vendor` memakai jalur
+penangguhan. Satu laporan maksimal satu banding, dan batas pengajuan 30 hari
+setelah `resolved_at`. Pemilik ditentukan dari kepemilikan target, bukan dari
+pelapor; orang lain menerima `404`.
+
+`GET /v1/reports/against-me` — daftar konten milik pemanggil yang diturunkan, dipakai
+layar **Banding konten** di mobile. Query `page` dan `page_size` (maks 100). Respons
+tidak memuat identitas pelapor maupun isi laporan asal:
+
+```json
+{
+  "data": {
+    "items": [
+      {
+        "report_id": "…",
+        "target_type": "review",
+        "target_id": "…",
+        "reason": "copyright",
+        "resolved_at": "2026-11-08T10:00:00.000Z",
+        "appeal_deadline_at": "2026-12-08T10:00:00.000Z",
+        "appeal_id": null,
+        "appeal_status": null,
+        "appeal_created_at": null,
+        "appeal_decided_at": null,
+        "appeal_decision_note": null,
+        "appeal_has_evidence_file": false
+      }
+    ],
+    "total": 1,
+    "page": 1,
+    "page_size": 20
+  }
+}
+```
+
+`POST /v1/reports/:id/appeal` — auth pengguna, envelope `{ data: … }`.
+
+Body:
+```json
+{
+  "reason": "Konten ini saya buat sendiri dan tidak melanggar hak cipta siapa pun.",
+  "evidence_url": "https://contoh.id/bukti.pdf"
+}
+```
+
+`reason` wajib 20-2000 karakter; `evidence_url` opsional (tautan). Untuk bukti
+berupa gambar, gunakan endpoint berkas di bawah — jangan menaruh berkas privat di
+`/v1/media` (direktori itu publik).
+
+`GET /v1/reports/:id/appeal` — hanya pengaju yang bisa membaca; selain itu
+`404`. Banding kedua untuk laporan yang sama dijawab `409 CONFLICT`.
+
+#### Bukti banding berupa berkas (FR-124)
+
+`POST /v1/reports/:id/appeal/evidence` — `multipart/form-data` dengan field
+`file` (JPG/PNG/WebP, maks. 5 MB, tipe dideteksi dari magic bytes). Auth pengguna,
+hanya pemilik banding, dan hanya selama banding berstatus `pending` (setelah
+diputuskan → `409`). Mengunggah ulang **mengganti** berkas lama; berkas lama
+dihapus. Respons `201` berisi objek banding dengan `has_evidence_file: true`.
+Berkas disimpan terenkripsi AES-256-GCM di `PRIVATE_UPLOAD_DIR` (bukan
+`/v1/media`); object key internal tidak pernah dikirim ke klien.
+
+`GET /v1/reports/:id/appeal/evidence` — pengaju membaca berkasnya sendiri
+(`image/*`, `Cache-Control: private, no-store`). Tanpa berkas atau bukan pemilik
+→ `404`.
+
+`GET /v1/admin/report-appeals/:id/evidence` — support/finance/super membaca
+berkas (finance hanya baca, konsisten dengan antrean). Setiap pembacaan menulis
+`audit_logs` (`content_report.appeal_evidence_viewed`) **sebelum** byte dikirim;
+unggahan menulis `content_report.appeal_evidence_uploaded`. Field
+`has_evidence_file` pada objek banding memberi tahu UI apakah tombol berkas perlu
+ditampilkan; `evidence_url` tetap ada untuk banding lama.
+
+Admin:
+
+- `GET /v1/admin/report-appeals?status=pending&page=1&page_size=20` — semua peran
+  admin boleh membaca (finance read-only).
+- `POST /v1/admin/report-appeals/:id/resolve` — support/super.
+
+Body:
+```json
+{
+  "status": "accepted",
+  "note": "Bukti kepemilikan valid; takedown keliru dan konten dipulihkan."
+}
+```
+
+Catatan wajib 10-1000 karakter. Keputusan final: resolve kedua `409`. Menerima
+banding memulihkan `reviews.hidden_at`/`chat_messages.hidden_at`; media kembali ke
+`vendor_media.status='pending'` untuk ditinjau ulang karena kolom publiknya sudah
+dibersihkan saat takedown. Laporan asal **tidak** diubah. Setiap keputusan menulis
+`audit_logs` (`content_report.appeal_accepted`/`..._rejected`) dan mengirim
+notifikasi in-app `content_report_appeal_decided` ke pengaju (dedupe
+`content_report_appeal:<id>:decided`).
 
 ## Contoh cepat (curl)
 

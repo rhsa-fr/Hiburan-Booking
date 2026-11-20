@@ -230,6 +230,7 @@ export function mapDisputeStatus(row: DisputeRow): DisputeStatus {
     case 'refund_partial':
       return 'resolved_refund';
     case 'split':
+    case 'clawback':
       return 'resolved_clawback';
     default:
       return 'resolved_to_vendor';
@@ -251,7 +252,24 @@ export function mapDispute(row: DisputeRow): DisputeRecord {
     vendor_share_idr: idrToJson(row.vendor_share_idr, 'dispute.vendor_share_idr'),
     vendor_name: row.vendor_name ?? 'Vendor tidak ditemukan',
     city: row.city ?? '-',
-    customer_name: row.customer_name ?? '-'
+    customer_name: row.customer_name ?? '-',
+    clawback: mapDisputeClawback(row)
+  };
+}
+
+function mapDisputeClawback(row: DisputeRow): DisputeRecord['clawback'] {
+  if (!row.clawback_id) return null;
+  if (!row.clawback_status || !row.clawback_requested_at || !row.clawback_requested_by) {
+    throw new AppError('INTERNAL_ERROR', 'Baris clawback sengketa tidak lengkap.');
+  }
+  return {
+    id: row.clawback_id,
+    status: row.clawback_status as 'requested' | 'approved' | 'rejected',
+    amount_idr: idrToJson(row.clawback_amount_idr ?? '0', 'clawback.amount_idr'),
+    request_note: row.clawback_request_note ?? '',
+    requested_by: row.clawback_requested_by,
+    requested_by_name: row.clawback_requested_by_name ?? 'Admin',
+    requested_at: toIsoRequired(row.clawback_requested_at)
   };
 }
 

@@ -31,6 +31,12 @@ export interface ChatGatewayOptions {
   pool: Pool;
   jwtSecret: string;
   allowedOrigins?: readonly string[];
+  /**
+   * FR-142: dipanggil per pengiriman untuk setiap socket yang berlangganan.
+   * Mengembalikan true bila `viewerId` memblokir `senderId`. Opsional supaya
+   * gateway tetap bisa dipakai tanpa modul moderasi (mis. di test).
+   */
+  isBlocked?: (viewerId: string, senderId: string) => Promise<boolean>;
 }
 
 function rawToString(data: RawData): string {
@@ -404,15 +410,35 @@ export class ChatGateway {
   private readonly onNotification = (notification: Notification): void => {
     if (notification.channel !== CHAT_CHANNEL || !notification.payload) return;
     const message = parseChatNotification(notification.payload);
-    if (message) this.broadcast(message);
+    if (message) void this.deliver(message);
   };
 
-  private broadcast(message: ChatMessageView): void {
+  /**
+   * Kirim satu pesan ke setiap socket yang berlangganan booking tersebut.
+   *
+   * FR-142: socket milik pengguna yang memblokir pengirim dilewati. Pemeriksaan
+   * dilakukan per pengiriman (bukan cache) supaya blokir berlaku pada pesan
+   * berikutnya, tanpa menunggu masa kedaluwarsa. Kalau pemeriksaan gagal, pesan
+   * tidak dikirim — lebih baik tertunda daripada membocorkan isi ke pihak yang
+   * sudah memblokir.
+   */
+  private async deliver(message: ChatMessageView): Promise<void> {
     const targets = this.rooms.get(message.booking_id);
     if (!targets) return;
     const payload = JSON.stringify({ type: 'message', message });
     for (const socket of targets) {
-      if (socket.readyState === WebSocket.OPEN) socket.send(payload);
+      if (socket.readyState !== WebSocket.OPEN) continue;
+      const state = this.clients.get(socket);
+      if (state && this.options.isBlocked) {
+        let blocked = true;
+        try {
+          blocked = await this.options.isBlocked(state.userId, message.sender_id);
+        } catch {
+          blocked = true;
+        }
+        if (blocked) continue;
+      }
+      socket.send(payload);
     }
   }
 

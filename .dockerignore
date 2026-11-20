@@ -1,0 +1,39 @@
+# Rahasia tidak boleh masuk build context.
+**/.env
+**/.env.*
+!**/.env.example
+**/*.pem
+**/*.key
+
+# Artefak lokal (dibangun ulang di dalam image)
+node_modules
+**/node_modules
+dist
+**/dist
+.next
+**/.next
+coverage
+*.tsbuildinfo
+**/*.tsbuildinfo
+*.log
+e2e_*.log
+
+# Unggahan lokal tidak ikut; di produksi memakai volume.
+storage
+
+# Aplikasi Flutter tidak dipakai image mana pun dan berukuran besar.
+apps/mobile
+**/.dart_tool
+
+# Arsip & draf di luar produk
+archive
+opendesain
+docs/_tmp_*
+
+# Metadata VCS & agen lokal
+.git
+.gitignore
+.commandcode
+.opencode
+.idea
+.vscode

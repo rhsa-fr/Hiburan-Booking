@@ -8,7 +8,21 @@ import type {
   IdempotencyRecord,
   IdempotencyStore
 } from '@tarlink/platform/idempotency';
-import type { BookingPaymentPort, DpPaidInput, FullyPaidInput } from './booking.port';
+import type {
+  BookingPaymentPort,
+  DpPaidInput,
+  FullyPaidInput,
+  RefundSucceededInput
+} from './booking.port';
+import { LocalPaymentGateway } from './local.gateway';
+import type {
+  GatewayChargeInput,
+  GatewayChargeResult,
+  GatewayNotification,
+  GatewayRefundInput,
+  GatewayRefundResult,
+  PaymentGateway
+} from './payment.gateway';
 import {
   PaymentService,
   type PjpWebhookEvent,
@@ -299,6 +313,46 @@ class FakeRepository implements PaymentRepository {
     return matches[matches.length - 1] ?? null;
   }
 
+  async findPaidPayment(
+    _tx: JournalQueryClient,
+    bookingId: string,
+    kind: PaymentRecord['kind'],
+    excludePaymentId?: string
+  ): Promise<PaymentRecord | null> {
+    for (const payment of this.payments.values()) {
+      if (
+        payment.bookingId === bookingId &&
+        payment.kind === kind &&
+        payment.status === 'paid' &&
+        payment.id !== excludePaymentId
+      ) {
+        return payment;
+      }
+    }
+    return null;
+  }
+
+  async supersedePendingPayments(
+    _tx: JournalQueryClient,
+    input: {
+      bookingId: string;
+      kind: PaymentRecord['kind'];
+      keepPaymentId: string;
+      failureCode: string;
+    }
+  ): Promise<void> {
+    for (const [id, payment] of this.payments) {
+      if (
+        payment.bookingId === input.bookingId &&
+        payment.kind === input.kind &&
+        payment.status === 'pending' &&
+        id !== input.keepPaymentId
+      ) {
+        this.payments.set(id, { ...payment, status: 'failed' });
+      }
+    }
+  }
+
   async insertSettlementPayment(
     _tx: JournalQueryClient,
     input: { bookingId: string; method: string; amountIdr: bigint; feeIdr: bigint }
@@ -377,10 +431,17 @@ class FakeRepository implements PaymentRepository {
 
   async markPaymentPaid(
     _tx: JournalQueryClient,
-    input: { paymentId: string; paidAt: Date; providerTxnId: string | null; rawPayload: unknown }
+    input: {
+      paymentId: string;
+      paidAt: Date;
+      providerTxnId: string | null;
+      rawPayload: unknown;
+      allowLate?: boolean;
+    }
   ): Promise<void> {
     const payment = this.payments.get(input.paymentId);
-    if (!payment || payment.status !== 'pending') {
+    const late = payment?.status === 'failed' || payment?.status === 'expired';
+    if (!payment || (payment.status !== 'pending' && !(input.allowLate && late))) {
       throw new AppError('CONFLICT', 'payment is no longer pending');
     }
     this.payments.set(payment.id, {
@@ -396,6 +457,25 @@ class FakeRepository implements PaymentRepository {
       if (refund.paymentId === paymentId) total += refund.amountIdr;
     }
     return total;
+  }
+
+  async bookingRefundTotals(
+    _tx: JournalQueryClient,
+    bookingId: string
+  ): Promise<{ captured: bigint; refunded: bigint }> {
+    let captured = 0n;
+    for (const payment of this.payments.values()) {
+      if (payment.bookingId === bookingId && payment.status === 'paid') {
+        captured += payment.amountIdr;
+      }
+    }
+    let refunded = 0n;
+    for (const refund of this.refunds.values()) {
+      if (refund.bookingId === bookingId && refund.status === 'succeeded') {
+        refunded += refund.amountIdr;
+      }
+    }
+    return { captured, refunded };
   }
 
   async insertRefund(_tx: JournalQueryClient, input: NewRefund): Promise<RefundRecord> {
@@ -422,7 +502,10 @@ class FakeRepository implements PaymentRepository {
       requestedBy: input.requestedBy ?? null,
       approvedBy: null,
       approvedAt: null,
-      createdAt: AT
+      createdAt: AT,
+      isManual: input.isManual === true,
+      providerRefundId: input.providerRefundId ?? null,
+      transferredAt: input.transferredAt ?? null
     };
     this.refunds.set(refund.id, refund);
     return refund;
@@ -444,7 +527,8 @@ class FakeRepository implements PaymentRepository {
       ...refund,
       status: input.to,
       approvedBy: input.to === 'approved' ? input.actorId ?? refund.approvedBy : refund.approvedBy,
-      approvedAt: input.to === 'approved' ? AT : refund.approvedAt
+      approvedAt: input.to === 'approved' ? AT : refund.approvedAt,
+      providerRefundId: input.providerRefundId ?? refund.providerRefundId
     };
     this.refunds.set(updated.id, updated);
     return updated;
@@ -543,9 +627,11 @@ class FakeRepository implements PaymentRepository {
 class FakeBookingPort implements BookingPaymentPort {
   dpPaidCalls: DpPaidInput[] = [];
   fullyPaidCalls: FullyPaidInput[] = [];
+  refundSucceededCalls: RefundSucceededInput[] = [];
   /** The transaction each transition was asked to join. */
   dpPaidClients: unknown[] = [];
   fullyPaidClients: unknown[] = [];
+  refundSucceededClients: unknown[] = [];
 
   async applyDpPaid(input: DpPaidInput, client?: PoolClient): Promise<void> {
     this.dpPaidCalls.push(input);
@@ -555,6 +641,48 @@ class FakeBookingPort implements BookingPaymentPort {
   async applyFullyPaid(input: FullyPaidInput, client?: PoolClient): Promise<void> {
     this.fullyPaidCalls.push(input);
     this.fullyPaidClients.push(client);
+  }
+
+  async applyRefundSucceeded(input: RefundSucceededInput, client?: PoolClient): Promise<void> {
+    this.refundSucceededCalls.push(input);
+    this.refundSucceededClients.push(client);
+  }
+}
+
+/** Gateway with an inspectable `expireCharge` and scripted `fetchStatus`. */
+class ExpiringGateway implements PaymentGateway {
+  readonly name = 'pjp';
+  readonly expired: string[] = [];
+  expireError: Error | null = null;
+  status: GatewayNotification = {
+    kind: 'pending',
+    eventId: 'status-pending',
+    eventType: 'payment.pending',
+    orderId: '',
+    reason: 'pending',
+    raw: {}
+  };
+  private readonly local = new LocalPaymentGateway();
+
+  createCharge(input: GatewayChargeInput): Promise<GatewayChargeResult> {
+    return this.local.createCharge(input);
+  }
+
+  async refund(_input: GatewayRefundInput): Promise<GatewayRefundResult> {
+    throw new Error('refund is not used in these tests');
+  }
+
+  async expireCharge(orderId: string): Promise<void> {
+    if (this.expireError) throw this.expireError;
+    this.expired.push(orderId);
+  }
+
+  async fetchStatus(): Promise<unknown> {
+    return this.status;
+  }
+
+  classifyNotification(body: unknown): GatewayNotification {
+    return body as GatewayNotification;
   }
 }
 
@@ -1918,5 +2046,359 @@ describe('getSettlementPaymentByBooking', () => {
     await expect(service.getSettlementPaymentByBooking('booking-1')).rejects.toMatchObject({
       code: 'UNAUTHENTICATED'
     });
+  });
+});
+
+describe('abandonPendingPayment', () => {
+  it('ends the provider charge before releasing the pending row', async () => {
+    const gateway = new ExpiringGateway();
+    const { service, repository } = setup({ gateway });
+    const charge = await service.createDpCharge('booking-1', 'va_bca', { actorId: CUSTOMER });
+
+    const result = await service.abandonPendingPayment({
+      bookingId: 'booking-1',
+      kind: 'dp',
+      customerId: CUSTOMER
+    });
+
+    expect(result).toEqual({ cancelled: true, payment_id: charge.id });
+    expect(gateway.expired).toEqual([charge.provider_ref]);
+    expect(repository.payments.get(charge.id)?.status).toBe('failed');
+  });
+
+  it('keeps the charge pending when the provider cannot confirm the cancellation', async () => {
+    const gateway = new ExpiringGateway();
+    gateway.expireError = new AppError('UPSTREAM_ERROR', 'provider down');
+    const { service, repository } = setup({ gateway });
+    const charge = await service.createDpCharge('booking-1', 'qris', { actorId: CUSTOMER });
+
+    await expect(
+      service.abandonPendingPayment({ bookingId: 'booking-1', kind: 'dp', customerId: CUSTOMER })
+    ).rejects.toThrow(/provider down/);
+
+    expect(gateway.expired).toEqual([]);
+    expect(repository.payments.get(charge.id)?.status).toBe('pending');
+  });
+
+  it('rejects a paid charge without calling the provider', async () => {
+    const gateway = new ExpiringGateway();
+    const { service, repository } = setup({ gateway });
+    const charge = await service.createDpCharge('booking-1', 'qris', { actorId: CUSTOMER });
+    const stored = repository.payments.get(charge.id)!;
+    repository.payments.set(charge.id, { ...stored, status: 'paid', paidAt: AT });
+
+    await expect(
+      service.abandonPendingPayment({ bookingId: 'booking-1', kind: 'dp', customerId: CUSTOMER })
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+
+    expect(gateway.expired).toEqual([]);
+    expect(repository.payments.get(charge.id)?.status).toBe('paid');
+  });
+
+  it('rejects a caller that does not own the booking', async () => {
+    const { service } = setup({ gateway: new ExpiringGateway() });
+
+    await expect(
+      service.abandonPendingPayment({
+        bookingId: 'booking-1',
+        kind: 'dp',
+        customerId: 'another-customer'
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  it('answers no-op when there is no active charge', async () => {
+    const { service } = setup({ gateway: new ExpiringGateway() });
+
+    await expect(
+      service.abandonPendingPayment({ bookingId: 'booking-1', kind: 'dp', customerId: CUSTOMER })
+    ).resolves.toEqual({ cancelled: false, payment_id: null });
+  });
+});
+
+describe('syncPaymentStatus', () => {
+  it('applies a paid status fetched from the provider', async () => {
+    const gateway = new ExpiringGateway();
+    const { service, repository, bookingPort } = setup({ gateway });
+    const charge = await service.createDpCharge('booking-1', 'qris', { actorId: CUSTOMER });
+    gateway.status = {
+      kind: 'paid',
+      event: {
+        id: 'sync-paid-1',
+        type: 'payment.paid',
+        data: {
+          provider_ref: charge.provider_ref,
+          provider_txn_id: 'txn-sync-1',
+          amount_idr: '1200000'
+        }
+      }
+    };
+
+    const result = await service.syncPaymentStatus({
+      bookingId: 'booking-1',
+      kind: 'dp',
+      customerId: CUSTOMER
+    });
+
+    expect(result).toEqual({ status: 'paid', updated: true });
+    expect(repository.payments.get(charge.id)?.status).toBe('paid');
+    expect(bookingPort.dpPaidCalls).toHaveLength(1);
+    expect(repository.lines).not.toHaveLength(0);
+  });
+
+  it('marks a provider-expired charge as expired', async () => {
+    const gateway = new ExpiringGateway();
+    const { service, repository } = setup({ gateway });
+    const charge = await service.createDpCharge('booking-1', 'va_bca', { actorId: CUSTOMER });
+    gateway.status = {
+      kind: 'expired',
+      eventId: 'sync-expired-1',
+      eventType: 'payment.expired',
+      orderId: charge.provider_ref,
+      reason: 'expired',
+      raw: { transaction_status: 'expire' }
+    };
+
+    const result = await service.syncPaymentStatus({
+      bookingId: 'booking-1',
+      kind: 'dp',
+      customerId: CUSTOMER
+    });
+
+    expect(result).toEqual({ status: 'expired', updated: true });
+    expect(repository.payments.get(charge.id)?.status).toBe('expired');
+  });
+
+  it('leaves a pending charge untouched', async () => {
+    const gateway = new ExpiringGateway();
+    const { service, repository } = setup({ gateway });
+    const charge = await service.createDpCharge('booking-1', 'qris', { actorId: CUSTOMER });
+
+    const result = await service.syncPaymentStatus({
+      bookingId: 'booking-1',
+      kind: 'dp',
+      customerId: CUSTOMER
+    });
+
+    expect(result).toEqual({ status: 'pending', updated: false });
+    expect(repository.payments.get(charge.id)?.status).toBe('pending');
+  });
+
+  it('rejects a caller that does not own the booking', async () => {
+    const { service } = setup({ gateway: new ExpiringGateway() });
+
+    await expect(
+      service.syncPaymentStatus({
+        bookingId: 'booking-1',
+        kind: 'dp',
+        customerId: 'another-customer'
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+});
+
+describe('late provider payments', () => {
+  function paidEventFor(payment: PaymentRecord, id: string): PjpWebhookEvent {
+    return {
+      id,
+      type: 'payment.paid',
+      data: {
+        provider_ref: payment.providerRef,
+        provider_txn_id: `txn-${id}`,
+        amount_idr: payment.amountIdr.toString(),
+        paid_at: AT.toISOString()
+      }
+    };
+  }
+
+  it('accepts a late DP payment and supersedes the newer pending charge', async () => {
+    const gateway = new ExpiringGateway();
+    const { service, repository, bookingPort } = setup({ gateway });
+    const first = await service.createDpCharge('booking-1', 'va_bca', { actorId: CUSTOMER });
+    await service.abandonPendingPayment({ bookingId: 'booking-1', kind: 'dp', customerId: CUSTOMER });
+    const second = await service.createDpCharge('booking-1', 'qris', { actorId: CUSTOMER });
+
+    const result = await paidWebhook(
+      service,
+      repository,
+      paidEventFor(repository.payments.get(first.id)!, 'late-dp-1')
+    );
+
+    expect(result.status).toBe('processed');
+    expect(repository.payments.get(first.id)?.status).toBe('paid');
+    expect(repository.payments.get(second.id)?.status).toBe('failed');
+    expect(bookingPort.dpPaidCalls).toHaveLength(1);
+  });
+
+  it('refuses a late DP payment when another DP is already paid', async () => {
+    const gateway = new ExpiringGateway();
+    const { service, repository, bookingPort } = setup({ gateway });
+    const first = await service.createDpCharge('booking-1', 'va_bca', { actorId: CUSTOMER });
+    await service.abandonPendingPayment({ bookingId: 'booking-1', kind: 'dp', customerId: CUSTOMER });
+    const second = await service.createDpCharge('booking-1', 'qris', { actorId: CUSTOMER });
+    const stored = repository.payments.get(second.id)!;
+    repository.payments.set(second.id, { ...stored, status: 'paid', paidAt: AT });
+
+    const result = await paidWebhook(
+      service,
+      repository,
+      paidEventFor(repository.payments.get(first.id)!, 'late-dp-2')
+    );
+
+    expect(result.status).toBe('failed');
+    expect(repository.payments.get(first.id)?.status).toBe('failed');
+    expect(bookingPort.dpPaidCalls).toHaveLength(0);
+  });
+
+  it('refuses a late DP payment for a cancelled booking', async () => {
+    const gateway = new ExpiringGateway();
+    const { service, repository, bookingPort } = setup({ gateway });
+    const charge = await service.createDpCharge('booking-1', 'va_bca', { actorId: CUSTOMER });
+    await service.abandonPendingPayment({ bookingId: 'booking-1', kind: 'dp', customerId: CUSTOMER });
+    const booking = repository.bookings.get('booking-1')!;
+    repository.bookings.set('booking-1', { ...booking, lifecycleStatus: 'cancelled' });
+
+    const result = await paidWebhook(
+      service,
+      repository,
+      paidEventFor(repository.payments.get(charge.id)!, 'late-dp-3')
+    );
+
+    expect(result.status).toBe('failed');
+    expect(repository.payments.get(charge.id)?.status).toBe('failed');
+    expect(bookingPort.dpPaidCalls).toHaveLength(0);
+  });
+
+  it('accepts a late settlement payment for a dp_paid booking', async () => {
+    const gateway = new ExpiringGateway();
+    const { service, repository, bookingPort } = setup({ gateway });
+    const booking = repository.bookings.get('booking-1')!;
+    repository.bookings.set('booking-1', {
+      ...booking,
+      lifecycleStatus: 'confirmed',
+      paymentStatus: 'dp_paid'
+    });
+    const charge = await service.createSettlementCharge('booking-1', 'qris', { actorId: CUSTOMER });
+    await service.abandonPendingPayment({
+      bookingId: 'booking-1',
+      kind: 'settlement',
+      customerId: CUSTOMER
+    });
+
+    const result = await paidWebhook(
+      service,
+      repository,
+      paidEventFor(repository.payments.get(charge.id)!, 'late-settle-1')
+    );
+
+    expect(result.status).toBe('processed');
+    expect(repository.payments.get(charge.id)?.status).toBe('paid');
+    expect(bookingPort.fullyPaidCalls).toHaveLength(1);
+  });
+});
+
+describe('refundManual', () => {
+  async function paidDp(
+    service: PaymentService,
+    repository: FakeRepository
+  ): Promise<PaymentRecord> {
+    const charge = await service.createDpCharge('booking-1', 'va_bca', { actorId: CUSTOMER });
+    const stored = repository.payments.get(charge.id)!;
+    const paid: PaymentRecord = { ...stored, status: 'paid', paidAt: AT };
+    repository.payments.set(charge.id, paid);
+    return paid;
+  }
+
+  it('records a below-threshold transfer as succeeded and posts both journals', async () => {
+    const { service, repository, bookingPort } = setup();
+    const payment = await paidDp(service, repository);
+
+    const result = await service.refundManual(
+      payment.id,
+      500_000n,
+      'transfer balik sebagian',
+      'TRF-0001',
+      { actorId: 'admin-1', transferredAt: AT }
+    );
+
+    expect(result.status).toBe('succeeded');
+    expect(result.is_manual).toBe(true);
+    expect(result.transfer_ref).toBe('TRF-0001');
+    expect(result.transferred_at).toBe(AT.toISOString());
+    expect(repository.journalEntries.size).toBe(2);
+    expect(repository.lines).not.toHaveLength(0);
+    // The booking must stop claiming the money is still with the platform.
+    expect(bookingPort.refundSucceededCalls).toHaveLength(1);
+    expect(bookingPort.refundSucceededCalls[0]?.isFullRefund).toBe(false);
+  });
+
+  it('stops above the approval threshold and finalizes only after a second admin', async () => {
+    const { service, repository } = setup();
+    const payment = await paidDp(service, repository);
+
+    const requested = await service.refundManual(
+      payment.id,
+      1_200_000n,
+      'transfer balik penuh',
+      'TRF-0002',
+      { actorId: 'admin-1' }
+    );
+    expect(requested.status).toBe('requested');
+    expect(requested.requires_approval).toBe(true);
+    expect(repository.journalEntries.size).toBe(0);
+
+    const approved = await service.approveRefund(requested.id, { actorId: 'admin-2' });
+    expect(approved.status).toBe('succeeded');
+    expect(approved.is_manual).toBe(true);
+    expect(repository.journalEntries.size).toBe(2);
+  });
+
+  it('rejects a manual refund without a transfer reference', async () => {
+    const { service, repository } = setup();
+    const payment = await paidDp(service, repository);
+
+    await expect(
+      service.refundManual(payment.id, 500_000n, 'transfer balik', '  ', {
+        actorId: 'admin-1'
+      })
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+  });
+
+  it('rejects a manual refund above the captured amount', async () => {
+    const { service, repository } = setup();
+    const payment = await paidDp(service, repository);
+
+    await expect(
+      service.refundManual(payment.id, 1_300_000n, 'transfer balik', 'TRF-0003', {
+        actorId: 'admin-1'
+      })
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+  });
+
+  it('rejects a manual approval by the same admin', async () => {
+    const { service, repository } = setup();
+    const payment = await paidDp(service, repository);
+    const requested = await service.refundManual(
+      payment.id,
+      1_200_000n,
+      'transfer balik penuh',
+      'TRF-0004',
+      { actorId: 'admin-1' }
+    );
+
+    await expect(
+      service.approveRefund(requested.id, { actorId: 'admin-1' })
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+  });
+
+  it('rejects a manual refund for a payment that is not paid', async () => {
+    const { service, repository } = setup();
+    const charge = await service.createDpCharge('booking-1', 'va_bca', { actorId: CUSTOMER });
+
+    await expect(
+      service.refundManual(charge.id, 500_000n, 'transfer balik', 'TRF-0005', {
+        actorId: 'admin-1'
+      })
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
   });
 });

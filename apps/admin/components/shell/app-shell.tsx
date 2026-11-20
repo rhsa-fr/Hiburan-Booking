@@ -2,10 +2,13 @@
 
 import { useQuery } from '@tanstack/react-query';
 import {
+  Activity,
   Banknote,
   BookOpen,
   CalendarDays,
   FileCheck2,
+  Flag,
+  Gavel,
   Image as ImageIcon,
   LayoutDashboard,
   MapPin,
@@ -54,6 +57,7 @@ const NAV_GROUPS: SidebarNavGroupModel[] = [
     label: 'UTAMA',
     items: [
       { id: 'dashboard', label: 'Dashboard', href: '/', icon: <LayoutDashboard className="h-[18px] w-[18px]" /> },
+      { id: 'ops', label: 'Operasional', href: '/ops', icon: <Activity className="h-[18px] w-[18px]" /> },
       { id: 'bookings', label: 'Booking', href: '/bookings', icon: <CalendarDays className="h-[18px] w-[18px]" /> },
       { id: 'vendors', label: 'Vendor', href: '/vendors', icon: <Store className="h-[18px] w-[18px]" /> },
       {
@@ -63,6 +67,8 @@ const NAV_GROUPS: SidebarNavGroupModel[] = [
         icon: <FileCheck2 className="h-[18px] w-[18px]" />
       },
       { id: 'moderation', label: 'Moderasi', href: '/moderation', icon: <ImageIcon className="h-[18px] w-[18px]" /> },
+      { id: 'reports', label: 'Laporan', href: '/reports', icon: <Flag className="h-[18px] w-[18px]" /> },
+      { id: 'appeals', label: 'Banding', href: '/appeals', icon: <Gavel className="h-[18px] w-[18px]" /> },
       { id: 'release', label: 'Release', href: '/release', icon: <Wallet className="h-[18px] w-[18px]" /> },
       { id: 'payouts', label: 'Payout', href: '/payouts', icon: <Banknote className="h-[18px] w-[18px]" /> }
     ]
@@ -98,6 +104,8 @@ const NAV_GROUPS: SidebarNavGroupModel[] = [
 ];
 
 const SECTION_LABELS: Array<[string, string]> = [
+  ['/ops', 'Operasional'],
+  ['/appeals', 'Laporan'],
   ['/moderation', 'Vendor'],
   ['/applications', 'Vendor'],
   ['/ledger', 'Transaksi'],
@@ -245,28 +253,31 @@ function Shell({ children }: { children: ReactNode }) {
     footer: (
       <div className={collapsed ? 'flex justify-center' : 'space-y-3'}>
         {collapsed ? (
-          <AvatarStack
-            people={[{ name: operator?.operator_name ?? '-', tone: 'dark' }]}
-            max={1}
-          />
+          <span
+            aria-hidden
+            title={operator?.operator_name ?? '-'}
+            className="grid h-9 w-9 place-items-center rounded-full bg-accent text-[11px] font-bold text-accentInk"
+          >
+            {operator ? initialsOf(operator.operator_name) : '-'}
+          </span>
         ) : (
           <>
             <div className="flex items-center gap-3">
               <span
                 aria-hidden
-                className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-textMain text-[11px] font-bold text-white"
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-accent text-[11px] font-bold text-accentInk"
               >
                 {operator ? initialsOf(operator.operator_name) : '-'}
               </span>
               <span className="min-w-0 leading-tight">
-                <span className="block truncate text-[13px] font-semibold text-textMain">
+                <span className="block truncate text-[13px] font-semibold text-sidebarInk">
                   {operator?.operator_name ?? '-'}
                 </span>
-                <span className="block truncate text-[11.5px] text-textMuted">{operator?.role ?? '-'}</span>
+                <span className="block truncate text-[11.5px] text-sidebarMuted">{operator?.role ?? '-'}</span>
               </span>
             </div>
             <Button
-              variant="ghost"
+              variant="sidebar"
               size="sm"
               onClick={logout}
               iconAfter={<span aria-hidden>→</span>}
@@ -274,7 +285,7 @@ function Shell({ children }: { children: ReactNode }) {
             >
               Keluar
             </Button>
-            <p className="text-[11.5px] leading-snug text-textMuted">
+            <p className="text-[11.5px] leading-snug text-sidebarMuted">
               Terhubung ke API{'\u00a0'}· data langsung dari server.
             </p>
           </>
@@ -288,7 +299,7 @@ function Shell({ children }: { children: ReactNode }) {
       <div className="min-h-screen bg-page flex items-center justify-center p-6">
         <div className="w-full max-w-md space-y-4 animate-pulse">
           <div className="h-8 w-48 rounded bg-border" />
-          <div className="h-32 rounded-lg bg-surface border border-border" />
+          <div className="h-32 rounded-lg bg-card border border-border" />
         </div>
       </div>
     );
@@ -327,7 +338,7 @@ function Shell({ children }: { children: ReactNode }) {
       ) : null}
 
       <div className={collapsed ? 'lg:pl-[76px]' : 'lg:pl-[250px]'}>
-        <div className="sticky top-0 z-30 bg-page/90 backdrop-blur-sm">
+        <div className="sticky top-0 z-30 bg-surface/90 backdrop-blur-sm">
           <Topbar
             title={sectionLabel(pathname)}
             leading={
@@ -373,7 +384,7 @@ function Shell({ children }: { children: ReactNode }) {
         </main>
 
         <footer className="mx-auto w-full max-w-[1440px] px-4 pb-8 sm:px-7">
-          <p className="border-t border-border pt-4 text-sm text-textMuted">
+          <p className="border-t border-borderSoft pt-4 text-sm text-textMuted">
             Tarlink Admin · data langsung dari API · tindakan operator tercatat di audit.
           </p>
         </footer>

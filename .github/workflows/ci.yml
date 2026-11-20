@@ -1,0 +1,131 @@
+name: ci
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+
+# Satu run aktif per ref: push beruntun tidak menumpuk runner.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Test suite tidak memakai database nyata, tetapi modul yang membaca config
+  # butuh dua nilai ini supaya bisa di-import. Jangan dipakai di produksi.
+  DATABASE_URL: postgres://ci:ci@127.0.0.1:5999/ci
+  JWT_SECRET: ci-placeholder-secret-0123456789abcdef
+
+jobs:
+  backend:
+    name: API + worker (typecheck, test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: typecheck
+        run: npm run typecheck
+      - name: unit test (API + libs + worker)
+        run: |
+          npx vitest run
+          npm run test:worker
+
+  database:
+    name: Migrasi + invarian DB (PostGIS)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:15-3.4
+        env:
+          POSTGRES_USER: tarlink
+          POSTGRES_PASSWORD: tarlink
+          POSTGRES_DB: tarlink
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tarlink -d tarlink"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgres://tarlink:tarlink@127.0.0.1:5432/tarlink
+      JWT_SECRET: ci-placeholder-secret-0123456789abcdef
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: terapkan migrasi dari nol
+        run: npm run migrate
+      - name: pastikan tidak ada migrasi tertinggal
+        run: npm run migrate:dry
+      - name: invarian DB (uang, double-booking, ledger)
+        run: npm run verify:db
+
+  admin:
+    name: Panel (typecheck, test, build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck:admin
+      - run: npm run test:admin
+      - name: build produksi
+        run: npm run build:admin
+        env:
+          NEXT_PUBLIC_API_BASE_URL: http://localhost:3001
+          MEDIA_PUBLIC_BASE_URL: http://localhost:3001
+
+  mobile:
+    name: Aplikasi Flutter (analyze, test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          # Dipatok ke versi yang dipakai mengembangkan fitur (bukan `stable`
+          # yang bergerak sendiri): Flutter 3.35.2 / Dart 3.9.
+          flutter-version: 3.35.2
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+
+  images:
+    name: Image Docker (api, worker, admin)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [api, worker, admin]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: build ${{ matrix.target }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: ${{ matrix.target }}
+          push: false
+          load: false
+          cache-from: type=gha,scope=${{ matrix.target }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.target }}
+          build-args: |
+            NEXT_PUBLIC_API_BASE_URL=http://localhost:3001
+            MEDIA_PUBLIC_BASE_URL=http://localhost:3001

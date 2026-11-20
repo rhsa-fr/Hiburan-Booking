@@ -468,6 +468,53 @@ async function main(): Promise<void> {
       `${payoutEnum[0].n}/7 nilai`
     );
 
+    // 11. FR-122 clawback: tabel, constraint maker-checker, dan nilai enum.
+    const { rows: clawbackTable } = await client.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM information_schema.tables
+        WHERE table_schema = current_schema() AND table_name = 'dispute_clawbacks'`
+    );
+    record(
+      'tabel dispute_clawbacks ada',
+      Number(clawbackTable[0].n) === 1,
+      `${clawbackTable[0].n}/1 tabel`
+    );
+
+    const { rows: clawbackChecks } = await client.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM pg_constraint
+        WHERE conrelid = 'dispute_clawbacks'::regclass
+          AND conname IN ('dispute_clawbacks_maker_checker','dispute_clawbacks_approved_has_journal')`
+    );
+    record(
+      'constraint maker-checker clawback ada',
+      Number(clawbackChecks[0].n) === 2,
+      `${clawbackChecks[0].n}/2 constraint`
+    );
+
+    const { rows: clawbackEnum } = await client.query<{ n: string }>(
+      `SELECT count(*)::text AS n
+         FROM pg_type t JOIN pg_enum e ON e.enumtypid = t.oid
+        WHERE t.typname = 'dispute_resolution' AND e.enumlabel = 'clawback'`
+    );
+    record(
+      "enum dispute_resolution punya 'clawback'",
+      Number(clawbackEnum[0].n) === 1,
+      `${clawbackEnum[0].n}/1 nilai`
+    );
+
+    // 12. FR-126: index rilis per vendor untuk ekspor pendapatan.
+    const { rows: earningsIndex } = await client.query<{ n: string }>(
+      `SELECT count(*)::text AS n
+         FROM pg_indexes
+        WHERE schemaname = current_schema()
+          AND tablename = 'bookings'
+          AND indexname = 'bookings_vendor_released_idx'`
+    );
+    record(
+      'index ekspor pendapatan vendor ada',
+      Number(earningsIndex[0].n) === 1,
+      `${earningsIndex[0].n}/1 index`
+    );
+
     await client.query('ROLLBACK');
     // eslint-disable-next-line no-console
     console.log('\n(transaksi ROLLBACK — database target tidak berubah)');

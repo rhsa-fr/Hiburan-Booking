@@ -11,6 +11,9 @@ dibayar mahal lewat bug.
 3. `docs/API.md` — bentuk request/response.
 4. `apps/mobile/DESIGN.md` — hanya kalau menyentuh UI pelanggan.
 5. `docs/PRD-v1.1.md` — hanya kalau menyentuh aturan bisnis.
+6. Vault `20-Decisions/` — ADR 0001–0018: tema, ledger, auth/2FA, payout/refund,
+   chat/OTP, CSP, sengketa, rekonsiliasi, moderasi UGC, notifikasi email. Fitur yang
+   menyentuh uang/auth/status tidak dianggap selesai sebelum ADR-nya ada.
 
 ## 2. Aturan yang tidak boleh dilanggar
 
@@ -66,6 +69,7 @@ Bila beberapa agen bekerja bersamaan, **satu file satu penulis per gelombang**.
 | Area | Pemilik |
 |---|---|
 | `package.json`, lockfile, `tsconfig*`, `vitest.config.ts` | Lead / manusia |
+| `Dockerfile`, `docker-compose*.yml`, `.github/**`, `.dockerignore`, `.env*.example`, `scripts/preflight.mjs` | Lead / manusia |
 | `db/migrations/**` | Lead / manusia |
 | `libs/platform/**`, `libs/modules/**` (termasuk `vendor-portal`) | Manusia (perubahan menyentuh uang, status, media) |
 | `apps/mobile/lib/app/theme.dart`, `lib/core/ui.dart` | **Beku** — perubahan harus lewat lead |
@@ -103,7 +107,7 @@ Mobile:
 ```bash
 cd apps/mobile
 flutter analyze            # "No issues found!"
-flutter test               # 27 test
+flutter test               # 47 test
 ```
 
 UI yang berubah wajib dilihat, bukan hanya lulus test. Cara termurah:
@@ -119,6 +123,20 @@ Atau ambil screenshot otomatis 390×844 lewat `integration_test/screens_test.dar
 
 **Larangan:** melaporkan "selesai" tanpa menjalankan perintah di atas, atau mengarang
 output. "Tidak dijalankan" adalah jawaban yang sah; klaim palsu tidak.
+
+Deploy (hanya bila menyentuh `Dockerfile`, `docker-compose.prod.yml`, `.github/**`,
+atau `scripts/preflight.mjs`):
+
+```bash
+npm run verify:prod -- --env-file .env.prod --db   # 0 FAIL
+docker compose -f docker-compose.prod.yml --env-file .env.prod config --quiet
+docker build --target api .
+docker build --target worker .
+docker build --target admin .
+```
+
+Node dipatok **24** di dev, CI, dan image (`node:24-bookworm-slim`): `package-lock.json`
+dibuat oleh npm 11, dan `node:22` membawa npm 10 yang menolak lock ini.
 
 ## 5. Konvensi kode
 
@@ -153,7 +171,7 @@ output. "Tidak dijalankan" adalah jawaban yang sah; klaim palsu tidak.
 4. `flutter analyze` + `flutter test`, lalu screenshot 390×844.
 
 **Migrasi DB**
-1. Nomor urut berikutnya di `db/migrations` (terakhir `023`, berikutnya `024`).
+1. Nomor urut berikutnya di `db/migrations` (terakhir `035_vendor_earnings_index.sql`, berikutnya `036`).
 2. Idempoten bila memungkinkan; sediakan jalur koreksi ke depan, bukan `DROP` data.
 3. Jalankan `npm run migrate:dry` sebelum `npm run migrate`.
 
@@ -167,11 +185,29 @@ Sudah diperbaiki (jangan dikembalikan tanpa keputusan tertulis):
 - Rate limit login/OTP per **IP** (selain per email).
 - Pencarian vendor memakai index trigram (`pg_trgm`).
 - `dev_code` OTP butuh `OTP_DEV_MODE=true` dan `NODE_ENV != production`.
-- Refresh token panjang (30 hari) + rotasi + deteksi reuse; job `cleanup-auth`.
-- Panel admin mengirim CSP enforced + `X-Frame-Options: DENY`; `/auth/refresh`
+- Refresh token panjang (30 hari) + rotasi + deteksi reuse; job `cleanup-auth`
+  memangkas `sessions`, `otp_requests`, `login_attempts`, dan
+  `admin_2fa_challenges` kedaluwarsa (retensi 7–30 hari).
+- Rate limit pembuatan laporan: 10 laporan/jam/user (`SlidingWindowLimiter`
+  in-memory di `libs/platform/rate-limit`; limiter refresh juga memakai modul ini).
+  Percobaan berlebih dijawab `429 RATE_LIMITED`. Bukan pengganti otorisasi.
+- Kesiapan layanan dipisah: `GET /v1/health` = liveness (selalu 200),
+  `GET /v1/health/ready` = readiness (`SELECT 1`; 503 saat DB mati). `HEALTHCHECK`
+  image API memakai yang readiness.
+- Panel admin mengirim CSP enforced per request (nonce di `middleware.ts`, tanpa
+  `'unsafe-inline'` di `script-src`, seluruh rute `force-dynamic`) +
+  `X-Frame-Options: DENY`; `/auth/refresh`
   membatasi kegagalan per IP (in-memory per proses) dan cookie `tarlink_rt` yang
   rusak dihapus pada refresh/logout.
 - E-wallet ditolak eksplisit (400), bukan menghasilkan VA palsu.
+- Ganti metode pembayaran (`POST /payments/abandon`) mengakhiri charge di provider
+  (`POST /v2/{order_id}/expire` untuk Midtrans) **sebelum** baris lokal jadi `failed`.
+  Bila provider tidak bisa memastikan tagihan berakhir, tagihan tetap `pending`
+  supaya tidak ada dua tagihan yang sama-sama bisa dibayar. Pembayaran telat untuk
+  tagihan yang sudah dilepas tetap diterima bila tahap itu belum dibayar dan tidak
+  ada pembayaran lain yang `paid`; tagihan pending lain untuk tahap yang sama
+  ditandai `failed` (`SUPERSEDED_BY_LATE_PAYMENT`). `POST /payments/sync` juga
+  menerapkan status `expired`/`failed` dari provider, bukan hanya `paid`.
 - Payout vendor: `payouts`/`payout_items`, rekening terenkripsi AES-256-GCM, maker-checker
   dua endpoint, jurnal `payout_requested`/`payout_settled` + reversal saat provider gagal,
   dan worker `payout_reconcile`.
@@ -180,6 +216,16 @@ Sudah diperbaiki (jangan dikembalikan tanpa keputusan tertulis):
 - Ulasan & rating booking pelanggan (`POST /v1/bookings/:id/review`, `GET /v1/vendors/:id/reviews`, migrasi `014_reviews.sql`).
 - Notifikasi in-app (migrasi `018`): worker `outbox` menulis `notifications`, mobile mem-poll
   `/v1/notifications` dan menampilkan popup. Menggantikan stub WA/push.
+- Notifikasi keluar via email (FR-051, migrasi `028`): relay `outbox` menjalankan
+  `NotificationSink` + `EmailNotificationSink` lewat `CompositeMessageSink`. Setiap
+  perubahan status booking yang punya copy in-app juga dikirim ke email pelanggan/vendor
+  (`planEmailNotification` di `libs/modules/notifications`), memakai transport bersama
+  `libs/platform/email` (`EMAIL_API_URL`, `EMAIL_API_KEY`, `EMAIL_FROM`; tanpa URL di
+  production transport gagal tertutup). `notification_deliveries` menyimpan klaim per
+  `(channel, outbox_message_id, user_id)` sehingga retry relay tidak pernah mengirim email
+  kedua; kegagalan provider menandai baris `failed` + pesan `outbox` di-retry, dan klaim
+  `sending` yang lebih tua dari 10 menit boleh diambil alih. Gagal email **tidak**
+  menggagalkan baris notifikasi in-app. Alamat email tidak pernah masuk log.
 - Panel admin punya antrean pengajuan vendor (`/applications`) dan antrean refund
   (`/refunds`, `GET /v1/payments/refunds`); approve/reject tetap maker-checker.
 - NIK vendor disimpan terenkripsi AES-256-GCM (`nik_ciphertext`, migrasi `019`), baris lama
@@ -192,6 +238,13 @@ Sudah diperbaiki (jangan dikembalikan tanpa keputusan tertulis):
 - Refund maker-checker (FR-128/FR-133): refund > `REFUND_APPROVAL_THRESHOLD_IDR`
   berhenti di `requested`, disetujui admin lain, menolak self-approval, menyimpan
   `evidence_url`/`review_note`, dan statusnya dapat dibaca pelanggan.
+- Refund manual (migrasi `036`) untuk pembayaran VA/Mandiri yang tidak bisa
+  di-refund Midtrans: `POST /payments/:id/refund/manual` mewajibkan
+  `transfer_ref`, menyimpan `is_manual`/`transferred_at`, memakai
+  `fee_idr=0`/`fee_bearer='platform'`, dan memposting jurnal pengakuan +
+  pencairan. Nominal di atas ambang tetap maker-checker; approve tidak memanggil
+  provider. Panel `/payments` punya tombol **Refund manual**, dan `/ops`
+  menampilkan webhook pembayaran gagal 24 jam.
 - Hapus akun mandiri (FR-101): `DELETE /auth/me` menganonimkan PII, mencabut sesi +
   peran, mencatat `account_deletion_requests`, dan idempoten.
 - Registrasi vendor mandiri (FR-002/FR-003): `vendor_applications`, upload KTP privat
@@ -205,12 +258,104 @@ Sudah diperbaiki (jangan dikembalikan tanpa keputusan tertulis):
   versinya. Version basi ditolak, bukan disimpan diam-diam.
 - Toggle wilayah (FR-125): `GET/PATCH /admin/regions`, panel `/regions`; wilayah
   nonaktif hilang dari `GET /regions`, katalog, favorit, dan formulir vendor baru.
+- Sengketa oleh pelanggan (FR-056): `POST/GET /v1/bookings/:id/disputes`; aktor ditentukan
+  dari kepemilikan booking (`resolveDisputeActor`), bukan urutan peran. Jendela 7 hari
+  pra-rilis (S-04) dan 30 hari pasca-rilis (S-08); jalur tulis hanya `customer` dan
+  `vendor_owner` (owner), jalur baca juga anggota vendor aktif.
+- Rekonsiliasi gateway ↔ ledger (FR-131) fase 1 **read-only**, migrasi `024`:
+  matcher murni + repository batas hari WIB, run idempoten per
+  `(provider, scope, report_date)`, endpoint `POST/GET /v1/admin/reconciliation/runs`,
+  panel `/reconciliation`. **Tidak** memposting jurnal dan tidak mengubah
+  `payments`/`payouts`. Fase 2 (migrasi `029`): setiap temuan mendapat `due_at`
+  (run selesai + `recon_sla_hours`, default 24 jam) dan dapat diputuskan admin
+  finance/super lewat `POST /v1/admin/reconciliation/diffs/:id/resolve`
+  (`accepted`/`ignored`/`referred`/`corrected`, catatan wajib 5-1000 karakter,
+  satu baris `audit_logs`). Keputusan bersifat final (resolve kedua `409`), baris
+  `matched` tidak boleh diputuskan, dan modul tetap tidak menyentuh uang.
+  Worker `reconcile_daily` (slot `lockKey 74110`) menjalankan kemarin WIB sekali
+  per hari setelah `recon_hour_wib` selama `recon_enabled=true`; bila worker
+  sempat mati, tick berikutnya mengejar tanggal yang terlewat (maksimal 7 hari,
+  dibatasi agar satu tick tidak berubah menjadi backfill panjang). Provider
+  diambil dari `payments`/`webhook_events`, idempoten lewat UNIQUE run, dan
+  auditnya `reconciliation.run_daily` tanpa aktor. Kegagalan satu provider tidak
+  menghentikan provider lain.
+- Moderasi UGC (FR-123/FR-124/FR-142), migrasi `027`: tabel `content_reports`
+  (target `vendor`/`review`/`chat_message`/`vendor_media`, SLA 24 jam atau 72 jam untuk
+  `copyright`, keputusan wajib bercatatan dan masuk `audit_logs`) dan `user_blocks`.
+  Endpoint pengguna `POST/GET /v1/reports` + `POST/DELETE/GET /v1/blocks`; antrean admin
+  `GET /v1/admin/reports` + `POST /v1/admin/reports/:id/resolve` (support/super, finance
+  hanya baca) dan panel `/reports`. Takedown **menyembunyikan**, tidak menghapus:
+  `reviews.hidden_at`/`chat_messages.hidden_at`, media → `vendor_media.status='rejected'`
+  + kolom publik dibersihkan. Rating vendor dikoreksi trigger saat ulasan
+  disembunyikan/dipulihkan. Penangguhan vendor tetap lewat jalur `admin_super` yang ada,
+  bukan aksi resolve. Pesan dari pengguna yang diblokir tidak muncul di riwayat **dan**
+  tidak dikirim ke socket WebSocket. Pelapor menerima notifikasi in-app
+  `content_report_resolved` saat laporan diputuskan (catatan moderator tetap internal),
+  dan worker `escalate_reports` (migrasi `030`, slot `lockKey 74111`) menandai
+  `escalated_at` + mengirim `content_report_sla_breach` ke semua admin support/super
+  sekali per laporan saat SLA lewat. Eskalasi tidak mengubah status laporan.
+- Banding takedown (FR-124, migrasi `031`): pemilik konten (ulasan/pesan chat/media)
+  mengajukan `POST /v1/reports/:id/appeal` maksimal 30 hari setelah keputusan, satu
+  banding per laporan, alasan 20-2000 karakter dan `evidence_url` opsional. Admin
+  support/super memutuskan lewat `GET /v1/admin/report-appeals` +
+  `POST /v1/admin/report-appeals/:id/resolve` (panel `/appeals`), catatan wajib
+  10-1000 karakter, satu keputusan final, audit `content_report.appeal_*`, dan
+  notifikasi in-app ke pemilik konten. Menerima banding memulihkan
+  `reviews.hidden_at`/`chat_messages.hidden_at`; media kembali ke antrean
+  `pending` karena kolom publiknya sudah dibersihkan saat takedown. Laporan asal
+  **tidak** diubah. Layar mobile `Banding konten` (Profil → `Routes.appeals`) memakai
+  `GET /v1/reports/against-me` + `POST /v1/reports/:id/appeal`. Bukti **berkas** juga
+  sudah ada (migrasi `033`): `POST/GET /v1/reports/:id/appeal/evidence` untuk pemilik
+  (hanya saat `pending`) dan `GET /v1/admin/report-appeals/:id/evidence` untuk admin,
+  disimpan terenkripsi di `PRIVATE_UPLOAD_DIR`, tipe dari magic bytes, maks 5 MB, dan
+  setiap pembacaan admin diaudit. Mobile punya tombol **Lampirkan bukti berkas**
+  di layar `Banding konten` (Profil → `Routes.appeals`) untuk banding `pending`;
+  panel sudah punya tombol "Lihat berkas bukti".
+- Pengingat acara (FR-052, migrasi `032`): worker `booking_reminders` (`lockKey 74112`)
+  memilih booking `confirmed`/`in_progress` yang `events.start_date`-nya sama dengan
+  H-7, H-1, atau hari-H (tanggal WIB, bukan UTC) lalu menulis satu `outbox_messages`
+  dengan dedupe `booking:<id>:reminder:<offset>`. Relay `outbox` yang sudah ada
+  mengirim in-app **dan** email dengan copy yang sama (`booking.reminder_7d`,
+  `booking.reminder_1d`, `booking.reminder_day`). Tidak ada tabel baru; tick ganda
+  tidak pernah mengirim pengingat yang sama dua kali. Push FCM belum ada, jadi
+  target PRD "push ≤60 detik" tetap belum terpenuhi.
+- Ringkasan kesiapan operasional (`GET /v1/admin/ops/alerts`, panel `/ops` + banner
+  dashboard): agregat read-only untuk laporan konten, sengketa, temuan/run rekonsiliasi,
+  payout macet, outbox gagal, email gagal 24 jam, dan webhook pembayaran gagal 24 jam.
+  Semua peran admin boleh membaca;
+  tidak ada PII dan tidak ada mutasi. Ambang ada di SQL (`ops.repository.ts`), label di
+  `ops.alerts.ts` (unit test murni); dead letter/outbox yang menetap tetap perlu
+  investigasi manual.
 
 Masih terbuka:
 
 - Tidak ada emulator Android/HP fisik; bukti APK hanya build sukses.
 - Detail vendor sempat kosong pada screenshot E2E otomatis — assertion ukuran body
   sudah ditambahkan; cek manual screenshot sebelum menyatakan selesai.
+- Rekonsiliasi fase 2: SLA + aksi resolve + **worker harian** sudah ada (migrasi
+  `029`, job `reconcile_daily`). Yang belum: lane `payout`/`refund` dan run
+  terhadap data gateway nyata (sumber masih `webhook_events`).
+- Multi-vendor (FR-113) hanya kolom `events.parent_event_id` tanpa pemakaian TypeScript.
+- Clawback pasca-pencairan (FR-122, migrasi `034`): klaim maksimal 30 hari setelah
+  `released_at`, hanya bila payout sudah `paid`; pengajuan dan persetujuan wajib
+  admin berbeda (`dispute_clawbacks`, `403` bila menyetujui sendiri). Menyetujui
+  memposting `clawback_recognized` + `clawback_paid`, mengubah settlement ke
+  `clawed_back`, menutup sengketa `resolution = 'clawback'`, dan meninggalkan
+  `vendor_payable` negatif yang otomatis memotong payout berikutnya. Panel
+  `/disputes` punya opsi ajukan + tombol Setujui/Tolak.
+- Ekspor pendapatan vendor (FR-126, migrasi `035`): `GET /v1/vendor/earnings/export`
+  mengirim CSV (default bulan berjalan WIB, maks 366 hari/5.000 baris) dengan kolom
+  GMV, komisi, biaya layanan, pendapatan vendor, clawback, pencairan, dan baris
+  `TOTAL`. Sel uang dibaca dari jurnal `release` (`2100`/`4100`/`4110`/`2120`) dan
+  `clawback_recognized`, bukan dihitung ulang dari kolom booking, sehingga total
+  cocok dengan ledger. `format=json` memberi pratinjau + CSV untuk mobile, yang
+  menyalin isi CSV lewat papan klip (belum ada pemilih berkas di allowlist mobile).
+- Moderasi UGC (FR-123/124/142) sudah ada, termasuk notifikasi pelapor, eskalasi
+  SLA (migrasi `030`), banding takedown (migrasi `031`, panel `/appeals` + layar
+  mobile `Banding konten`), dan bukti berkas privat (migrasi `033`, terenkripsi,
+  endpoint pemilik + admin, baca admin diaudit, unggah dari mobile dan lihat dari
+  panel). Pelapor belum bisa melihat laporan orang lain (memang disengaja), dan
+  auto-suspend pelanggaran berulang tetap belum dibuat.
 - 2FA admin sudah ada (FR-128, migrasi `025`+`026`): TOTP terenkripsi, backup code,
   reset `admin_super`. Panel memakai cookie `tarlink_rt` HttpOnly untuk refresh token;
   access token tetap 15 menit dan disegarkan otomatis. `TOTP_ENCRYPTION_KEY` wajib di
@@ -218,9 +363,14 @@ Masih terbuka:
 - Teks `tos`/`privacy` di `policy_versions` masih placeholder `{"status":"draft"}`;
   jangan mengarang pasal. Registrasi email **dan** sign-up Google pertama kali sudah
   mencatat consent; akun Google lama tidak diminta ulang.
-- Provider WhatsApp/SMS tidak dipakai (diganti chat real-time in-app, ADR 0011);
-  push notification belum ada: notifikasi saat ini in-app (worker `outbox` → tabel
-  `notifications`, popup di mobile). Chat teks in-app sudah ada (migrasi `021`,
+- Provider WhatsApp/SMS tidak dipakai (diganti chat real-time in-app, ADR 0011).
+  Notifikasi keluar saat ini **email** (FR-051, migrasi `028`) dan pengingat
+  H-7/H-1/hari-H (FR-052, migrasi `032`, job `booking_reminders`) sudah dikirim lewat
+  in-app + email. Yang belum: push FCM, jadi target PRD "push ≤60 detik" belum
+  terpenuhi penuh — email berangkat dari tick worker (default 15 detik), bukan push
+  instan.
+  Notifikasi in-app tetap ada (worker `outbox` → tabel `notifications`, popup di mobile).
+  Chat teks in-app sudah ada (migrasi `021`,
   `GET/POST /v1/bookings/:id/chat/messages`, `WS /v1/chat/ws`); foto/lokasi dan
   penyaringan kontak FR-135 belum ada. Picker peta dan UI check-in berbasis GPS
   belum ada. Charge/refund QRIS memakai Midtrans sandbox; endpoint check-in/no-show

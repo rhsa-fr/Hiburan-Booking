@@ -1,8 +1,10 @@
 /**
  * Payment orchestration: DP charge creation, PJP webhook ingestion, refunds.
  *
- * No real gateway is called. Charges return a locally built instruction payload
- * and the webhook is the only source of truth for "paid" (D-01).
+ * The gateway adapter (`MidtransGateway` or `LocalPaymentGateway`) owns the
+ * provider wire format. A paid webhook is the source of truth for "paid"
+ * (D-01); `POST /payments/sync` only exists for environments where the provider
+ * cannot reach the server and applies the same classification path.
  *
  * The booking module owns the booking status transition: this module only
  * states that the DP was paid and lets `BookingService.applyDpPaid` apply the
@@ -37,6 +39,7 @@ import {
   type PaymentRecord,
   type PaymentRepository,
   type PaymentStatus,
+  type RefundRecord,
   type RefundStatus
 } from './payment.repository';
 
@@ -57,6 +60,10 @@ const SUPPORTED_DP_METHODS = new Set<PaymentMethod>([
   'va_bri',
   'va_mandiri'
 ]);
+/** Lifecycle states where no new payment may be applied. */
+const CLOSED_LIFECYCLE_STATUSES = new Set(['cancelled', 'rejected', 'expired', 'no_show']);
+/** Settlement is allowed while the event is still upcoming or in progress. */
+const SETTLEABLE_LIFECYCLE_STATUSES = new Set(['confirmed', 'in_progress', 'completed']);
 /** `audit_logs.request_id` is VARCHAR(40); an oversized header must not fail a write. */
 const REQUEST_ID_MAX_LENGTH = 40;
 
@@ -64,6 +71,7 @@ export const IDEMPOTENCY_SCOPE = {
   createDpCharge: 'POST /v1/payments/dp',
   createSettlementCharge: 'POST /v1/payments/settlement',
   refund: 'POST /v1/payments/:id/refund',
+  refundManual: 'POST /v1/payments/:id/refund/manual',
   advanceRefund: 'payment.refund.advance',
   approveRefund: 'POST /v1/payments/refunds/:id/approve',
   rejectRefund: 'POST /v1/payments/refunds/:id/reject'
@@ -275,6 +283,12 @@ export interface RefundResult {
   /** True when the request is waiting for a second admin (FR-128). */
   readonly requires_approval: boolean;
   readonly journal_entry_id: string;
+  /** True when the money left through a manual bank transfer. */
+  readonly is_manual: boolean;
+  /** Manual transfer reference; null for gateway refunds. */
+  readonly transfer_ref: string | null;
+  /** When the manual transfer was made; null for gateway refunds. */
+  readonly transferred_at: string | null;
 }
 
 /** Queue row for the admin refund screen: refund plus booking context. */
@@ -587,19 +601,13 @@ export class PaymentService {
           );
         }
 
-        const CLOSED_LIFECYCLE_STATUSES = new Set(['cancelled', 'rejected', 'expired', 'no_show']);
         if (CLOSED_LIFECYCLE_STATUSES.has(booking.lifecycleStatus)) {
           throw new AppError(
             'CONFLICT',
             `cannot settle booking in lifecycle_status: ${booking.lifecycleStatus}`
           );
         }
-        const ALLOWED_SETTLEMENT_LIFECYCLES = new Set([
-          'confirmed',
-          'in_progress',
-          'completed'
-        ]);
-        if (!ALLOWED_SETTLEMENT_LIFECYCLES.has(booking.lifecycleStatus)) {
+        if (!SETTLEABLE_LIFECYCLE_STATUSES.has(booking.lifecycleStatus)) {
           throw new AppError(
             'CONFLICT',
             `booking lifecycle_status must be confirmed, in_progress, or completed (current: ${booking.lifecycleStatus})`
@@ -1133,13 +1141,60 @@ export class PaymentService {
     }
 
     if (payment.status !== 'pending') {
-      await this.repository.markWebhookEvent(tx, {
-        id: webhookRowId,
-        status: 'ignored',
-        lastError: `payment status is ${payment.status}`
+      const late = payment.status === 'failed' || payment.status === 'expired';
+      if (!late) {
+        await this.repository.markWebhookEvent(tx, {
+          id: webhookRowId,
+          status: 'ignored',
+          lastError: `payment status is ${payment.status}`
+        });
+        return { received: true, duplicate: false, event_id: event.id, status: 'ignored' };
+      }
+
+      // A charge released locally (method switch / provider expiry) can still
+      // be paid before the provider closes it. Accept it only when the booking
+      // still owes this stage and no other payment of the same kind is paid;
+      // otherwise accepting it would post a second payment for one stage.
+      const alreadyPaid = await this.repository.findPaidPayment(
+        tx,
+        payment.bookingId,
+        payment.kind,
+        payment.id
+      );
+      const owesStage =
+        payment.kind === 'dp'
+          ? booking.paymentStatus === 'unpaid'
+          : booking.paymentStatus === 'dp_paid';
+      // A cancelled/expired/no-show booking must not be revived by a late
+      // payment: the money has to be refunded, not applied to the state machine.
+      const lifecycleOpen = CLOSED_LIFECYCLE_STATUSES.has(booking.lifecycleStatus)
+        ? false
+        : payment.kind === 'dp'
+          ? booking.lifecycleStatus === 'accepted'
+          : SETTLEABLE_LIFECYCLE_STATUSES.has(booking.lifecycleStatus);
+      if (alreadyPaid || !owesStage || !lifecycleOpen) {
+        await this.repository.markWebhookEvent(tx, {
+          id: webhookRowId,
+          status: 'failed',
+          lastError: alreadyPaid
+            ? `late ${payment.kind} payment after another ${payment.kind} payment was paid`
+            : !owesStage
+              ? `late ${payment.kind} payment for a booking already at ${booking.paymentStatus}`
+              : `late ${payment.kind} payment for a booking in ${booking.lifecycleStatus}`
+        });
+        return { received: true, duplicate: false, event_id: event.id, status: 'failed' };
+      }
+
+      // The late payment wins. End the other pending charge of this kind so the
+      // customer is not left with two payable instructions.
+      await this.repository.supersedePendingPayments(tx, {
+        bookingId: payment.bookingId,
+        kind: payment.kind,
+        keepPaymentId: payment.id,
+        failureCode: 'SUPERSEDED_BY_LATE_PAYMENT'
       });
-      return { received: true, duplicate: false, event_id: event.id, status: 'ignored' };
     }
+    const latePayment = payment.status === 'failed' || payment.status === 'expired';
 
     const paidAt = this.parseEventDate(data.paid_at) ?? this.now();
     const entry: JournalEntryDraft = buildEntry(
@@ -1160,7 +1215,8 @@ export class PaymentService {
       paymentId: payment.id,
       paidAt,
       providerTxnId: data.provider_txn_id ?? null,
-      rawPayload: event
+      rawPayload: event,
+      allowLate: latePayment
     });
 
     // The booking module owns the transition (L-11) and everything it owes.
@@ -1386,6 +1442,9 @@ export class PaymentService {
       requestedBy: string | null;
       approvedBy: string | null;
       approvedAt: Date | null;
+      isManual?: boolean;
+      providerRefundId?: string | null;
+      transferredAt?: Date | null;
     },
     journalEntryId: string,
     requiresApproval: boolean
@@ -1406,7 +1465,10 @@ export class PaymentService {
       approved_by: refund.approvedBy,
       approved_at: refund.approvedAt ? refund.approvedAt.toISOString() : null,
       requires_approval: requiresApproval,
-      journal_entry_id: journalEntryId
+      journal_entry_id: journalEntryId,
+      is_manual: refund.isManual === true,
+      transfer_ref: refund.providerRefundId ?? null,
+      transferred_at: refund.transferredAt ? refund.transferredAt.toISOString() : null
     };
   }
 
@@ -1443,6 +1505,17 @@ export class PaymentService {
       });
       const refundNetIdr = updated.amountIdr - updated.feeIdr;
 
+      const totals = await this.repository.bookingRefundTotals(tx, updated.bookingId);
+      await this.booking.applyRefundSucceeded(
+        {
+          bookingId: updated.bookingId,
+          amountIdr: updated.amountIdr,
+          isFullRefund: totals.captured > 0n && totals.refunded >= totals.captured,
+          now: this.now()
+        },
+        tx as unknown as PoolClient
+      );
+
       await postEntry(
         tx,
         buildEntry(
@@ -1476,6 +1549,184 @@ export class PaymentService {
   }
 
   /**
+   * Posts the recognition + disbursement journals for a refund already moved
+   * to `succeeded` at the transition level, inside the caller's transaction.
+   *
+   * Manual refunds skip the provider, so both entries are posted together: the
+   * recognition moves the escrow liability to `refund_payable`, the
+   * disbursement moves it out to the customer's bank transfer. The gateway fee
+   * is absorbed by the platform (`fee_idr = 0`), never deducted from the
+   * customer's refund.
+   */
+  private async finalizeManualRefundWithin(
+    tx: JournalQueryClient,
+    input: {
+      refund: RefundRecord;
+      vendorId: string;
+      isFullRefund: boolean;
+      reason: string;
+      actorId: string;
+      from: 'requested' | 'approved';
+    }
+  ): Promise<RefundResult> {
+    const updated = await this.repository.advanceRefundStatus(tx, {
+      refundId: input.refund.id,
+      from: input.from,
+      to: 'succeeded',
+      actorId: input.actorId,
+      providerRefundId: input.refund.providerRefundId
+    });
+    const refundNetIdr = updated.amountIdr - updated.feeIdr;
+
+    const totals = await this.repository.bookingRefundTotals(tx, updated.bookingId);
+    await this.booking.applyRefundSucceeded(
+      {
+        bookingId: updated.bookingId,
+        amountIdr: updated.amountIdr,
+        isFullRefund: totals.captured > 0n && totals.refunded >= totals.captured,
+        now: this.now()
+      },
+      tx as unknown as PoolClient
+    );
+
+    await postEntry(
+      tx,
+      buildEntry(input.isFullRefund ? 'refund_full_recognized' : 'refund_partial_recognized', {
+        refundId: updated.id,
+        bookingId: updated.bookingId,
+        vendorId: input.vendorId,
+        escrowIdr: updated.amountIdr,
+        refundNetIdr,
+        gatewayFeeRecoveredIdr: 0n,
+        retainedCommissionBaseIdr: 0n,
+        occurredAt: this.now(),
+        memo: `manual refund ${input.reason}`
+      })
+    );
+    const posted = await postEntry(
+      tx,
+      buildEntry('refund_disbursed', {
+        refundId: updated.id,
+        refundNetIdr,
+        bookingId: updated.bookingId,
+        occurredAt: this.now(),
+        memo: `manual refund ${updated.id} disbursed`
+      })
+    );
+    return this.toRefundResult(updated, posted.id, false);
+  }
+
+  /**
+   * Refund manual untuk pembayaran yang tidak bisa di-refund gateway
+   * (VA/Mandiri). Admin mencatat transfer bank: nominal, referensi, waktu, dan
+   * bukti. Di atas ambang maker-checker, baris berhenti di `requested` sampai
+   * admin lain menyetujui lewat `approveRefund`; di bawah ambang langsung
+   * selesai dan memposting kedua jurnal.
+   */
+  async refundManual(
+    paymentId: string,
+    amountIdr: bigint,
+    reason: string,
+    transferRef: string,
+    opts: RequestOptions & { transferredAt?: Date | null } = {}
+  ): Promise<RefundResult> {
+    if (!paymentId) throw new AppError('VALIDATION_ERROR', 'paymentId is required');
+    if (typeof amountIdr !== 'bigint' || amountIdr <= 0n) {
+      throw new AppError('VALIDATION_ERROR', 'refund amount must be a positive bigint');
+    }
+    const reasonTrimmed = reason.trim();
+    if (reasonTrimmed.length < 5) {
+      throw new AppError('VALIDATION_ERROR', 'refund reason must be at least 5 characters');
+    }
+    const transfer = transferRef.trim();
+    if (transfer.length < 3) {
+      throw new AppError('VALIDATION_ERROR', 'transfer_ref must be at least 3 characters');
+    }
+    const actorId = opts.actorId ?? null;
+    if (!actorId) {
+      throw new AppError('UNAUTHENTICATED', 'an authenticated actor is required');
+    }
+    const evidenceUrl = opts.evidenceUrl?.trim() || null;
+    const requiresApproval = amountIdr > this.refundApprovalThresholdIdr;
+
+    const requestHash =
+      opts.requestHash ??
+      hashRequest({
+        payment_id: paymentId,
+        amount_idr: amountIdr.toString(),
+        reason: reasonTrimmed,
+        transfer_ref: transfer,
+        evidence_url: evidenceUrl
+      });
+    return this.runIdempotent(
+      IDEMPOTENCY_SCOPE.refundManual,
+      opts,
+      requestHash,
+      async () =>
+        this.repository.transaction(async (tx) => {
+          const booking = await this.repository.lockBookingForPayment(tx, paymentId);
+          const payment = await this.repository.lockPayment(tx, paymentId);
+          if (!payment) throw new AppError('NOT_FOUND', `payment ${paymentId} not found`);
+          if (!booking) throw new AppError('NOT_FOUND', `booking for payment ${paymentId} not found`);
+          if (payment.status !== 'paid') {
+            throw new AppError(
+              'CONFLICT',
+              `payment must be paid before refunding (current: ${payment.status})`
+            );
+          }
+
+          const alreadyRefunded = await this.repository.sumRefundedAmount(tx, paymentId);
+          const availableIdr = payment.amountIdr - alreadyRefunded;
+          if (amountIdr > availableIdr) {
+            throw new AppError(
+              'VALIDATION_ERROR',
+              `refund amount ${amountIdr.toString()} exceeds captured amount ${availableIdr.toString()}`,
+              {
+                captured_idr: payment.amountIdr.toString(),
+                already_refunded_idr: alreadyRefunded.toString(),
+                available_idr: availableIdr.toString()
+              }
+            );
+          }
+          const isFullRefund = alreadyRefunded === 0n && amountIdr === payment.amountIdr;
+
+          const refund = await this.repository.insertRefund(tx, {
+            bookingId: payment.bookingId,
+            paymentId,
+            amountIdr,
+            // The gateway fee stays with the platform; never deduct it from a
+            // manual refund because the customer's transfer is the full amount.
+            feeIdr: 0n,
+            feeBearer: 'platform',
+            reasonCode: reasonTrimmed.slice(0, 40),
+            reasonNote: reasonTrimmed,
+            evidenceUrl,
+            requestedBy: actorId,
+            isManual: true,
+            providerRefundId: transfer,
+            transferredAt: opts.transferredAt ?? this.now()
+          });
+
+          if (requiresApproval) {
+            return this.toRefundResult(refund, '', true);
+          }
+
+          // Below the threshold no second admin is needed. Go straight from
+          // `requested` to `succeeded` so `approved_by` is not set to the
+          // requester (the table forbids that).
+          return this.finalizeManualRefundWithin(tx, {
+            refund,
+            vendorId: booking.vendorId,
+            isFullRefund,
+            reason: reasonTrimmed,
+            actorId,
+            from: 'requested'
+          });
+        })
+    );
+  }
+
+  /**
    * Moves a refund one step forward: `requested -> approved -> processing ->
    * succeeded`. The disbursement is confirmed by the provider; the matching
    * `refund_disbursed` journal entry is posted when the refund succeeds.
@@ -1499,6 +1750,12 @@ export class PaymentService {
       this.repository.transaction(async (tx) => {
         const refund = await this.repository.lockRefund(tx, refundId);
         if (!refund) throw new AppError('NOT_FOUND', `refund ${refundId} not found`);
+        if (refund.isManual) {
+          throw new AppError(
+            'CONFLICT',
+            'Refund manual diselesaikan lewat approve, bukan endpoint advance.'
+          );
+        }
 
         const expected = REFUND_TRANSITION_FROM[target];
         if (refund.status !== expected) {
@@ -1560,6 +1817,7 @@ export class PaymentService {
       opts,
       requestHash,
       async () => {
+        let manualResult: RefundResult | null = null;
         const context = await this.repository.transaction(async (tx) => {
           const refund = await this.repository.lockRefund(tx, refundId);
           if (!refund) throw new AppError('NOT_FOUND', `refund ${refundId} not found`);
@@ -1585,6 +1843,7 @@ export class PaymentService {
             );
           }
           if (
+            !refund.isManual &&
             this.gateway.name !== 'local' &&
             (!payment.providerRef || payment.provider !== this.provider)
           ) {
@@ -1600,6 +1859,19 @@ export class PaymentService {
             to: 'approved',
             actorId
           });
+
+          if (approved.isManual) {
+            manualResult = await this.finalizeManualRefundWithin(tx, {
+              refund: approved,
+              vendorId: booking.vendorId,
+              isFullRefund: approved.amountIdr === payment.amountIdr,
+              reason: approved.reasonNote ?? approved.reasonCode,
+              actorId,
+              from: 'approved'
+            });
+            return null;
+          }
+
           return {
             refund: approved,
             vendorId: booking.vendorId,
@@ -1608,6 +1880,9 @@ export class PaymentService {
             capturedIdr: payment.amountIdr
           };
         });
+
+        if (manualResult) return manualResult;
+        if (!context) throw new AppError('INTERNAL_ERROR', 'refund context is missing');
 
         const isFullRefund = context.refund.amountIdr === context.capturedIdr;
         const outcome = {
@@ -1732,6 +2007,146 @@ export class PaymentService {
   }
 
   /* ---------------------------------------------------------------- helpers */
+
+  /**
+   * Melepas tagihan pending supaya pelanggan bisa memilih metode lain.
+   *
+   * Urutannya penting: charge diakhiri di provider DULU, baru baris lokal
+   * dilepas. Tanpa langkah provider, VA/QRIS lama tetap bisa dibayar sampai
+   * kedaluwarsa dan webhook pembayarannya akan menemukan baris `failed`.
+   * Bila provider tidak bisa memastikan tagihan berakhir, tagihan dibiarkan
+   * `pending` supaya pelanggan tidak punya dua tagihan yang sama-sama bisa
+   * dibayar.
+   */
+  async abandonPendingPayment(input: {
+    readonly bookingId: string;
+    readonly kind: 'dp' | 'settlement';
+    readonly customerId: string | null;
+  }): Promise<{ cancelled: boolean; payment_id: string | null }> {
+    // Step 1: ownership + state, without holding a row lock across the network.
+    const active = await this.repository.transaction(async (tx) => {
+      const booking = await this.repository.lockBooking(tx, input.bookingId);
+      if (!booking) throw new AppError('NOT_FOUND', 'booking tidak ditemukan');
+      if (!input.customerId || booking.customerId !== input.customerId) {
+        throw new AppError('FORBIDDEN', 'booking ini bukan milik kamu');
+      }
+
+      const payment =
+        input.kind === 'dp'
+          ? await this.repository.findActiveDpPayment(tx, input.bookingId)
+          : await this.repository.findActiveSettlementPayment(tx, input.bookingId);
+      if (!payment) return null;
+      if (payment.status !== 'pending') {
+        throw new AppError('CONFLICT', 'tagihan tidak bisa diganti karena sudah dibayar', {
+          status: payment.status
+        });
+      }
+      return payment;
+    });
+    if (!active) return { cancelled: false, payment_id: null };
+
+    // Manual settlement rows have no provider charge; there is nothing to end.
+    const hasProviderCharge = active.provider === this.provider && active.providerRef.length > 0;
+    if (hasProviderCharge) {
+      if (!this.gateway.expireCharge) {
+        throw new AppError(
+          'CONFLICT',
+          'Gateway pembayaran ini tidak mendukung pembatalan tagihan; selesaikan tagihan yang ada.'
+        );
+      }
+      await this.gateway.expireCharge(active.providerRef);
+    }
+
+    // Step 2: a webhook may have paid the charge while the provider call ran.
+    const cancelled = await this.repository.transaction(async (tx) => {
+      const current = await this.repository.lockPayment(tx, active.id);
+      if (!current || current.status !== 'pending') return false;
+      await this.repository.markPaymentFailed(tx, {
+        paymentId: active.id,
+        status: 'failed',
+        failureCode: 'METHOD_SWITCHED'
+      });
+      return true;
+    });
+    if (!cancelled) {
+      throw new AppError('CONFLICT', 'tagihan sudah dibayar sebelum metode diganti', {
+        status: 'paid'
+      });
+    }
+    return { cancelled: true, payment_id: active.id };
+  }
+
+  /**
+   * Menarik status transaksi ke provider lalu menerapkannya lewat jalur yang
+   * sama dengan webhook.
+   *
+   * Ada karena webhook tidak bisa menjangkau `localhost`. Di produksi webhook
+   * tetap jalur utama; endpoint ini idempoten (event_id provider dipakai untuk
+   * dedupe) sehingga aman dipanggil berkala.
+   */
+  async syncPaymentStatus(input: {
+    readonly bookingId: string;
+    readonly kind: 'dp' | 'settlement';
+    readonly customerId: string | null;
+  }): Promise<{ status: string; updated: boolean }> {
+    const gateway = this.gateway;
+    if (!gateway.fetchStatus || !gateway.classifyNotification) {
+      throw new AppError('CONFLICT', 'gateway ini tidak mendukung cek status');
+    }
+
+    await this.repository.transaction(async (tx) => {
+      const booking = await this.repository.lockBooking(tx, input.bookingId);
+      if (!booking) throw new AppError('NOT_FOUND', 'booking tidak ditemukan');
+      if (!input.customerId || booking.customerId !== input.customerId) {
+        throw new AppError('FORBIDDEN', 'booking ini bukan milik kamu');
+      }
+      return booking.id;
+    });
+
+    const active = await this.repository.transaction((tx) =>
+      input.kind === 'dp'
+        ? this.repository.findActiveDpPayment(tx, input.bookingId)
+        : this.repository.findActiveSettlementPayment(tx, input.bookingId)
+    );
+    if (!active) return { status: 'none', updated: false };
+    if (active.status !== 'pending') {
+      return { status: active.status, updated: false };
+    }
+
+    const body = await gateway.fetchStatus(active.providerRef);
+    const notification = gateway.classifyNotification(body);
+    if (notification.kind === 'paid') {
+      const amountIdr = parseExternalAmount(notification.event.data?.amount_idr, 'amount_idr');
+      const result = await this.processVerifiedEvent(
+        notification.event,
+        { source: 'status-sync' },
+        true,
+        amountIdr
+      );
+      return { status: 'paid', updated: result.status === 'processed' };
+    }
+
+    // Expired/denied charges must stop looking payable. Without this, a
+    // customer who let a VA expire keeps seeing a pending instruction until
+    // the webhook arrives (which never happens on localhost).
+    if (notification.kind === 'expired' || notification.kind === 'failed') {
+      const target = notification.kind === 'expired' ? 'expired' : 'failed';
+      const updated = await this.repository.transaction(async (tx) => {
+        const current = await this.repository.lockPayment(tx, active.id);
+        if (!current || current.status !== 'pending') return false;
+        await this.repository.markPaymentFailed(tx, {
+          paymentId: active.id,
+          status: target,
+          failureCode: target === 'expired' ? 'PROVIDER_EXPIRED' : 'PROVIDER_FAILED',
+          rawPayload: notification.raw
+        });
+        return true;
+      });
+      return { status: target, updated };
+    }
+
+    return { status: notification.kind, updated: false };
+  }
 
   private toChargeResult(
     payment: PaymentRecord,

@@ -328,6 +328,7 @@ const _labels = <StatusKind, Map<String, String>>{
     'pending': 'Menunggu bayar',
     'fully_paid': 'Lunas',
     'dp_paid': 'DP lunas',
+    'partially_refunded': 'Refund sebagian',
     'failed': 'Gagal',
     'refunded': 'Dikembalikan',
     'expired': 'Kedaluwarsa',

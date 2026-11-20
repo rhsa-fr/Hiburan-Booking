@@ -13,11 +13,46 @@
  * Requires DATABASE_URL. No secret is read or embedded here.
  */
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { Client } from 'pg';
 
-export const DEFAULT_MIGRATIONS_DIR = resolve(__dirname, '..', 'db', 'migrations');
+/**
+ * Folder migrasi dicari, bukan diasumsikan dari `__dirname`.
+ *
+ * Di sumber TS, `__dirname` = `<repo>/scripts` sehingga `../db/migrations`
+ * benar. Setelah dikompilasi ke `dist/api/scripts`, `__dirname` bergeser dan
+ * `../db/migrations` menunjuk ke dalam `dist/`. Runner produksi
+ * (`npm run migrate:prod`, image Docker) memakai hasil build, jadi kita cek
+ * beberapa kandidat dan gagal dengan pesan yang menyebut path yang dicoba.
+ */
+const MIGRATIONS_SUBDIR = ['db', 'migrations'];
+
+function resolveMigrationsDir(): string {
+  const candidates = [
+    // Container & host produksi: WORKDIR /app dengan db/migrations.
+    resolve(process.cwd(), ...MIGRATIONS_SUBDIR),
+    // Dijalankan dari sumber: scripts/../db/migrations.
+    resolve(__dirname, '..', ...MIGRATIONS_SUBDIR),
+    // Dijalankan dari hasil build: dist/api/scripts/../../../../db/migrations.
+    resolve(__dirname, '..', '..', '..', ...MIGRATIONS_SUBDIR),
+    resolve(__dirname, '..', '..', '..', '..', ...MIGRATIONS_SUBDIR)
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  throw new Error(
+    `Folder migrasi tidak ditemukan. Dicoba: ${candidates.join(', ')}. ` +
+      'Jalankan dari root repo atau pakai --dir <path>.'
+  );
+}
+
+/** Resolusi malas: modul ini tetap bisa di-import tanpa folder migrasi. */
+export function defaultMigrationsDir(): string {
+  return resolveMigrationsDir();
+}
+
 
 /** Stable key so every runner in the cluster waits on the same lock. */
 export const ADVISORY_LOCK_KEY = '20261021001';
@@ -39,7 +74,7 @@ export interface AppliedMigration {
   checksum: string;
 }
 
-export async function loadMigrations(dir: string = DEFAULT_MIGRATIONS_DIR): Promise<MigrationFile[]> {
+export async function loadMigrations(dir: string = defaultMigrationsDir()): Promise<MigrationFile[]> {
   const entries = await readdir(dir, { withFileTypes: true });
   const versions = entries
     .filter((entry) => entry.isFile() && entry.name.endsWith('.sql'))
@@ -131,7 +166,7 @@ export async function runMigrations(options: RunOptions = {}): Promise<RunResult
     throw new Error('DATABASE_URL is required to run migrations');
   }
 
-  const dir = options.dir ?? DEFAULT_MIGRATIONS_DIR;
+  const dir = options.dir ?? defaultMigrationsDir();
   const dryRun = options.dryRun ?? false;
   const log = options.log ?? ((line: string) => process.stdout.write(`${line}\n`));
 

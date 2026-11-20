@@ -5,19 +5,41 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // --- Token acuan visual: D:\Project\Tarlink\index.html + style.css ---
-        page: '#F8F9FB',
-        sidebar: '#F6F7F9',
-        subtle: '#F7F8FA',
-        surface: '#FFFFFF',
-        primary: {
-          DEFAULT: '#4E6BFF',
-          soft: '#B8C7FF'
-        },
-        textMain: '#1A1D26',
-        textSecondary: '#6C727F',
-        textMuted: '#9EA3AE',
-        border: '#ECEEF2',
+        // --- Token acuan visual: northstar dashboard ---
+        // Kertas hangat + kartu putih bergaris rambut + sidebar hampir hitam.
+        page: '#ECEBE6',
+        surface: '#FBFBF9',
+        card: '#FFFFFF',
+        subtle: '#F4F4F2',
+        sidebar: '#171816',
+        sidebarSoft: '#232522',
+        sidebarLine: '#2C302A',
+        sidebarInk: '#E9ECE6',
+        sidebarMuted: '#8F968C',
+        textMain: '#15171A',
+        textSecondary: '#3D4249',
+        // Sengaja lebih gelap dari referensi agar lolos kontras AA.
+        textMuted: '#5F6B76',
+        border: '#ECECEB',
+        borderSoft: '#F1F1EF',
+        // Aksi utama tetap gelap; kapur tinggal di `accent`, bukan di `primary`.
+        primary: '#15171A',
+        primaryDeep: '#272B30',
+        primarySoft: '#F4F4F2',
+        accent: '#C8F751',
+        accentDeep: '#B6E83C',
+        accentInk: '#17210A',
+        accentText: '#417A12',
+        accentSoft: '#EEFBD5',
+        ok: '#4BA82E',
+        okInk: '#417A12',
+        okSoft: '#EEFBD5',
+        danger: '#C02C5C',
+        dangerSoft: '#FDE8EE',
+        info: '#3B82F6',
+        infoInk: '#1D4ED8',
+        violet: '#9333EA',
+        pink: '#D9488B',
         // --- Token lama (app pelanggan), dipertahankan untuk kompatibilitas ---
         canvas: '#FAF7F0',
         ink: '#14201E',
@@ -30,24 +52,23 @@ const config: Config = {
         ochre: {
           DEFAULT: '#E08A2C',
           soft: '#FDF0DF'
-        },
-        ok: '#1F7A4D',
-        danger: '#B3261E'
+        }
       },
       fontFamily: {
-        sans: ['var(--font-jakarta)', 'system-ui', 'sans-serif']
+        sans: ['var(--font-inter)', 'Inter', 'system-ui', 'Segoe UI', 'sans-serif']
       },
       borderRadius: {
-        card: '16px',
-        field: '12px',
+        card: '14px',
+        field: '10px',
         sm: '8px'
       },
       boxShadow: {
-        soft: '0 2px 10px rgba(16, 24, 40, 0.03)',
+        soft: '0 1px 2px rgba(20, 22, 18, 0.04)',
+        pop: '0 12px 34px -10px rgba(20, 22, 18, 0.18)',
         tooltip: '0 10px 25px rgba(16, 24, 40, 0.1)'
       },
       fontSize: {
-        kpi: ['26px', '32px']
+        kpi: ['21px', '26px']
       }
     }
   },

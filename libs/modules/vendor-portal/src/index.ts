@@ -11,10 +11,23 @@ export { MediaRepository } from './media.repository';
 export { MediaReviewService } from './media-review.service';
 export { MediaAdminController } from './media-admin.controller';
 export * from './media.contracts';
+export {
+  EARNINGS_EXPORT_MAX_DAYS,
+  EARNINGS_EXPORT_MAX_ROWS,
+  buildEarningsExport,
+  renderEarningsCsv,
+  resolveEarningsPeriod,
+  sumEarnings,
+  wibDateString,
+  type EarningsExportResult,
+  type EarningsPeriod,
+  type EarningsTotals
+} from './earnings-export';
 export type {
   VendorPortalVendorRow,
   VendorBookingListItemRow,
   VendorBookingDetailRow,
   VendorPortalSummaryRow,
-  VendorSettledBookingRow
+  VendorSettledBookingRow,
+  VendorEarningsExportRow
 } from './vendor-portal.repository';

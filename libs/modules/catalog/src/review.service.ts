@@ -119,6 +119,7 @@ export class ReviewService {
          FROM reviews r
          JOIN users u ON u.id = r.customer_id
         WHERE r.vendor_id = $1::uuid
+          AND r.hidden_at IS NULL
         ORDER BY r.created_at DESC, r.id ASC
         LIMIT $2 OFFSET $3`,
       [vendorId, safePageSize, offset]
@@ -127,7 +128,8 @@ export class ReviewService {
     const countRows = await query<{ total: number | string }>(
       `SELECT COUNT(*)::int AS total
          FROM reviews
-        WHERE vendor_id = $1::uuid`,
+        WHERE vendor_id = $1::uuid
+          AND hidden_at IS NULL`,
       [vendorId]
     );
 

@@ -67,9 +67,11 @@ class _BrowsePageState extends State<BrowsePage> {
       final raw = await AppScope.of(context).api.get('/categories');
       if (!mounted || raw is! Map) return;
       final items = _categoriesFrom(raw);
-      setState(() => _categories
-        ..clear()
-        ..addAll(items));
+      setState(
+        () => _categories
+          ..clear()
+          ..addAll(items),
+      );
     } catch (_) {
       // Kategori hanya pelengkap filter; kegagalan muat tidak memblokir vendor.
     }
@@ -81,7 +83,9 @@ class _BrowsePageState extends State<BrowsePage> {
     return items
         .whereType<Map>()
         .map((item) => VendorCategory.fromJson(item.cast<String, dynamic>()))
-        .where((category) => category.slug.isNotEmpty && category.name.isNotEmpty)
+        .where(
+          (category) => category.slug.isNotEmpty && category.name.isNotEmpty,
+        )
         .toList(growable: false);
   }
 
@@ -298,7 +302,8 @@ class _BrowsePageState extends State<BrowsePage> {
     // Keep the filters visible when the result is empty: otherwise a category
     // with no vendor would hide the chips that let the user switch away. They
     // also stay put while a category/date reload is in flight.
-    final showFilters = !_loading || _vendors.isNotEmpty || _categories.isNotEmpty;
+    final showFilters =
+        !_loading || _vendors.isNotEmpty || _categories.isNotEmpty;
 
     return RefreshIndicator(
       onRefresh: _refresh,
@@ -362,7 +367,8 @@ class _BrowsePageState extends State<BrowsePage> {
     final regions = _regions;
     final hasActiveFilters =
         _category != null || _date != null || _region != null || _sort != 0;
-    final activeCount = (_category != null ? 1 : 0) +
+    final activeCount =
+        (_category != null ? 1 : 0) +
         (_date != null ? 1 : 0) +
         (_region != null ? 1 : 0) +
         (_sort != 0 ? 1 : 0);
@@ -423,7 +429,9 @@ class _BrowsePageState extends State<BrowsePage> {
                             const SizedBox(width: Sp.xs + 2),
                             Container(
                               padding: const EdgeInsets.symmetric(
-                                  horizontal: 6, vertical: 2),
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
                               decoration: BoxDecoration(
                                 color: AppColors.primary,
                                 borderRadius: BorderRadius.circular(Radii.pill),
@@ -455,8 +463,10 @@ class _BrowsePageState extends State<BrowsePage> {
                         onTap: _resetFilters,
                         borderRadius: BorderRadius.circular(Radii.sm),
                         child: const Padding(
-                          padding:
-                              EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
@@ -592,7 +602,11 @@ class _BrowsePageState extends State<BrowsePage> {
                   onTap: _clearDate,
                   child: const Padding(
                     padding: EdgeInsets.all(4),
-                    child: Icon(Icons.close, size: 16, color: AppColors.primary),
+                    child: Icon(
+                      Icons.close,
+                      size: 16,
+                      color: AppColors.primary,
+                    ),
                   ),
                 ),
               ] else ...[
@@ -653,7 +667,11 @@ class _BrowsePageState extends State<BrowsePage> {
                   onTap: () => setState(() => _region = null),
                   child: const Padding(
                     padding: EdgeInsets.all(4),
-                    child: Icon(Icons.close, size: 16, color: AppColors.primary),
+                    child: Icon(
+                      Icons.close,
+                      size: 16,
+                      color: AppColors.primary,
+                    ),
                   ),
                 ),
               ] else ...[
@@ -686,7 +704,12 @@ class _BrowsePageState extends State<BrowsePage> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.sm, Sp.lg, Sp.sm),
+                  padding: const EdgeInsets.fromLTRB(
+                    Sp.lg,
+                    Sp.sm,
+                    Sp.lg,
+                    Sp.sm,
+                  ),
                   child: Row(
                     children: [
                       const Icon(
@@ -697,7 +720,8 @@ class _BrowsePageState extends State<BrowsePage> {
                       const SizedBox(width: Sp.sm),
                       Text(
                         'Pilih Wilayah Pantura',
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(
                               fontWeight: FontWeight.w700,
                               color: AppColors.ink,
                             ),
@@ -717,7 +741,9 @@ class _BrowsePageState extends State<BrowsePage> {
                     _region == null
                         ? Icons.radio_button_checked
                         : Icons.radio_button_off,
-                    color: _region == null ? AppColors.primary : AppColors.inkMuted,
+                    color: _region == null
+                        ? AppColors.primary
+                        : AppColors.inkMuted,
                   ),
                   title: const Text(
                     'Semua Wilayah',
@@ -735,8 +761,9 @@ class _BrowsePageState extends State<BrowsePage> {
                       _region == r
                           ? Icons.radio_button_checked
                           : Icons.radio_button_off,
-                      color:
-                          _region == r ? AppColors.primary : AppColors.inkMuted,
+                      color: _region == r
+                          ? AppColors.primary
+                          : AppColors.inkMuted,
                     ),
                     title: Text(
                       r,
@@ -859,9 +886,9 @@ class _BrowsePageState extends State<BrowsePage> {
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(Radii.sm),
                   ),
-                  textStyle: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+                  textStyle: Theme.of(
+                    context,
+                  ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
                 ),
               ),
             )

@@ -1,0 +1,139 @@
+# Tarlink — stack produksi satu host.
+#
+#   cp .env.prod.example .env.prod   # lalu isi (lihat docs/DEPLOYMENT.md)
+#   npm run verify:prod              # periksa konfigurasi sebelum naik
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+#
+# Rahasia TIDAK ditulis di file ini. Semua nilai dibaca dari `.env.prod`
+# lewat `env_file`, kecuali yang memang harus menunjuk ke jaringan internal
+# (DATABASE_URL, PORT, TRUST_PROXY).
+#
+# Port hanya di-bind ke 127.0.0.1 supaya reverse proxy (nginx/Caddy) yang
+# menghadap internet; API dan panel tidak pernah terbuka langsung.
+
+x-common: &common
+  env_file:
+    - ${ENV_FILE:-.env.prod}
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+services:
+  db:
+    image: postgis/postgis:15-3.4
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tarlink}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD wajib diisi di .env.prod}
+      POSTGRES_DB: ${POSTGRES_DB:-tarlink}
+      # Cegah inisialisasi ulang saat volume sudah berisi data.
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # `-h 127.0.0.1` memaksa pemeriksaan lewat TCP. Tanpa itu pg_isready
+      # memakai socket lokal dan sudah "sehat" saat entrypoint masih menjalankan
+      # server sementara (socket saja), sehingga `migrate` menabrak port tertutup.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # One-shot. `api` dan `worker` menunggu ini selesai sukses lebih dulu,
+  # sehingga tidak pernah ada proses yang berjalan di atas skema lama.
+  migrate:
+    <<: *common
+    build:
+      context: .
+      target: migrate
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER:-tarlink}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD wajib diisi}@db:5432/${POSTGRES_DB:-tarlink}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    <<: *common
+    build:
+      context: .
+      target: api
+    environment:
+      NODE_ENV: production
+      PORT: "3001"
+      DATABASE_URL: postgres://${POSTGRES_USER:-tarlink}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD wajib diisi}@db:5432/${POSTGRES_DB:-tarlink}
+      # API berada di belakang reverse proxy: `@Ip()` harus membaca
+      # X-Forwarded-For, kalau tidak semua klien berbagi satu IP dan limiter
+      # per-IP memblokir semuanya.
+      TRUST_PROXY: "true"
+    volumes:
+      - media:/app/storage/uploads
+      - private_media:/app/storage/private
+    ports:
+      - "127.0.0.1:${API_PORT:-3001}:3001"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    stop_grace_period: 30s
+
+  worker:
+    <<: *common
+    build:
+      context: .
+      target: worker
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER:-tarlink}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD wajib diisi}@db:5432/${POSTGRES_DB:-tarlink}
+      UPLOAD_DIR: storage/uploads
+      PRIVATE_UPLOAD_DIR: storage/private
+    volumes:
+      # Worker membaca/menghapus media yatim (job `cleanup_media`), jadi ia
+      # harus melihat volume yang sama dengan API.
+      - media:/app/storage/uploads
+      - private_media:/app/storage/private
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    # Satu tick bisa lebih lama dari 10 detik default; beri ruang untuk
+    # menyelesaikan job yang sedang berjalan.
+    stop_grace_period: 60s
+
+  admin:
+    <<: *common
+    build:
+      context: .
+      target: admin
+      args:
+        # Nilai ini di-inline saat `next build`; ubah = build ulang.
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:?NEXT_PUBLIC_API_BASE_URL wajib diisi (origin publik API)}
+        NEXT_PUBLIC_USE_MOCK: "false"
+        NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}
+        MEDIA_PUBLIC_BASE_URL: ${MEDIA_PUBLIC_BASE_URL:?MEDIA_PUBLIC_BASE_URL wajib diisi (origin publik media)}
+    environment:
+      NODE_ENV: production
+      PORT: "3002"
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:?wajib}
+      MEDIA_PUBLIC_BASE_URL: ${MEDIA_PUBLIC_BASE_URL:?wajib}
+    ports:
+      - "127.0.0.1:${ADMIN_PORT:-3002}:3002"
+    depends_on:
+      api:
+        condition: service_healthy
+    stop_grace_period: 20s
+
+volumes:
+  pgdata:
+  # Foto/banner/galeri vendor (publik lewat API).
+  media:
+  # Foto KTP vendor, terenkripsi; tidak pernah diserve lewat /v1/media.
+  private_media:
