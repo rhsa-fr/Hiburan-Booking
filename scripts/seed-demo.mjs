@@ -53,225 +53,288 @@ const UNSPLASH_LICENSE = 'Foto demo: Unsplash, lisensi Unsplash (bebas pakai)';
 
 const VENDORS = [
   {
-    slug: 'tarling-sinar-remaja',
-    displayName: 'Tarling Sinar Remaja',
-    legalName: 'CV Sinar Remaja',
+    slug: 'singa-depok-andi-putra',
+    displayName: 'Singa Depok Andi Putra',
+    legalName: 'Grup Singa Depok Andi Putra',
     regionCode: '3212',
-    address: 'Jl. Pantura No. 12, Indramayu',
+    address: 'Kec. Depok, Kabupaten Indramayu',
     location: [108.3244, -6.3271],
     description:
-      'Grup tarling dangdut untuk hajatan, khitanan, dan acara keluarga. ' +
-      'Personel lengkap dengan sound system dan panggung.',
+      'Grup tarling khas Indramayu dengan atraksi singa depok, penyanyi, dan ' +
+      'sound system untuk hajatan, khitanan, dan acara desa. ' +
+      'Data demo: tarif, jadwal, dan kontak bersifat ilustrasi, bukan penawaran resmi grup.',
     category: 'tarling',
     extraCategory: 'organ-tunggal',
-    packages: [{ ...FULL_DAY_PACKAGE, price: 5_000_000, personnel: 10 }],
+    owner: VENDOR_ACCOUNT,
+    packages: [{ ...FULL_DAY_PACKAGE, price: 6_500_000, personnel: 20 }],
     media: {
       banner: {
         source: 'tarling-stage.jpg',
-        key: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc.jpg',
+        key: 'd1000001-0000-4000-8000-000000000001.jpg',
         license: 'CC BY 3.0 - Sakurai Midori, Wikimedia Commons'
       },
       avatar: {
         source: 'tarling-2.jpg',
-        key: '22222222-2222-4222-8222-222222222222.jpg',
+        key: 'd1000002-0000-4000-8000-000000000002.jpg',
         license: UNSPLASH_LICENSE
       },
       gallery: [
         {
-          source: 'tarling-2.jpg',
-          key: '22222222-2222-4222-8222-222222222222.jpg',
-          license: UNSPLASH_LICENSE
+          source: 'singa-depok.jpg',
+          key: 'd1000003-0000-4000-8000-000000000003.jpg',
+          license: 'CC BY-SA 4.0 - Wandy payz, Wikimedia Commons'
         }
       ]
     }
   },
   {
-    slug: 'putra-dermayu-tarling',
-    displayName: 'Putra Dermayu Tarling Group',
-    legalName: 'Putra Dermayu',
+    slug: 'tarling-dws-group',
+    displayName: 'Organ Tarling DWS Group',
+    legalName: 'DWS Group Cikedung',
     regionCode: '3212',
-    address: 'Jl. Dermayu No. 5, Indramayu',
-    location: [108.33, -6.34],
+    address: 'Kec. Cikedung, Kabupaten Indramayu',
+    location: [108.21, -6.46],
     description:
-      'Grup tarling putra daerah Dermayu untuk hajatan dan acara keluarga.',
+      'Organ tarling untuk panggung hajatan dengan penyanyi dan keyboard. ' +
+      'Data demo: tarif, jadwal, dan kontak bersifat ilustrasi, bukan penawaran resmi grup.',
     category: 'tarling',
-    extraCategory: null,
-    packages: [{ ...FULL_DAY_PACKAGE, price: 6_000_000, personnel: 12 }],
+    extraCategory: 'organ-tunggal',
+    owner: {
+      email: 'vendor.dws@tarlink.id',
+      phone: '6281200000012',
+      name: 'Pengelola DWS Group'
+    },
+    packages: [{ ...FULL_DAY_PACKAGE, price: 5_500_000, personnel: 15 }],
     media: {
       banner: {
-        source: 'campursari.jpg',
-        key: 'ffffffff-ffff-4fff-8fff-ffffffffffff.jpg',
-        license: 'CC BY 4.0 - Komengskuy, Wikimedia Commons'
+        source: 'tarling-2.jpg',
+        key: 'd2000001-0000-4000-8000-000000000001.jpg',
+        license: UNSPLASH_LICENSE
       },
       avatar: {
-        source: 'tarling-2.jpg',
-        key: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee.jpg',
-        license: UNSPLASH_LICENSE
+        source: 'organ-singer.jpg',
+        key: 'd2000002-0000-4000-8000-000000000002.jpg',
+        license: 'CC BY 2.0 - Mahbob Yusof, Wikimedia Commons'
+      },
+      gallery: [
+        {
+          source: 'organ-band.png',
+          key: 'd2000003-0000-4000-8000-000000000003.png',
+          license: 'CC0 - Simon Hoeg Jensen, Wikimedia Commons'
+        }
+      ]
+    }
+  },
+  {
+    slug: 'wayang-langen-budaya',
+    displayName: 'Wayang Kulit Langen Budaya',
+    legalName: 'Paguyuban Langen Budaya (Ki Dalang H. Rusdi)',
+    regionCode: '3212',
+    address: 'Kabupaten Indramayu',
+    location: [108.32, -6.34],
+    description:
+      'Pagelaran wayang kulit semalam suntuk bersama Ki Dalang H. Rusdi dan ' +
+      'grup Langen Budaya untuk hajatan, syukuran, dan ruwatan. ' +
+      'Data demo: tarif, jadwal, dan kontak bersifat ilustrasi, bukan penawaran resmi.',
+    category: 'seni-tradisi',
+    extraCategory: null,
+    owner: {
+      email: 'vendor.langenbudaya@tarlink.id',
+      phone: '6281200000013',
+      name: 'Pengelola Langen Budaya'
+    },
+    packages: [{ ...FULL_DAY_PACKAGE, price: 8_000_000, personnel: 25 }],
+    media: {
+      banner: {
+        source: 'wayang-1.jpg',
+        key: 'd3000001-0000-4000-8000-000000000001.jpg',
+        license: 'CC BY-SA 4.0 - FaizAttariqi, Wikimedia Commons'
+      },
+      avatar: {
+        source: 'wayang-2.jpg',
+        key: 'd3000002-0000-4000-8000-000000000002.jpg',
+        license: 'CC BY-SA 4.0 - Candra Firmansyah, Wikimedia Commons'
+      },
+      gallery: [
+        {
+          source: 'wayang-2.jpg',
+          key: 'd3000002-0000-4000-8000-000000000002.jpg',
+          license: 'CC BY-SA 4.0 - Candra Firmansyah, Wikimedia Commons'
+        }
+      ]
+    }
+  },
+  {
+    slug: 'wayang-cepak-jaka-baru',
+    displayName: 'Wayang Cepak Jaka Baru',
+    legalName: 'Sanggar Jaka Baru Gadingan (Ki Warsad Darya)',
+    regionCode: '3212',
+    address: 'Desa Gadingan, Kabupaten Indramayu',
+    location: [108.28, -6.42],
+    description:
+      'Wayang cepak khas Indramayu bersama Ki Warsad Darya dan Sanggar Jaka Baru. ' +
+      'Data demo: tarif, jadwal, dan kontak bersifat ilustrasi, bukan penawaran resmi.',
+    category: 'seni-tradisi',
+    extraCategory: null,
+    owner: {
+      email: 'vendor.jakabaru@tarlink.id',
+      phone: '6281200000014',
+      name: 'Pengelola Sanggar Jaka Baru'
+    },
+    packages: [{ ...FULL_DAY_PACKAGE, price: 7_000_000, personnel: 20 }],
+    media: {
+      banner: {
+        source: 'wayang-2.jpg',
+        key: 'd4000001-0000-4000-8000-000000000001.jpg',
+        license: 'CC BY-SA 4.0 - Candra Firmansyah, Wikimedia Commons'
+      },
+      avatar: {
+        source: 'wayang-1.jpg',
+        key: 'd4000002-0000-4000-8000-000000000002.jpg',
+        license: 'CC BY-SA 4.0 - FaizAttariqi, Wikimedia Commons'
       },
       gallery: []
     }
   },
   {
-    slug: 'organ-tunggal-barokah',
-    displayName: 'Organ Tunggal Barokah',
-    legalName: 'Barokah Musik',
-    regionCode: '3209',
-    address: 'Jl. Raya Cirebon No. 88, Cirebon',
-    location: [108.556, -6.7063],
+    slug: 'organ-zakia-music',
+    displayName: 'Zakia Music',
+    legalName: 'Zakia Music Indramayu',
+    regionCode: '3212',
+    address: 'Kabupaten Indramayu',
+    location: [108.31, -6.36],
     description:
-      'Organ tunggal dengan penyanyi dan MC untuk acara pernikahan dan syukuran.',
+      'Organ tunggal dengan player, penyanyi, dan MC untuk pernikahan serta syukuran. ' +
+      'Data demo: tarif, jadwal, dan kontak bersifat ilustrasi, bukan penawaran resmi.',
     category: 'organ-tunggal',
     extraCategory: null,
-    packages: [{ ...FULL_DAY_PACKAGE, price: 5_500_000, personnel: 8 }],
+    owner: {
+      email: 'vendor.zakiamusic@tarlink.id',
+      phone: '6281200000015',
+      name: 'Pengelola Zakia Music'
+    },
+    packages: [{ ...FULL_DAY_PACKAGE, price: 5_000_000, personnel: 10 }],
     media: {
       banner: {
         source: 'organ-band.png',
-        key: '33333333-3333-4333-8333-333333333333.png',
-        license: 'CC0 — Simon Høeg Jensen, Wikimedia Commons'
+        key: 'd5000001-0000-4000-8000-000000000001.png',
+        license: 'CC0 - Simon Hoeg Jensen, Wikimedia Commons'
       },
       avatar: {
         source: 'organ-singer.jpg',
-        key: '44444444-4444-4444-8444-444444444444.jpg',
-        license: 'CC BY 2.0 — Mahbob Yusof, Wikimedia Commons'
+        key: 'd5000002-0000-4000-8000-000000000002.jpg',
+        license: 'CC BY 2.0 - Mahbob Yusof, Wikimedia Commons'
       },
       gallery: [
         {
           source: 'organ-singer.jpg',
-          key: '44444444-4444-4444-8444-444444444444.jpg',
-          license: 'CC BY 2.0 — Mahbob Yusof, Wikimedia Commons'
+          key: 'd5000002-0000-4000-8000-000000000002.jpg',
+          license: 'CC BY 2.0 - Mahbob Yusof, Wikimedia Commons'
         }
       ]
     }
   },
   {
-    slug: 'sanggar-seni-sekar-arum',
-    displayName: 'Sanggar Seni Sekar Arum',
-    legalName: 'Sanggar Sekar Arum',
-    regionCode: '3274',
-    address: 'Jl. Siliwangi No. 4, Kota Cirebon',
-    location: [108.5523, -6.732],
+    slug: 'organ-rolani-electone',
+    displayName: 'Rolani Electone',
+    legalName: 'Rolani Electone Indramayu',
+    regionCode: '3212',
+    address: 'Kabupaten Indramayu',
+    location: [108.29, -6.35],
     description:
-      'Sanggar seni tradisi: tari jaipong, kuda lumping, dan karawitan.',
-    category: 'seni-tradisi',
-    extraCategory: 'pendukung-acara',
-    packages: [{ ...FULL_DAY_PACKAGE, price: 4_500_000, personnel: 12 }],
+      'Organ tunggal electone untuk acara keluarga, khitanan, dan hajatan. ' +
+      'Data demo: tarif, jadwal, dan kontak bersifat ilustrasi, bukan penawaran resmi.',
+    category: 'organ-tunggal',
+    extraCategory: null,
+    owner: {
+      email: 'vendor.rolani@tarlink.id',
+      phone: '6281200000016',
+      name: 'Pengelola Rolani Electone'
+    },
+    packages: [{ ...FULL_DAY_PACKAGE, price: 4_500_000, personnel: 9 }],
     media: {
       banner: {
-        source: 'tari-cirebon.jpg',
-        key: '12121212-1212-4212-8212-121212121212.jpg',
-        license: 'CC BY-SA 4.0 - Rifki AW, Wikimedia Commons'
+        source: 'organ-singer.jpg',
+        key: 'd6000001-0000-4000-8000-000000000001.jpg',
+        license: 'CC BY 2.0 - Mahbob Yusof, Wikimedia Commons'
       },
       avatar: {
-        source: 'jaipong.jpg',
-        key: '13131313-1313-4313-8313-131313131313.jpg',
-        license: 'CC BY-SA 3.0 - Gunawan Kartapranata, Wikimedia Commons'
+        source: 'organ-band.png',
+        key: 'd6000002-0000-4000-8000-000000000002.png',
+        license: 'CC0 - Simon Hoeg Jensen, Wikimedia Commons'
       },
-      gallery: [
-        {
-          source: 'jaipong.jpg',
-          key: '13131313-1313-4313-8313-131313131313.jpg',
-          license: 'CC BY-SA 3.0 - Gunawan Kartapranata, Wikimedia Commons'
-        }
-      ]
+      gallery: []
     }
   },
   {
-    slug: 'wayang-kulit-ki-surya',
-    displayName: 'Wayang Kulit Ki Surya',
-    legalName: 'Sanggar Dalang Surya',
+    slug: 'sandiwara-lingga-buana',
+    displayName: 'Sandiwara Lingga Buana',
+    legalName: 'Grup Sandiwara Lingga Buana',
     regionCode: '3212',
-    address: 'Jl. Raya Losarang No. 21, Indramayu',
-    location: [108.25, -6.38],
+    address: 'Pantura, Jawa Barat',
+    location: [108.33, -6.38],
     description:
-      'Pagelaran wayang kulit semalam suntuk dengan dalang dan sinden ' +
-      'untuk hajatan, syukuran, dan ruwatan.',
+      'Sandiwara tradisional Pantura dengan pemain dan gamelan untuk hiburan ' +
+      'rakyat, hajatan, dan acara desa. ' +
+      'Data demo: tarif, jadwal, dan kontak bersifat ilustrasi, bukan penawaran resmi.',
     category: 'seni-tradisi',
     extraCategory: null,
-    packages: [{ ...FULL_DAY_PACKAGE, price: 4_000_000, personnel: 6 }],
-    media: {
-      banner: {
-        source: 'wayang-1.jpg',
-        key: '77777777-7777-4777-8777-777777777777.jpg',
-        license: 'CC BY-SA 4.0 — FaizAttariqi, Wikimedia Commons'
-      },
-      avatar: {
-        source: 'wayang-2.jpg',
-        key: '88888888-8888-4888-8888-888888888888.jpg',
-        license: 'CC BY-SA 4.0 — Candra Firmansyah, Wikimedia Commons'
-      },
-      gallery: [
-        {
-          source: 'wayang-2.jpg',
-          key: '88888888-8888-4888-8888-888888888888.jpg',
-          license: 'CC BY-SA 4.0 — Candra Firmansyah, Wikimedia Commons'
-        }
-      ]
-    }
-  },
-  {
-    slug: 'sandiwara-rakyat-dermayu',
-    displayName: 'Sandiwara Rakyat Dermayu',
-    legalName: 'Komunitas Sandiwara Dermayu',
-    regionCode: '3212',
-    address: 'Jl. Cimanuk No. 8, Indramayu',
-    location: [108.32, -6.33],
-    description:
-      'Sandiwara tradisional Indramayu dengan pemain dan gamelan untuk ' +
-      'hiburan rakyat, hajatan, dan acara desa.',
-    category: 'seni-tradisi',
-    extraCategory: null,
-    packages: [{ ...FULL_DAY_PACKAGE, price: 3_500_000, personnel: 12 }],
+    owner: {
+      email: 'vendor.linggabuana@tarlink.id',
+      phone: '6281200000017',
+      name: 'Pengelola Lingga Buana'
+    },
+    packages: [{ ...FULL_DAY_PACKAGE, price: 4_000_000, personnel: 18 }],
     media: {
       banner: {
         source: 'sandiwara-1.jpg',
-        key: '99999999-9999-4999-8999-999999999999.jpg',
-        license: 'CC BY-SA 4.0 — Media Indramayu, Wikimedia Commons'
+        key: 'd7000001-0000-4000-8000-000000000001.jpg',
+        license: 'CC BY-SA 4.0 - Media Indramayu, Wikimedia Commons'
       },
       avatar: {
         source: 'sandiwara-2.jpg',
-        key: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jpg',
-        license: 'CC BY-SA 4.0 — Media Indramayu, Wikimedia Commons'
+        key: 'd7000002-0000-4000-8000-000000000002.jpg',
+        license: 'CC BY-SA 4.0 - Media Indramayu, Wikimedia Commons'
       },
       gallery: [
         {
           source: 'sandiwara-2.jpg',
-          key: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jpg',
-          license: 'CC BY-SA 4.0 — Media Indramayu, Wikimedia Commons'
+          key: 'd7000002-0000-4000-8000-000000000002.jpg',
+          license: 'CC BY-SA 4.0 - Media Indramayu, Wikimedia Commons'
         }
       ]
     }
   },
   {
-    slug: 'singa-depok-putra-betawi',
-    displayName: 'Singa Depok Putra Betawi',
-    legalName: 'Sanggar Singa Depok',
-    regionCode: '3276',
-    address: 'Jl. Margonda Raya No. 10, Kota Depok',
-    location: [106.83, -6.4],
+    slug: 'sandiwara-yudha-putra',
+    displayName: 'Sandiwara Yudha Putra',
+    legalName: 'Grup Sandiwara Yudha Putra',
+    regionCode: '3212',
+    address: 'Desa Bangkir, Kec. Lohbener, Kabupaten Indramayu',
+    location: [108.26, -6.41],
     description:
-      'Pertunjukan singa depok dengan pemain, musik, dan kostum untuk ' +
-      'pawai, hajatan, dan acara budaya.',
+      'Sandiwara tradisional Indramayu untuk panggung hajatan dan acara desa. ' +
+      'Data demo: tarif, jadwal, dan kontak bersifat ilustrasi, bukan penawaran resmi.',
     category: 'seni-tradisi',
-    extraCategory: 'pendukung-acara',
-    packages: [{ ...FULL_DAY_PACKAGE, price: 3_000_000, personnel: 14 }],
+    extraCategory: null,
+    owner: {
+      email: 'vendor.yudhaputra@tarlink.id',
+      phone: '6281200000018',
+      name: 'Pengelola Yudha Putra'
+    },
+    packages: [{ ...FULL_DAY_PACKAGE, price: 3_500_000, personnel: 16 }],
     media: {
       banner: {
-        source: 'singa-depok.jpg',
-        key: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.jpg',
-        license: 'CC BY-SA 4.0 — Wandy payz, Wikimedia Commons'
+        source: 'sandiwara-2.jpg',
+        key: 'd8000001-0000-4000-8000-000000000001.jpg',
+        license: 'CC BY-SA 4.0 - Media Indramayu, Wikimedia Commons'
       },
       avatar: {
-        source: 'singa-depok.jpg',
-        key: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.jpg',
-        license: 'CC BY-SA 4.0 — Wandy payz, Wikimedia Commons'
+        source: 'sandiwara-1.jpg',
+        key: 'd8000002-0000-4000-8000-000000000002.jpg',
+        license: 'CC BY-SA 4.0 - Media Indramayu, Wikimedia Commons'
       },
-      gallery: [
-        {
-          source: 'singa-depok.jpg',
-          key: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.jpg',
-          license: 'CC BY-SA 4.0 — Wandy payz, Wikimedia Commons'
-        }
-      ]
+      gallery: []
     }
   }
 ];
@@ -281,7 +344,7 @@ const BOOKINGS = [
     code: 'BK-261021-34E0',
     eventCode: 'EV-DEMO-34E0',
     customerEmail: 'rina.ayu@tarlink.id',
-    vendorSlug: 'organ-tunggal-barokah',
+    vendorSlug: 'organ-zakia-music',
     packageName: 'Paket Full Day 12 Jam',
     title: 'Hajatan Pernikahan Rina & Bayu',
     venueName: 'Kediaman Keluarga Ayu',
@@ -294,7 +357,7 @@ const BOOKINGS = [
     code: 'BK-261028-33D9',
     eventCode: 'EV-DEMO-33D9',
     customerEmail: 'rina.ayu@tarlink.id',
-    vendorSlug: 'tarling-sinar-remaja',
+    vendorSlug: 'singa-depok-andi-putra',
     packageName: 'Paket Full Day 12 Jam',
     title: 'Syukuran Khitanan Adik Rina',
     venueName: 'Rumah Keluarga Ayu',
@@ -302,6 +365,32 @@ const BOOKINGS = [
     guestEstimate: 80,
     notes: 'Mohon konfirmasi sound system tambahan.',
     daysFromNow: 17
+  },
+  {
+    code: 'BK-261104-7A1C',
+    eventCode: 'EV-DEMO-7A1C',
+    customerEmail: 'qa.b2.520274@tarlink.id',
+    vendorSlug: 'wayang-langen-budaya',
+    packageName: 'Paket Full Day 12 Jam',
+    title: 'Ruwatan Kampung',
+    venueName: 'Balai Desa',
+    venueAddress: 'Desa Karangsong, Indramayu',
+    guestEstimate: 300,
+    notes: 'Mulai pukul 21.00 setelah isya.',
+    daysFromNow: 24
+  },
+  {
+    code: 'BK-261110-5B2D',
+    eventCode: 'EV-DEMO-5B2D',
+    customerEmail: 'qa.b2.520274@tarlink.id',
+    vendorSlug: 'sandiwara-lingga-buana',
+    packageName: 'Paket Full Day 12 Jam',
+    title: 'Hiburan Rakyat Desa',
+    venueName: 'Lapangan Desa',
+    venueAddress: 'Desa Lohbener, Indramayu',
+    guestEstimate: 250,
+    notes: 'Panggung dari desa.',
+    daysFromNow: 31
   }
 ];
 
@@ -734,19 +823,54 @@ async function upsertBooking(client, spec, ctx) {
   );
 
   const providerRef = `DEMO-DP-${spec.code}`;
-  await client.query(
+  const paidAt = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+  const paymentRow = await client.query(
     `INSERT INTO payments
        (booking_id, kind, method, amount_idr, status, provider, provider_ref,
         fee_idr, expires_at, paid_at)
      VALUES ($1, 'dp', 'va_bca', $2, 'paid', 'midtrans', $3, 0,
-             now() - interval '2 days', now() - interval '2 days')
+             $4::timestamptz, $5::timestamptz)
      ON CONFLICT (provider, provider_ref) DO UPDATE
         SET booking_id = EXCLUDED.booking_id,
             amount_idr = EXCLUDED.amount_idr,
             status = 'paid',
-            paid_at = EXCLUDED.paid_at`,
-    [bookingId, dp, providerRef]
+            paid_at = EXCLUDED.paid_at
+     RETURNING id`,
+    [bookingId, dp, providerRef, paidAt, paidAt]
   );
+
+  // Demo payments must be ledger-backed, otherwise a later release/payout for
+  // a demo booking would debit escrow that was never credited. The journal is
+  // idempotent via `source_event_key`; re-running the seed backfills old rows.
+  const paymentId = paymentRow.rows[0]?.id;
+  if (paymentId) {
+    const journalRow = await client.query(
+      `INSERT INTO journal_entries
+         (event_type, source_event_key, reference_type, reference_id,
+          booking_id, vendor_id, memo, occurred_at)
+       VALUES ('dp_received', $1, 'payment', $2, $3, $4, $5, $6)
+       ON CONFLICT (source_event_key) DO NOTHING
+       RETURNING id`,
+      [
+        `demo:${spec.code}:dp_received`,
+        paymentId,
+        bookingId,
+        vendor.id,
+        'seed demo DP',
+        paidAt
+      ]
+    );
+    const journalId = journalRow.rows[0]?.id;
+    if (journalId) {
+      await client.query(
+        `INSERT INTO journal_lines
+           (journal_entry_id, line_no, account_code, vendor_id, debit_idr, credit_idr, memo)
+         VALUES ($1, 1, '1100', NULL, $2, 0, 'funds receivable from PJP'),
+                ($1, 2, '2100', $3, 0, $2, 'customer funds held in escrow')`,
+        [journalId, dp, vendor.id]
+      );
+    }
+  }
 
   const history = [
     ['requested', 'accepted', 'vendor_accepted'],
@@ -816,10 +940,11 @@ async function main() {
       customers.set(customer.email, id);
     }
 
-    const { id: ownerId } = await upsertUser(client, VENDOR_ACCOUNT, passwordHash);
-
     const vendors = new Map();
+    const ownerEmails = [];
     for (const [index, vendorSpec] of VENDORS.entries()) {
+      const { id: ownerId } = await upsertUser(client, vendorSpec.owner, passwordHash);
+      ownerEmails.push(vendorSpec.owner.email);
       const { id: vendorId, created } = await upsertVendor(client, ownerId, vendorSpec);
 
       await client.query(
@@ -884,7 +1009,7 @@ async function main() {
 
     console.log('seed demo selesai.');
     console.log(`pelanggan : ${CUSTOMERS.map((item) => item.email).join(', ')}`);
-    console.log(`vendor    : ${VENDOR_ACCOUNT.email}`);
+    console.log(`vendor    : ${ownerEmails.join(', ')}`);
     console.log(`kata sandi: ${password}`);
     console.log(`booking   : ${seededBookings.map((item) => item.code).join(', ')}`);
     console.log(`kalender  : ${CALENDAR_DAYS} hari ke depan untuk ${VENDORS.length} vendor`);

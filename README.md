@@ -14,7 +14,7 @@ Repositori ini berisi **API**, **panel admin**, **worker**, **library domain**, 
 | `apps/api` — NestJS `/v1` | Berjalan | `GET /v1/health` → 200 |
 | `apps/admin` — Next.js | Berjalan | `http://localhost:3002/login` |
 | `apps/worker` — poller PostgreSQL | Berjalan | log `tick=done` tiap interval |
-| `apps/mobile` — Flutter pelanggan | 49 widget test lulus, `flutter analyze` bersih | `cd apps/mobile && flutter test` |
+| `apps/mobile` — Flutter pelanggan | 53 widget test lulus, `flutter analyze` bersih | `cd apps/mobile && flutter test` |
 | `apps/mobile` — portal vendor | dashboard, kalender, saldo, profil, pesanan, paket, media, rekening | login akun `vendor_owner` |
 | Payout vendor + rekening | `payouts`/`payout_items`, rekening terenkripsi, maker-checker, worker rekonsiliasi | `PAYOUT_PROVIDER=local` (default) |
 | Chat booking (FR-050) | REST riwayat/kirim + WebSocket per booking, izin per relasi booking | `GET/POST /v1/bookings/:id/chat/messages`, `WS /v1/chat/ws` |
@@ -26,10 +26,10 @@ Repositori ini berisi **API**, **panel admin**, **worker**, **library domain**, 
 | Rekonsiliasi (FR-131) | Fase 1 **read-only** gateway ↔ ledger; fase 2: SLA per temuan + keputusan admin (`accepted`/`ignored`/`referred`/`corrected`) dengan audit; **worker harian** `reconcile_daily` (setelah `recon_hour_wib`, default 07:00 WIB) dengan catch-up maksimal 7 hari | migrasi `024`+`029`; panel `/reconciliation` |
 | Consent ToS + Privasi (FR-103) | `user_consents` append-only per versi; register wajib mengirim versi aktif | `POST /v1/auth/register`, `GET /v1/policies/:code` |
 | Toggle wilayah (FR-125) | Wilayah nonaktif hilang dari katalog & formulir vendor; panel `/regions` | `GET/PATCH /v1/admin/regions` |
-| Ledger double-entry | 1443 test lulus (1336 backend + 62 worker + 45 panel), 8 skip; mobile 49 | `npm test` |
+| Ledger double-entry | 1473 test lulus (1366 backend + 62 worker + 45 panel), 8 skip; mobile 53 | `npm test` |
 | Skema DB | migrasi `001`-`035` diterapkan; berikutnya `036` | `npm run migrate` |
 | Operasional | Liveness `/v1/health`, readiness `/v1/health/ready` (503 saat DB mati, dipakai HEALTHCHECK), rate limit 10 laporan/jam/user, cleanup challenge 2FA di worker | `GET /v1/health/ready`; job `cleanup_auth` |
-| Kesiapan operasional | Panel `/ops` + banner dashboard merangkum tujuh antrean yang lewat SLA, gagal kirim, atau macet; read-only, agregat, semua peran admin | `GET /v1/admin/ops/alerts` |
+| Kesiapan operasional | Panel `/ops` + banner dashboard merangkum delapan antrean yang lewat SLA, gagal kirim, atau macet; read-only, agregat, semua peran admin | `GET /v1/admin/ops/alerts` |
 | Deploy produksi | `Dockerfile` 4 target, `docker-compose.prod.yml`, preflight, backup/restore, CI GitHub Actions | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) |
 
 ## Stack
@@ -159,9 +159,9 @@ Yang sudah disiapkan repo ini:
 | `npm run build:api` / `start:api` | Bangun / jalankan API (`dist/`) |
 | `npm run build:worker` / `start:worker` | Bangun / jalankan worker |
 | `npm run dev:admin` | Panel dev (`:3002`) |
-| `npm run smoke:booking` / `smoke:admin` / `smoke:catalog` / `smoke:settle` | Smoke test alur nyata |
+| `npm run smoke:booking` / `smoke:admin` / `smoke:catalog` / `smoke:settle` / `smoke:ledger` / `smoke:payment` | Smoke test alur nyata + audit jurnal + panduan E2E sandbox |
 | `cd apps/mobile && flutter analyze` | Analisis statis mobile |
-| `cd apps/mobile && flutter test` | 47 widget test mobile |
+| `cd apps/mobile && flutter test` | 53 widget test mobile |
 | `cd apps/mobile && flutter run -d web-server --web-port 8080 --dart-define=API_BASE_URL=http://localhost:3001` | Jalankan mobile web, buka `http://localhost:8080` di Chrome biasa |
 
 ## Pengujian mobile (E2E)

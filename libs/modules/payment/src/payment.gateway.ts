@@ -89,4 +89,15 @@ export interface PaymentGateway {
   verifyNotification?(body: unknown): void;
   /** Maps the provider body to the internal notification classes. */
   classifyNotification?(body: unknown): GatewayNotification;
+  /**
+   * Menarik status transaksi langsung dari provider. Opsional: dipakai untuk
+   * lingkungan tanpa webhook masuk (mis. localhost).
+   */
+  fetchStatus?(orderId: string): Promise<unknown>;
+  /**
+   * Mengakhiri charge yang belum dibayar supaya VA/QRIS lama tidak bisa
+   * dibayar setelah pelanggan pindah metode. Wajib melempar bila provider
+   * melaporkan tagihan sudah dibayar atau tidak bisa dipastikan berakhir.
+   */
+  expireCharge?(orderId: string): Promise<void>;
 }

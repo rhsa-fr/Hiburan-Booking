@@ -8,7 +8,11 @@ export function getPool(): Pool {
     const cfg = loadConfig();
     pool = new Pool({
       connectionString: cfg.DATABASE_URL,
-      max: 10,
+      // Supabase session pooler (Nano) caps the project at 15 connections.
+      // Leave 5 for the worker and 2 for migrations/scripts instead of using
+      // all 10 here; `too many connections` otherwise blocks operational work
+      // while the API is serving traffic.
+      max: 8,
       idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 5_000
     });

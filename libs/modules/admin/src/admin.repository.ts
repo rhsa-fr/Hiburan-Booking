@@ -370,7 +370,7 @@ SELECT COALESCE(sum(jl.credit_idr), 0)::text AS amount_idr
   JOIN journal_lines jl ON jl.journal_entry_id = je.id
  WHERE je.booking_id = $1::uuid
    AND je.event_type = 'release'
-   AND jl.account_code = 'vendor_payable'
+   AND jl.account_code = '2120'
 `;
 
 /** A clawback is post-release only: there must be a settled payout covering it. */

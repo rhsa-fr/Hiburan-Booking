@@ -309,6 +309,11 @@ dan jurnal pengakuan + `refund_disbursed` diposting. Penolakan menyimpan
 `review_note` tanpa pergerakan uang. Pelanggan melihat status refund lewat
 `GET /v1/payments/refunds/by-booking/:bookingId`.
 
+Refund manual (migrasi `036`, VA/Mandiri) memakai `POST /v1/payments/:id/refund/manual`:
+`transfer_ref` wajib, `fee_idr=0`/`fee_bearer='platform'`, dan kedua jurnal
+diposting dalam satu transaksi. Di atas ambang, approve tidak memanggil provider;
+ia memfinalkan jurnal dan status.
+
 ### Aturan yang dijaga test
 - Setiap jurnal seimbang (`assertBalanced`).
 - Tidak ada update/delete pada tabel jurnal (dijaga trigger DB).
@@ -539,6 +544,15 @@ Webhook legacy `POST /webhooks/pjp` (HMAC-SHA256
 `sha256(timestamp + "." + rawBody)`) tetap ada untuk gateway lokal. Refund QRIS
 dipanggil ke Midtrans dan langsung difinalkan; refund VA/Mandiri ditolak karena
 Midtrans tidak mendukung reverse bank transfer.
+
+Ganti metode pembayaran: `POST /v1/payments/abandon` mengakhiri charge di provider
+(`POST /v2/{order_id}/expire`) sebelum melepas baris `payments`, sehingga VA/QRIS
+lama tidak bisa dibayar setelah pelanggan pindah metode. Bila provider tidak bisa
+memastikan tagihan berakhir, tagihan dibiarkan `pending`. Pembayaran telat yang
+tetap masuk diterima bila tahap itu belum dibayar dan tidak ada pembayaran lain
+yang `paid`; tagihan pending lain untuk tahap yang sama ditandai `failed`.
+`POST /v1/payments/sync` menarik status provider untuk lingkungan tanpa webhook
+masuk dan menerapkan `paid`, `expired`, maupun `failed`.
 
 ## 11. Keputusan arsitektur yang mengikat
 

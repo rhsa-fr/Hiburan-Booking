@@ -122,8 +122,13 @@ class WelcomePage extends StatelessWidget {
                       return SingleChildScrollView(
                         padding: const EdgeInsets.fromLTRB(20, 10, 20, 16),
                         child: ConstrainedBox(
+                          // A short window (a small browser tab, a split screen)
+                          // leaves less than the 26 dp the padding eats; a
+                          // negative minHeight asserts inside ConstrainedBox.
                           constraints: BoxConstraints(
-                            minHeight: body.maxHeight - 26,
+                            minHeight: body.maxHeight > 26
+                                ? body.maxHeight - 26
+                                : 0,
                           ),
                           child: IntrinsicHeight(
                             child: Column(

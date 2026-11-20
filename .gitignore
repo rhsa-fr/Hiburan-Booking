@@ -25,6 +25,8 @@ build/
 # Konfigurasi & artefak agen lokal (bukan bagian produk)
 .commandcode/
 .opencode/
+.tmp-*
+shots/
 
 # Draf desain sementara & arsip diagnostik
 docs/_tmp_*.html

@@ -497,12 +497,57 @@ describe('PayoutService.create', () => {
     );
   });
 
-  it('refuses when the ledger payable is smaller than the claim', async () => {
+  it('refuses when no booking is fully covered by the ledger balance', async () => {
     const { repo, service } = setup();
     repo.initialPayable = 1_000n;
     await expect(service.create(maker, { vendor_id: 'vendor-1' }, key)).rejects.toThrow(
-      /vendor_payable/
+      /tertahan clawback\/sengketa/
     );
+  });
+
+  it('caps the claim at the ledger so a clawback reduces the next payout', async () => {
+    // 2500 left after the clawback: the oldest booking (3000) no longer fits,
+    // so only the 2000 booking is claimable instead of everything.
+    const { repo, service } = setup();
+    repo.initialPayable = 2_500n;
+
+    const result = await service.create(maker, { vendor_id: 'vendor-1' }, key);
+
+    expect(result.amount_idr).toBe(2000);
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]?.booking_id).toBe('booking-2');
+  });
+
+  it('refuses an explicit subset larger than the ledger balance', async () => {
+    const { repo, service } = setup();
+    repo.initialPayable = 2_500n;
+    await expect(
+      service.create(maker, { vendor_id: 'vendor-1', booking_ids: ['booking-1'] }, key)
+    ).rejects.toThrow(/saldo vendor_payable/i);
+  });
+
+  it('reports the payable separately from the total vendor entitlement', async () => {
+    const { repo, service } = setup();
+    repo.initialPayable = 2_500n;
+
+    const view = await service.eligible('vendor-1');
+
+    expect(view.amount_idr).toBe(5000);
+    expect(view.payable_idr).toBe(2000);
+    expect(view.ledger_payable_idr).toBe(2500);
+    expect(view.eligible).toBe(true);
+    expect(view.reason).toBeNull();
+  });
+
+  it('explains a clawback hold when the balance covers nothing', async () => {
+    const { repo, service } = setup();
+    repo.initialPayable = -4_950_000n;
+
+    const view = await service.eligible('vendor-1');
+
+    expect(view.payable_idr).toBe(0);
+    expect(view.eligible).toBe(false);
+    expect(view.reason).toMatch(/tertahan clawback\/sengketa/);
   });
 
   it('refuses a booking id that is not eligible', async () => {

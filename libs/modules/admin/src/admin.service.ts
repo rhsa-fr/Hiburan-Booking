@@ -1116,9 +1116,6 @@ export class AdminService {
       const bookings = await this.repository.lockBookings(client, [locked.booking_id]);
       const booking = bookings[0];
       if (!booking) throw new AppError('NOT_FOUND', 'Booking sengketa tidak ditemukan.');
-      if (booking.settlement_status !== 'disputed') {
-        throw new AppError('CONFLICT', 'Dana booking ini tidak sedang dalam status sengketa.');
-      }
       if (booking.lifecycle_status !== 'completed' && booking.lifecycle_status !== 'no_show') {
         throw new AppError(
           'CONFLICT',
@@ -1128,34 +1125,61 @@ export class AdminService {
 
       const paymentStatus =
         input.resolution === 'refund_full' ? 'refunded' : 'partially_refunded';
-      await this.repository.setBookingRefundStatus(client, {
-        bookingId: booking.id,
-        paymentStatus,
-        settlementStatus: 'not_eligible'
-      });
-      await this.repository.insertStatusHistory(client, {
-        bookingId: booking.id,
-        axis: 'payment',
-        from: booking.payment_status,
-        to: paymentStatus,
-        event:
-          input.resolution === 'refund_full'
-            ? 'payment.refund_succeeded'
-            : 'payment.refund_succeeded_partial',
-        actorId: context.actorId,
-        actorRole: context.actorRole,
-        note: input.note
-      });
-      await this.repository.insertStatusHistory(client, {
-        bookingId: booking.id,
-        axis: 'settlement',
-        from: 'disputed',
-        to: 'not_eligible',
-        event: 'dispute.resolved_refund',
-        actorId: context.actorId,
-        actorRole: context.actorRole,
-        note: input.note
-      });
+
+      // The refund is executed BEFORE this transaction and, when it finalizes
+      // immediately (below the approval threshold), the payment module has
+      // already applied `applyRefundSucceeded`: the booking is at the target
+      // payment status and settlement is already `not_eligible`. Rejecting that
+      // state here would answer 409 after the money has moved, leaving the
+      // dispute open forever. Instead, only write the axes that are still
+      // behind, so the decision stays idempotent.
+      const paymentChanged = booking.payment_status !== paymentStatus;
+      const settlementChanged = booking.settlement_status !== 'not_eligible';
+
+      // Only a disputed settlement may be closed by this decision. A refund
+      // that already finalized has closed it, which is why that case is skipped.
+      if (settlementChanged && booking.settlement_status !== 'disputed') {
+        throw new AppError('CONFLICT', 'Dana booking ini tidak sedang dalam status sengketa.');
+      }
+
+      if (paymentChanged) {
+        await this.repository.setBookingRefundStatus(client, {
+          bookingId: booking.id,
+          paymentStatus,
+          settlementStatus: 'not_eligible'
+        });
+        await this.repository.insertStatusHistory(client, {
+          bookingId: booking.id,
+          axis: 'payment',
+          from: booking.payment_status,
+          to: paymentStatus,
+          event:
+            input.resolution === 'refund_full'
+              ? 'payment.refund_succeeded'
+              : 'payment.refund_succeeded_partial',
+          actorId: context.actorId,
+          actorRole: context.actorRole,
+          note: input.note
+        });
+      } else if (settlementChanged) {
+        await this.repository.setBookingSettlement(client, {
+          bookingId: booking.id,
+          settlementStatus: 'not_eligible'
+        });
+      }
+
+      if (settlementChanged) {
+        await this.repository.insertStatusHistory(client, {
+          bookingId: booking.id,
+          axis: 'settlement',
+          from: booking.settlement_status,
+          to: 'not_eligible',
+          event: 'dispute.resolved_refund',
+          actorId: context.actorId,
+          actorRole: context.actorRole,
+          note: input.note
+        });
+      }
       await this.repository.markDisputeResolved(client, {
         disputeId,
         resolution,

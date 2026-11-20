@@ -1,7 +1,8 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CreditCard, Receipt, RotateCcw, Wallet } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import {
   BlockSkeleton,
   Button,
@@ -9,7 +10,9 @@ import {
   CardHeader,
   EmptyState,
   ErrorState,
+  Input,
   KpiCard,
+  Modal,
   PageHeader,
   StatGrid,
   StatusBadge,
@@ -20,10 +23,15 @@ import {
   TableHeadCell,
   TableRow,
   TableSkeleton,
-  TitleBlock
+  Textarea,
+  TitleBlock,
+  Toast
 } from '@/components/ui';
 import { getPayments } from '@/lib/api';
 import { formatDateTimeID, formatIDR } from '@/lib/format';
+import { requestManualRefund } from '@/lib/refunds';
+import { readSession } from '@/lib/session';
+import type { Payment } from '@/lib/types';
 
 const PAYMENT_STATUS_LABELS: Record<string, string> = {
   pending: 'Menunggu',
@@ -38,11 +46,68 @@ const PAYMENT_KIND_LABELS: Record<string, string> = {
   refund: 'Refund'
 };
 
+function canRefund(): boolean {
+  const role = (readSession()?.role ?? '').toLowerCase();
+  return role.includes('finance') || role.includes('super');
+}
+
 export default function PaymentsPage() {
+  const queryClient = useQueryClient();
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ['payments'],
     queryFn: getPayments
   });
+
+  const [manualTarget, setManualTarget] = useState<Payment | null>(null);
+  const [manualAmount, setManualAmount] = useState('');
+  const [manualReason, setManualReason] = useState('');
+  const [manualRef, setManualRef] = useState('');
+  const [manualEvidence, setManualEvidence] = useState('');
+  const [toastNotice, setToastNotice] = useState<string | null>(null);
+  const refundable = canRefund();
+
+  useEffect(() => {
+    if (!toastNotice) return;
+    const timer = setTimeout(() => setToastNotice(null), 5000);
+    return () => clearTimeout(timer);
+  }, [toastNotice]);
+
+  const manualMutation = useMutation({
+    mutationFn: (payment: Payment) =>
+      requestManualRefund(payment.id, {
+        amount_idr: Number(manualAmount.replace(/[^\d]/g, '')),
+        reason: manualReason.trim(),
+        transfer_ref: manualRef.trim(),
+        evidence_url: manualEvidence.trim() || undefined
+      }),
+    onSuccess: (refund) => {
+      setManualTarget(null);
+      setToastNotice(
+        refund.status === 'requested'
+          ? 'Refund manual dicatat. Menunggu persetujuan admin lain.'
+          : 'Refund manual selesai dicatat dan jurnal sudah diposting.'
+      );
+      void queryClient.invalidateQueries({ queryKey: ['payments'] });
+      void queryClient.invalidateQueries({ queryKey: ['refunds'] });
+    },
+    onError: (err) => {
+      setToastNotice(err instanceof Error ? err.message : 'Gagal mencatat refund manual.');
+    }
+  });
+
+  function openManual(payment: Payment) {
+    setManualTarget(payment);
+    setManualAmount(String(payment.amount_idr));
+    setManualReason('');
+    setManualRef('');
+    setManualEvidence('');
+  }
+
+  const manualAmountIdr = Number(manualAmount.replace(/[^\d]/g, ''));
+  const manualValid =
+    manualAmountIdr > 0 &&
+    manualReason.trim().length >= 5 &&
+    manualRef.trim().length >= 3;
 
   return (
     <div>
@@ -128,6 +193,7 @@ export default function PaymentsPage() {
                     <TableHeadCell>Metode & referensi</TableHeadCell>
                     <TableHeadCell align="right">Nominal</TableHeadCell>
                     <TableHeadCell align="right">Dibayar</TableHeadCell>
+                    <TableHeadCell align="right">Aksi</TableHeadCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -165,6 +231,15 @@ export default function PaymentsPage() {
                           {payment.paid_at ? formatDateTimeID(payment.paid_at) : 'Belum dibayar'}
                         </span>
                       </TableCell>
+                      <TableCell align="right">
+                        {payment.status === 'paid' && payment.kind !== 'refund' && refundable ? (
+                          <Button size="sm" variant="outline" onClick={() => openManual(payment)}>
+                            Refund manual
+                          </Button>
+                        ) : (
+                          <span className="text-xs text-textMuted">—</span>
+                        )}
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -172,6 +247,76 @@ export default function PaymentsPage() {
             )}
           </Card>
         </div>
+      ) : null}
+
+      <Modal
+        open={manualTarget !== null}
+        onClose={() => setManualTarget(null)}
+        labelledBy="manual-refund-title"
+        size="sm"
+      >
+        <h2
+          id="manual-refund-title"
+          className="pr-10 text-xl font-bold tracking-[-0.01em] text-textMain"
+        >
+          Catat refund manual
+        </h2>
+        <p className="mt-1 text-sm text-textSecondary">
+          {manualTarget
+            ? `${manualTarget.booking_code} · ${manualTarget.method} · ${formatIDR(manualTarget.amount_idr)}`
+            : ''}
+        </p>
+        <p className="mt-2 text-[13px] leading-snug text-textMuted">
+          Pakai untuk pembayaran VA/Mandiri yang tidak bisa di-refund gateway. Nominal
+          di atas ambang akan menunggu persetujuan admin lain.
+        </p>
+        <div className="mt-4 space-y-3">
+          <Input
+            id="manual-refund-amount"
+            label="Nominal refund (Rp)"
+            inputMode="numeric"
+            value={manualAmount}
+            onChange={(event) => setManualAmount(event.target.value)}
+          />
+          <Textarea
+            id="manual-refund-reason"
+            label="Alasan"
+            value={manualReason}
+            onChange={(event) => setManualReason(event.target.value)}
+            placeholder="Contoh: pembatalan acara, transfer balik via BCA."
+          />
+          <Input
+            id="manual-refund-ref"
+            label="Referensi transfer"
+            value={manualRef}
+            onChange={(event) => setManualRef(event.target.value)}
+            placeholder="Contoh: TRF-20261117-001"
+          />
+          <Input
+            id="manual-refund-evidence"
+            label="URL bukti transfer (opsional)"
+            value={manualEvidence}
+            onChange={(event) => setManualEvidence(event.target.value)}
+            placeholder="https://…"
+          />
+        </div>
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="ghost" onClick={() => setManualTarget(null)}>
+            Batal
+          </Button>
+          <Button
+            disabled={!manualValid || manualMutation.isPending}
+            onClick={() => {
+              if (manualTarget) manualMutation.mutate(manualTarget);
+            }}
+          >
+            {manualMutation.isPending ? 'Menyimpan...' : 'Simpan refund'}
+          </Button>
+        </div>
+      </Modal>
+
+      {toastNotice ? (
+        <Toast tone="info" title={toastNotice} onDismiss={() => setToastNotice(null)} />
       ) : null}
     </div>
   );

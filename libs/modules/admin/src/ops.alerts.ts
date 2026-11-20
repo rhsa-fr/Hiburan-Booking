@@ -19,7 +19,8 @@ export const OPS_METRIC_KEYS = [
   'reconciliation_runs',
   'payouts',
   'outbox',
-  'email'
+  'email',
+  'webhooks'
 ] as const;
 
 export type OpsMetricKey = (typeof OPS_METRIC_KEYS)[number];
@@ -136,6 +137,14 @@ const OPS_ALERT_DEFINITIONS: Record<OpsMetricKey, OpsAlertDefinition> = {
     age_template: 'tertua {hours} jam lalu',
     hint: 'Notifikasi in-app tetap terkirim. Periksa kredensial dan kuota penyedia email.',
     href: '/ops'
+  },
+  webhooks: {
+    severity: 'critical',
+    title: 'Webhook pembayaran gagal diproses',
+    noun: 'webhook',
+    age_template: 'tertua {hours} jam lalu',
+    hint: 'Ada pembayaran masuk yang tidak bisa diterapkan (mis. telat setelah ganti metode). Periksa dan refund manual bila perlu.',
+    href: '/payments'
   }
 };
 

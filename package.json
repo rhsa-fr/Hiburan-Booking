@@ -24,6 +24,8 @@
     "smoke:admin": "vite-node scripts/smoke-admin.ts",
     "smoke:catalog": "vite-node scripts/smoke-catalog.ts",
     "smoke:settle": "vite-node scripts/smoke-settle.ts",
+    "smoke:ledger": "node --env-file=.env scripts/smoke-payment-ledger.mjs",
+    "smoke:payment": "node --env-file=.env scripts/smoke-payment-e2e.mjs",
     "verify:admin": "node scripts/verify-admin-headers.mjs",
     "dev:api": "nest start --watch",
     "dev:admin": "npm -w apps/admin run dev",

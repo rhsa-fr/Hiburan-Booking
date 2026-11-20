@@ -84,6 +84,12 @@ export interface RefundRecord {
   readonly approvedBy: string | null;
   readonly approvedAt: Date | null;
   readonly createdAt: Date;
+  /** True when the money left through a manual bank transfer, not the gateway. */
+  readonly isManual: boolean;
+  /** Manual transfer reference; also used as `provider_refund_id`. */
+  readonly providerRefundId: string | null;
+  /** When the manual transfer was made. */
+  readonly transferredAt: Date | null;
 }
 
 /** Latest DP payment of a booking plus the booking owner, for the read route. */
@@ -118,10 +124,18 @@ export interface NewRefund {
   readonly paymentId: string;
   readonly amountIdr: bigint;
   readonly feeIdr: bigint;
+  /** Defaults to `customer`; manual refunds use `platform` (fee absorbed). */
+  readonly feeBearer?: 'customer' | 'vendor' | 'platform';
   readonly reasonCode: string;
   readonly reasonNote?: string;
   readonly evidenceUrl?: string | null;
   readonly requestedBy?: string | null;
+  /** Manual bank transfer instead of a provider refund. */
+  readonly isManual?: boolean;
+  /** Manual transfer reference (stored in `provider_refund_id`). */
+  readonly providerRefundId?: string | null;
+  /** When the manual transfer was made. */
+  readonly transferredAt?: Date | null;
 }
 
 /** Audit row written inside a caller's money transaction. */
@@ -200,6 +214,26 @@ export interface PaymentRepository {
     bookingId: string,
     status?: PaymentStatus
   ): Promise<PaymentRecord | null>;
+  /** Any paid payment of this kind for the booking, optionally excluding one id. */
+  findPaidPayment(
+    tx: JournalQueryClient,
+    bookingId: string,
+    kind: PaymentKind,
+    excludePaymentId?: string
+  ): Promise<PaymentRecord | null>;
+  /**
+   * Ends other pending charges of the same kind. Used when a late provider
+   * payment is accepted so the customer cannot pay a second active row.
+   */
+  supersedePendingPayments(
+    tx: JournalQueryClient,
+    input: {
+      bookingId: string;
+      kind: PaymentKind;
+      keepPaymentId: string;
+      failureCode: string;
+    }
+  ): Promise<void>;
   insertSettlementPayment(
     tx: JournalQueryClient,
     input: NewSettlementPayment
@@ -233,10 +267,24 @@ export interface PaymentRepository {
   ): Promise<void>;
   markPaymentPaid(
     tx: JournalQueryClient,
-    input: { paymentId: string; paidAt: Date; providerTxnId: string | null; rawPayload: unknown }
+    input: {
+      paymentId: string;
+      paidAt: Date;
+      providerTxnId: string | null;
+      rawPayload: unknown;
+      /**
+       * Accept a paid webhook for a charge that was released locally (failed
+       * or expired) but still got paid at the provider before it closed.
+       */
+      allowLate?: boolean;
+    }
   ): Promise<void>;
 
   sumRefundedAmount(tx: JournalQueryClient, paymentId: string): Promise<bigint>;
+  bookingRefundTotals(
+    tx: JournalQueryClient,
+    bookingId: string
+  ): Promise<{ captured: bigint; refunded: bigint }>;
   insertRefund(tx: JournalQueryClient, input: NewRefund): Promise<RefundRecord>;
   lockRefund(tx: JournalQueryClient, refundId: string): Promise<RefundRecord | null>;
   advanceRefundStatus(tx: JournalQueryClient, input: RefundTransition): Promise<RefundRecord>;
@@ -405,6 +453,23 @@ LIMIT 1
 FOR UPDATE
 `;
 
+const SELECT_PAID_PAYMENT_SQL = `
+SELECT id, booking_id, kind, method, amount_idr, fee_idr, status, provider, provider_ref,
+       expires_at, paid_at, raw_payload
+FROM payments
+WHERE booking_id = $1 AND kind = $2 AND status = 'paid'
+  AND ($3::uuid IS NULL OR id <> $3::uuid)
+ORDER BY paid_at DESC NULLS LAST, created_at DESC
+LIMIT 1
+`;
+
+const SUPERSEDE_PENDING_SQL = `
+UPDATE payments
+SET status = 'failed', failure_code = $4, updated_at = now()
+WHERE booking_id = $1 AND kind = $2 AND status = 'pending' AND id <> $3
+RETURNING id
+`;
+
 const INSERT_SETTLEMENT_SQL = `
 INSERT INTO payments
   (booking_id, kind, method, amount_idr, currency, status, provider, provider_ref, fee_idr, expires_at)
@@ -438,22 +503,50 @@ WHERE id = $1 AND status = 'pending'
 RETURNING id
 `;
 
+/** A late provider payment may revive a charge already released locally. */
+const MARK_PAID_LATE_SQL = `
+UPDATE payments
+SET status = 'paid', paid_at = $2, provider_txn_id = $3, raw_payload = $4,
+    failure_code = NULL, updated_at = now()
+WHERE id = $1 AND status IN ('pending','failed','expired')
+RETURNING id
+`;
+
 const SUM_REFUNDED_SQL = `
 SELECT COALESCE(SUM(amount_idr), 0)::BIGINT AS total
 FROM refunds
 WHERE payment_id = $1 AND status IN ('requested','approved','processing','succeeded')
 `;
 
+/**
+ * Captured money vs money already returned for the whole booking. Used to
+ * decide whether a refund closes the booking (`refunded`) or only marks it
+ * `partially_refunded`; the caller must run it after advancing this refund to
+ * `succeeded` so the totals include it.
+ */
+const BOOKING_REFUND_TOTALS_SQL = `
+SELECT
+  (SELECT COALESCE(SUM(amount_idr), 0)::BIGINT
+     FROM payments
+    WHERE booking_id = $1 AND status = 'paid') AS captured,
+  (SELECT COALESCE(SUM(amount_idr), 0)::BIGINT
+     FROM refunds
+    WHERE booking_id = $1 AND status = 'succeeded') AS refunded
+`;
+
 const REFUND_COLUMNS = `
   id, booking_id, payment_id, amount_idr, fee_idr, status, reason_code, reason_note,
-  evidence_url, review_note, requested_by, approved_by, approved_at, created_at
+  evidence_url, review_note, requested_by, approved_by, approved_at, created_at,
+  is_manual, provider_refund_id, transferred_at
 `;
 
 const INSERT_REFUND_SQL = `
 INSERT INTO refunds
   (booking_id, payment_id, amount_idr, currency, fee_idr, fee_bearer, status,
-   reason_code, reason_note, evidence_url, requested_by)
-VALUES ($1, $2, $3, 'IDR', $4, 'customer', 'requested', $5, $6, $7, $8)
+   reason_code, reason_note, evidence_url, requested_by,
+   is_manual, provider_ref, provider_refund_id, transferred_at)
+VALUES ($1, $2, $3, 'IDR', $4, $5::fee_bearer, 'requested', $6, $7, $8, $9,
+        $10, $11, $12, $13)
 RETURNING ${REFUND_COLUMNS}
 `;
 
@@ -468,6 +561,7 @@ const SELECT_REFUND_BY_BOOKING_SQL = `
 SELECT r.id, r.booking_id, r.payment_id, r.amount_idr, r.fee_idr, r.status,
        r.reason_code, r.reason_note, r.evidence_url, r.review_note,
        r.requested_by, r.approved_by, r.approved_at, r.created_at,
+       r.is_manual, r.provider_refund_id, r.transferred_at,
        b.customer_id
 FROM refunds r
 JOIN bookings b ON b.id = r.booking_id
@@ -480,6 +574,7 @@ const SELECT_REFUND_QUEUE_SQL = `
 SELECT r.id, r.booking_id, r.payment_id, r.amount_idr, r.fee_idr, r.status,
        r.reason_code, r.reason_note, r.evidence_url, r.review_note,
        r.requested_by, r.approved_by, r.approved_at, r.created_at,
+       r.is_manual, r.provider_refund_id, r.transferred_at,
        b.code AS booking_code,
        u.name AS customer_name
 FROM refunds r
@@ -664,6 +759,38 @@ export class PgPaymentRepository implements PaymentRepository {
     return row ? mapPayment(row) : null;
   }
 
+  async findPaidPayment(
+    tx: JournalQueryClient,
+    bookingId: string,
+    kind: PaymentKind,
+    excludePaymentId?: string
+  ): Promise<PaymentRecord | null> {
+    const { rows } = await tx.query(SELECT_PAID_PAYMENT_SQL, [
+      bookingId,
+      kind,
+      excludePaymentId ?? null
+    ]);
+    const row = rows[0];
+    return row ? mapPayment(row) : null;
+  }
+
+  async supersedePendingPayments(
+    tx: JournalQueryClient,
+    input: {
+      bookingId: string;
+      kind: PaymentKind;
+      keepPaymentId: string;
+      failureCode: string;
+    }
+  ): Promise<void> {
+    await tx.query(SUPERSEDE_PENDING_SQL, [
+      input.bookingId,
+      input.kind,
+      input.keepPaymentId,
+      input.failureCode
+    ]);
+  }
+
   async insertSettlementPayment(
     tx: JournalQueryClient,
     input: NewSettlementPayment
@@ -740,9 +867,15 @@ export class PgPaymentRepository implements PaymentRepository {
 
   async markPaymentPaid(
     tx: JournalQueryClient,
-    input: { paymentId: string; paidAt: Date; providerTxnId: string | null; rawPayload: unknown }
+    input: {
+      paymentId: string;
+      paidAt: Date;
+      providerTxnId: string | null;
+      rawPayload: unknown;
+      allowLate?: boolean;
+    }
   ): Promise<void> {
-    const result = await tx.query(MARK_PAID_SQL, [
+    const result = await tx.query(input.allowLate ? MARK_PAID_LATE_SQL : MARK_PAID_SQL, [
       input.paymentId,
       input.paidAt.toISOString(),
       input.providerTxnId,
@@ -758,17 +891,34 @@ export class PgPaymentRepository implements PaymentRepository {
     return toBigInt(rows[0]?.total ?? 0, 'refunds.total');
   }
 
+  async bookingRefundTotals(
+    tx: JournalQueryClient,
+    bookingId: string
+  ): Promise<{ captured: bigint; refunded: bigint }> {
+    const { rows } = await tx.query(BOOKING_REFUND_TOTALS_SQL, [bookingId]);
+    return {
+      captured: toBigInt(rows[0]?.captured ?? 0, 'payments.captured'),
+      refunded: toBigInt(rows[0]?.refunded ?? 0, 'refunds.refunded')
+    };
+  }
+
   async insertRefund(tx: JournalQueryClient, input: NewRefund): Promise<RefundRecord> {
     try {
+      const isManual = input.isManual === true;
       const { rows } = await tx.query(INSERT_REFUND_SQL, [
         input.bookingId,
         input.paymentId,
         input.amountIdr.toString(),
         input.feeIdr.toString(),
+        input.feeBearer ?? (isManual ? 'platform' : 'customer'),
         input.reasonCode,
         input.reasonNote ?? null,
         input.evidenceUrl ?? null,
-        input.requestedBy ?? null
+        input.requestedBy ?? null,
+        isManual,
+        isManual ? 'manual' : null,
+        input.providerRefundId ?? null,
+        input.transferredAt ? input.transferredAt.toISOString() : null
       ]);
       const row = rows[0];
       if (!row) throw new AppError('INTERNAL_ERROR', 'refund insert returned no row');
@@ -940,7 +1090,13 @@ function mapRefund(row: Record<string, unknown>): RefundRecord {
     requestedBy: row.requested_by === null || row.requested_by === undefined ? null : String(row.requested_by),
     approvedBy: row.approved_by === null || row.approved_by === undefined ? null : String(row.approved_by),
     approvedAt: toDateOrNull(row.approved_at),
-    createdAt: toDateOrNull(row.created_at) ?? new Date()
+    createdAt: toDateOrNull(row.created_at) ?? new Date(),
+    isManual: row.is_manual === true,
+    providerRefundId:
+      row.provider_refund_id === null || row.provider_refund_id === undefined
+        ? null
+        : String(row.provider_refund_id),
+    transferredAt: toDateOrNull(row.transferred_at)
   };
 }
 

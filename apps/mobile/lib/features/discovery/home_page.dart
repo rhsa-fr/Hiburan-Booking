@@ -552,31 +552,24 @@ class _HomeHeader extends StatelessWidget {
                 ),
               ),
               if (vendorCount > 0) ...[
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: const BoxDecoration(
+                    color: AppColors.lime,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 6),
                 Text(
                   '$vendorCount grup aktif',
                   style: TextStyle(
                     fontSize: 10.5,
                     fontWeight: FontWeight.w600,
-                    color: Colors.white.withValues(alpha: 0.48),
+                    color: Colors.white.withValues(alpha: 0.62),
                   ),
                 ),
-                const SizedBox(width: 6),
               ],
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: AppColors.limeSoft,
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: const Text(
-                  'Siap',
-                  style: TextStyle(
-                    fontSize: 9.5,
-                    fontWeight: FontWeight.w800,
-                    color: AppColors.ink,
-                  ),
-                ),
-              ),
             ],
           ),
           const SizedBox(height: 12),
@@ -899,6 +892,10 @@ class _ActiveBookingCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     final pill = _paymentPill(booking.paymentStatus);
+    final total = booking.totalCustomerIdr;
+    final paid = total - booking.outstandingIdr;
+    final paidClamped = paid < 0 ? 0 : (paid > total ? total : paid);
+    final paidRatio = total <= 0 ? 0.0 : paidClamped / total;
     final slot = booking.firstSlot;
     final eventDate = slot == null ? null : DateTime.tryParse(slot.date);
     final today = DateTime.now();
@@ -1048,6 +1045,27 @@ class _ActiveBookingCard extends StatelessWidget {
                     ),
                   ],
                 ),
+                if (total > 0) ...[
+                  const SizedBox(height: Sp.md),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(Radii.pill),
+                    child: LinearProgressIndicator(
+                      value: paidRatio,
+                      minHeight: 6,
+                      backgroundColor: AppColors.surfaceHigh,
+                      valueColor: const AlwaysStoppedAnimation<Color>(
+                        AppColors.accent,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    paid >= total
+                        ? 'Lunas ${rupiahTight(total)}'
+                        : 'Sudah dibayar ${rupiahTight(paidClamped)} dari ${rupiahTight(total)}',
+                    style: text.bodySmall?.copyWith(color: AppColors.inkMuted),
+                  ),
+                ],
               ],
             ),
           ),

@@ -340,26 +340,32 @@ menerima.
 - **Welcome** (sekali sebelum login): layar gelap `ink`, foto
   `assets/images/welcome_stage.jpg` dengan overlay gradien, brand lockup terang,
   judul "Hiburan panggung untuk acaramu.", tiga poin jaminan (DP ditahan, jadwal &
-  paket jelas, langsung ke vendor via WhatsApp), CTA lime "Mulai cari hiburan", dan
-  tautan "Sudah punya akun?".
-- Login/daftar: satu kolom, padding 20, latar `surface`. Brand lockup (emblem 40 dari
-  `assets/images/logo_mark.png` + wordmark **"Tarlink"** + caption "TANGGAP HIBURAN")
-  dan pil `secondarySoft` "Gerbang Hiburan Pantura". Wordmark aplikasi tetap **Tarlink**.
-- Judul "Masuk atau Daftar" (Headline 26/700) + satu kalimat penjelas.
-- Jalur masuk: **Akun Email** (email + kata sandi, `POST /auth/login`). OTP **email**
-  (`POST /auth/otp/request` → `POST /auth/otp/verify`, ADR 0011) tersedia di API;
-  tab UI-nya belum diimplementasikan, jadi app saat ini hanya menampilkan form email.
-- Field 52 px `card` radius 6, label 12/600 + "Wajib diisi" 11/400 `inkMuted`.
-- Kotak consent `surfaceTint`: checkbox lime **tidak tercentang** secara default
-  (opt-in, bukan opt-out); tautan Syarat & Ketentuan dan Kebijakan Privasi diberi
-  garis bawah (belum ada halaman kebijakan → tanpa aksi).
-- CTA lime penuh tinggi 50, teks `ink` 14/700 + panah. Di bawahnya tautan "Daftar Sekarang".
-- Footer: pil `surfaceTint` dengan ikon perisai, teks "Koneksi ke server dienkripsi
-  HTTPS" — jangan mengklaim "standar perbankan".
-- **Tidak ada** login Google dan "Lupa Kata Sandi?" karena backend belum menyediakannya.
-- Error kredensial: kartu inline di atas CTA, bukan snackbar.
-- Daftar: nama, nomor WA, email, kata sandi. Nomor WA dinormalisasi ke `62…` dan
-  ditampilkan sebagai bantuan kecil di bawah field.
+  paket jelas, langsung ke vendor lewat chat in-app), CTA lime "Mulai cari hiburan",
+  dan tautan "Sudah punya akun?".
+- Login/daftar memakai pola **stage + ticket**: seluruh layar gelap `ink` dengan
+  beam lime statis di header (bukan flat gradient), brand lockup terang, garis lime
+  34×3, judul 31/800 dan satu kalimat penjelas. Form duduk di **kartu tiket**
+  `card` radius 18 dengan garis lime 3 px di sisi atas; tidak ada shadow, jadi
+  field adalah satu-satunya elemen yang "timbul". Komponennya `AuthStage`,
+  `AuthBody`, `AuthCard` di `auth_support.dart`.
+- Field memakai **garis bawah** (`authLineField`), bukan kotak putih: label
+  kapital 10/800 `letterSpacing 1.15`, teks 15, garis fokus 2 px `ink`. Tinggi
+  sentuh tetap ≥ 48.
+- CTA lime tinggi 52, label di kiri dan panah di disc `ink` 28 px di kanan
+  (`AuthSubmitButton`), dipakai Masuk dan Daftar.
+- Login: kartu berisi email + kata sandi + CTA; **di bawah kartu** ada consent
+  (web), tombol Google, tautan "Daftar sekarang", lalu catatan HTTPS.
+- Daftar: kartu berisi nama, email, kata sandi, konfirmasi + CTA; **di bawah
+  kartu** ada consent (S&K/Privasi, opt-in), lalu tombol Google dan tautan
+  "Masuk". Nomor WhatsApp bukan field pendaftaran.
+- Tombol Google hanya dirender bila build diberi
+  `--dart-define=GOOGLE_CLIENT_ID=...` (web) atau `GOOGLE_SERVER_CLIENT_ID`
+  (Android). Di web tombol resmi GIS baru aktif setelah consent dicentang;
+  sebelum itu tampil "Centang persetujuan dulu". Di Android tombol putih memakai
+  aset resmi `assets/images/google_g.png`, bukan huruf "G" yang digambar.
+- **Tidak ada** "Lupa Kata Sandi?" karena backend belum menyediakannya.
+- Error kredensial: baris inline di atas CTA (atau di bawah kartu saat error
+  menyangkut kebijakan), bukan snackbar.
 
 ---
 
@@ -408,8 +414,9 @@ menerima.
 - Data seed: `rating`, `description`, `baseAddress` bisa **null**; `addons` bisa kosong;
   kalender bisa berstatus `stale`. Desain harus tetap utuh tanpa field itu.
 - Media vendor berasal dari kolom API (`avatar_url`, `banner_url`, `photo_urls`,
-  `video_url`). Bila kosong, `PosterTile` memakai blok inisial + gradien; jangan pakai
-  gambar stok baru di UI.
+  `video_url`). Bila kosong, `PosterTile` memakai blok inisial + artwork panggung
+  (ground gelap + satu warna sorot dari hash nama + tekstur halftone + garis footlight);
+  jangan pakai gambar stok baru di UI.
 - Chat memakai `GET/POST /v1/bookings/:id/chat/messages` + `WS /v1/chat/ws`; teks saja,
   tanpa foto/lokasi. WhatsApp deep link hanya cadangan. Notifikasi in-app memakai popup,
   bukan tab.

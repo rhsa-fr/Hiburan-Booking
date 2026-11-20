@@ -45,6 +45,19 @@ describe('buildOpsAlerts', () => {
     expect(view.alerts[0].hint).toContain('Takedown');
   });
 
+  it('treats failed payment webhooks as critical and points to the payments page', () => {
+    const view = buildOpsAlerts(snapshot({ webhooks: { count: 2, oldest_hours: 1 } }), NOW);
+
+    expect(view.status).toBe('critical');
+    expect(view.alerts[0]).toMatchObject({
+      key: 'webhooks',
+      severity: 'critical',
+      count: 2,
+      href: '/payments'
+    });
+    expect(view.alerts[0].hint).toContain('refund manual');
+  });
+
   it('is attention-only when the only findings are warnings', () => {
     const view = buildOpsAlerts(
       snapshot({

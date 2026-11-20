@@ -200,6 +200,14 @@ Sudah diperbaiki (jangan dikembalikan tanpa keputusan tertulis):
   membatasi kegagalan per IP (in-memory per proses) dan cookie `tarlink_rt` yang
   rusak dihapus pada refresh/logout.
 - E-wallet ditolak eksplisit (400), bukan menghasilkan VA palsu.
+- Ganti metode pembayaran (`POST /payments/abandon`) mengakhiri charge di provider
+  (`POST /v2/{order_id}/expire` untuk Midtrans) **sebelum** baris lokal jadi `failed`.
+  Bila provider tidak bisa memastikan tagihan berakhir, tagihan tetap `pending`
+  supaya tidak ada dua tagihan yang sama-sama bisa dibayar. Pembayaran telat untuk
+  tagihan yang sudah dilepas tetap diterima bila tahap itu belum dibayar dan tidak
+  ada pembayaran lain yang `paid`; tagihan pending lain untuk tahap yang sama
+  ditandai `failed` (`SUPERSEDED_BY_LATE_PAYMENT`). `POST /payments/sync` juga
+  menerapkan status `expired`/`failed` dari provider, bukan hanya `paid`.
 - Payout vendor: `payouts`/`payout_items`, rekening terenkripsi AES-256-GCM, maker-checker
   dua endpoint, jurnal `payout_requested`/`payout_settled` + reversal saat provider gagal,
   dan worker `payout_reconcile`.
@@ -230,6 +238,13 @@ Sudah diperbaiki (jangan dikembalikan tanpa keputusan tertulis):
 - Refund maker-checker (FR-128/FR-133): refund > `REFUND_APPROVAL_THRESHOLD_IDR`
   berhenti di `requested`, disetujui admin lain, menolak self-approval, menyimpan
   `evidence_url`/`review_note`, dan statusnya dapat dibaca pelanggan.
+- Refund manual (migrasi `036`) untuk pembayaran VA/Mandiri yang tidak bisa
+  di-refund Midtrans: `POST /payments/:id/refund/manual` mewajibkan
+  `transfer_ref`, menyimpan `is_manual`/`transferred_at`, memakai
+  `fee_idr=0`/`fee_bearer='platform'`, dan memposting jurnal pengakuan +
+  pencairan. Nominal di atas ambang tetap maker-checker; approve tidak memanggil
+  provider. Panel `/payments` punya tombol **Refund manual**, dan `/ops`
+  menampilkan webhook pembayaran gagal 24 jam.
 - Hapus akun mandiri (FR-101): `DELETE /auth/me` menganonimkan PII, mencabut sesi +
   peran, mencatat `account_deletion_requests`, dan idempoten.
 - Registrasi vendor mandiri (FR-002/FR-003): `vendor_applications`, upload KTP privat
@@ -306,7 +321,8 @@ Sudah diperbaiki (jangan dikembalikan tanpa keputusan tertulis):
   target PRD "push ≤60 detik" tetap belum terpenuhi.
 - Ringkasan kesiapan operasional (`GET /v1/admin/ops/alerts`, panel `/ops` + banner
   dashboard): agregat read-only untuk laporan konten, sengketa, temuan/run rekonsiliasi,
-  payout macet, outbox gagal, dan email gagal 24 jam. Semua peran admin boleh membaca;
+  payout macet, outbox gagal, email gagal 24 jam, dan webhook pembayaran gagal 24 jam.
+  Semua peran admin boleh membaca;
   tidak ada PII dan tidak ada mutasi. Ambang ada di SQL (`ops.repository.ts`), label di
   `ops.alerts.ts` (unit test murni); dead letter/outbox yang menetap tetap perlu
   investigasi manual.

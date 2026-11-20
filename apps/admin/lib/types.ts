@@ -735,6 +735,7 @@ export interface EligiblePayout {
     event_title: string | null;
   }>;
   amount_idr: number;
+  payable_idr: number;
   ledger_payable_idr: number;
   minimum_idr: number;
   eligible: boolean;

@@ -270,6 +270,57 @@ describe('AdminService.resolveDispute', () => {
       resolution: 'refund_full'
     });
   });
+
+  it('still resolves the dispute when the refund already moved the booking', async () => {
+    const { service, repository } = harness();
+    // Below the approval threshold the payment module finalizes the refund in
+    // the same request, so `applyRefundSucceeded` has already closed both axes.
+    repository.lockBookings.mockResolvedValueOnce([
+      { ...booking, payment_status: 'refunded', settlement_status: 'not_eligible' }
+    ]);
+
+    const result = await service.resolveDispute(
+      DISPUTE_ID,
+      { resolution: 'refund_full', note: 'Refund penuh sudah dieksekusi provider.' },
+      { actorId: ACTOR, actorRole: 'admin_super', requestId: null }
+    );
+
+    expect(result.refund_id).toBe('refund-1');
+    expect(repository.setBookingRefundStatus).not.toHaveBeenCalled();
+    expect(repository.setBookingSettlement).not.toHaveBeenCalled();
+    expect(repository.insertStatusHistory).not.toHaveBeenCalled();
+    expect(repository.markDisputeResolved).toHaveBeenCalledTimes(1);
+    expect(repository.enqueueDisputeResolved).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes only the settlement when a partial refund already changed the payment axis', async () => {
+    const { service, repository } = harness();
+    repository.lockBookings.mockResolvedValueOnce([
+      { ...booking, payment_status: 'partially_refunded' }
+    ]);
+
+    await service.resolveDispute(
+      DISPUTE_ID,
+      { resolution: 'refund_partial', amount_idr: 1_000_000, note: 'Refund sebagian disepakati.' },
+      { actorId: ACTOR, actorRole: 'admin_super', requestId: null }
+    );
+
+    expect(repository.setBookingRefundStatus).not.toHaveBeenCalled();
+    expect(repository.setBookingSettlement).toHaveBeenCalledWith(expect.anything(), {
+      bookingId: BOOKING_ID,
+      settlementStatus: 'not_eligible'
+    });
+    expect(repository.insertStatusHistory).toHaveBeenCalledTimes(1);
+    expect(repository.insertStatusHistory).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        axis: 'settlement',
+        from: 'disputed',
+        to: 'not_eligible',
+        event: 'dispute.resolved_refund'
+      })
+    );
+  });
 });
 
 describe('AdminService clawback (FR-122)', () => {

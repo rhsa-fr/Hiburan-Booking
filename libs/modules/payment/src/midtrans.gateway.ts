@@ -304,7 +304,16 @@ export class MidtransGateway implements PaymentGateway {
       if (!url) {
         throw new AppError('UPSTREAM_ERROR', 'Midtrans tidak mengembalikan URL kode QR');
       }
-      return { type: 'qris', qr_url: url, expires_at: expiresAt };
+      // `qr_string` ikut disimpan supaya klien bisa merender QR sendiri.
+      // Gambar dari merchants-app.sbx.midtrans.com tidak mengirim header CORS,
+      // jadi build web gagal memuatnya lewat Image.network.
+      const qrString = text(response.qr_string);
+      return {
+        type: 'qris',
+        qr_url: url,
+        qr_string: qrString || undefined,
+        expires_at: expiresAt
+      };
     }
 
     if (input.method === 'va_mandiri') {
@@ -339,6 +348,105 @@ export class MidtransGateway implements PaymentGateway {
       expiry_duration: Math.max(1, Math.ceil(seconds / 60)),
       unit: 'minute'
     };
+  }
+
+  /**
+   * Ambil status transaksi langsung dari Midtrans.
+   *
+   * Dipakai untuk development di localhost: webhook Midtrans tidak bisa
+   * menjangkau `localhost`, jadi status ditarik aktif oleh server.
+   */
+  async fetchStatus(orderId: string): Promise<JsonRecord> {
+    const authorization = `Basic ${Buffer.from(`${this.serverKey}:`).toString('base64')}`;
+    let response: Response;
+    try {
+      response = await this.fetchImpl(
+        `${this.baseUrl}/v2/${encodeURIComponent(orderId)}/status`,
+        {
+          method: 'GET',
+          headers: { Accept: 'application/json', Authorization: authorization }
+        }
+      );
+    } catch (error) {
+      throw new AppError('UPSTREAM_ERROR', 'Midtrans tidak dapat dihubungi', {
+        cause: error instanceof Error ? error.message : String(error)
+      });
+    }
+
+    const raw = await response.text();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new AppError('UPSTREAM_ERROR', 'Respons status Midtrans bukan JSON', {
+        status: response.status,
+        body: raw.slice(0, 500)
+      });
+    }
+    if (!isRecord(parsed)) {
+      throw new AppError('UPSTREAM_ERROR', 'Respons status Midtrans tidak dikenali', {
+        status: response.status
+      });
+    }
+    if (!response.ok) {
+      throw new AppError('UPSTREAM_ERROR', this.errorMessage(parsed, 'Midtrans menolak cek status'), {
+        status: response.status
+      });
+    }
+    return parsed;
+  }
+
+  /**
+   * Mengakhiri transaksi pending lewat `POST /v2/{order_id}/expire`.
+   *
+   * Dipakai sebelum pelanggan mengganti metode pembayaran: tanpa ini VA/QRIS
+   * lama tetap bisa dibayar sampai kedaluwarsa, padahal baris `payments` sudah
+   * dilepas dan webhook pembayarannya akan diabaikan.
+   *
+   * Midtrans menjawab 412 bila status transaksi sudah bukan `pending`. Karena
+   * itu kegagalan diperiksa ulang lewat `GET /status`: `expire` berarti aman,
+   * `settlement`/`capture` berarti tagihan sudah dibayar dan tidak boleh
+   * dilepas. Status lain (atau kegagalan yang tidak jelas) dilempar kembali
+   * supaya pemanggil tidak menandai tagihan sebagai gagal.
+   */
+  async expireCharge(orderId: string): Promise<void> {
+    try {
+      const parsed = await this.request(`/v2/${encodeURIComponent(orderId)}/expire`, {});
+      const status = text(parsed.transaction_status);
+      const code = text(parsed.status_code);
+      if (status === 'settlement' || status === 'capture') {
+        throw new AppError('CONFLICT', 'Pembayaran sudah diterima; tagihan tidak bisa dibatalkan.', {
+          transaction_status: status
+        });
+      }
+      if (status === 'expire' || code === '407') return;
+      // Midtrans can answer HTTP 200 with a body-level 412; the transaction was
+      // not expired, so fall through to the status re-check instead of
+      // reporting success.
+      throw new AppError(
+        'UPSTREAM_ERROR',
+        this.errorMessage(parsed, 'Midtrans tidak mengakhiri tagihan.'),
+        { status_code: code, transaction_status: status }
+      );
+    } catch (error) {
+      const fetched = await this.fetchStatus(orderId).catch(() => null);
+      const status = fetched ? text(fetched.transaction_status) : '';
+      const code = fetched ? text(fetched.status_code) : '';
+      if (status === 'expire') return;
+      if (status === 'settlement' || status === 'capture') {
+        throw new AppError('CONFLICT', 'Pembayaran sudah diterima; tagihan tidak bisa dibatalkan.', {
+          transaction_status: status
+        });
+      }
+      if (code === '404') return;
+      if (status === '') {
+        const details = error instanceof AppError ? error.details : undefined;
+        const httpStatus = isRecord(details) ? details.status : undefined;
+        // 404 = transaksi tidak dikenal provider; tidak ada yang bisa dibayar.
+        if (httpStatus === 404) return;
+      }
+      throw error;
+    }
   }
 
   private async request(path: string, body: JsonRecord): Promise<JsonRecord> {

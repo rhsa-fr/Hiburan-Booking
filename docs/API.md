@@ -556,16 +556,21 @@ sampai gateway menyediakan instruksi deeplink; jangan ditawarkan di UI.
 
 ```json
 {
-  "payment": { "id": "uuid", "status": "pending", "amount_idr": 1500000,
-               "method": "va_bca", "expires_at": "…", "paid_at": null },
-  "instruction": { "type": "va", "bank": "BCA", "va_number": "8808…", "expires_at": "…" }
+  "id": "uuid", "booking_id": "uuid", "kind": "dp", "status": "pending",
+  "amount_idr": 1500000, "currency": "IDR", "method": "va_bca",
+  "provider": "midtrans", "provider_ref": "uuid", "expires_at": "…",
+  "payment_instruction": {
+    "type": "va", "bank": "BCA", "va_number": "8808…", "expires_at": "…"
+  }
 }
 ```
 
 Bentuk `instruction` per rail:
 
-- QRIS Midtrans: `{ "type": "qris", "qr_url": "https://…/qr-code", "expires_at": "…" }`
-  (`qr_url` adalah gambar PNG; klien merender dengan `Image.network`).
+- QRIS Midtrans: `{ "type": "qris", "qr_url": "https://…/qr-code", "qr_string": "<payload EMV>", "expires_at": "…" }`.
+  `qr_string` hanya ada bila Midtrans mengirimkannya; klien **mendahulukan**
+  `qr_string` (render QR lokal) dan memakai `qr_url` sebagai cadangan karena
+  gambar `merchants-app.*.midtrans.com` tidak mengirim header CORS.
 - QRIS gateway lokal: `{ "type": "qris", "qr_string": "…", "expires_at": "…" }`.
 - VA BCA/BNI/BRI: `{ "type": "va", "bank": "BCA", "va_number": "…", "expires_at": "…" }`.
 - Mandiri Bill: `{ "type": "va", "bank": "MANDIRI", "va_number": "<bill_key>",
@@ -599,6 +604,48 @@ Bentuk respons sama dengan DP (`payment` + `payment_instruction`).
 Mengembalikan tagihan pelunasan terakhir untuk booking. `404` bila belum ada tagihan pelunasan.
 Wajib bearer token dan divalidasi kepemilikan booking.
 
+### `POST /payments/abandon`
+
+Melepas tagihan `pending` milik pelanggan supaya ia bisa memilih metode lain.
+
+```json
+{ "booking_id": "uuid", "kind": "dp" }
+```
+
+`kind`: `dp` atau `settlement`. Respons: `{ "data": { "cancelled": true, "payment_id": "uuid" } }`
+atau `{ "data": { "cancelled": false, "payment_id": null } }` bila tidak ada tagihan aktif.
+
+Urutan server:
+
+1. tagihan diakhiri di provider (`POST /v2/{order_id}/expire` untuk Midtrans)
+   **sebelum** baris lokal diubah menjadi `failed` (`failure_code=METHOD_SWITCHED`);
+2. bila provider tidak bisa memastikan tagihan berakhir, respons error dan tagihan
+   tetap `pending` — jangan pernah meninggalkan dua tagihan yang sama-sama bisa dibayar;
+3. tagihan yang sudah dibayar dijawab `409 CONFLICT` (perubahan metode setelah
+   pembayaran berarti refund, bukan switch);
+4. bila pembayaran masuk saat proses berjalan, server menolak pelepasan.
+
+Pembayaran yang telat masuk untuk tagihan yang sudah dilepas tetap diterima
+sebagai pembayaran sah **bila** tahap itu belum dibayar dan tidak ada pembayaran
+lain yang sudah `paid`; tagihan pending lain untuk tahap yang sama ditandai
+`failed` (`SUPERSEDED_BY_LATE_PAYMENT`). Bila sudah ada pembayaran lain, webhook
+dicatat `failed` untuk ditindaklanjuti manual (jangan diam-diam diabaikan).
+
+### `POST /payments/sync`
+
+Menarik status terakhir ke provider dan menerapkannya lewat jalur yang sama
+dengan webhook. Dipakai klien saat webhook tidak bisa menjangkau server
+(mis. `localhost`); di produksi webhook tetap jalur utama.
+
+```json
+{ "booking_id": "uuid", "kind": "dp" }
+```
+
+Respons: `{ "data": { "status": "paid|pending|expired|failed|none", "updated": true } }`.
+Status `expired`/`failed` dari provider menandai tagihan lokal dengan status yang
+sama sehingga instruksi lama tidak lagi tampil sebagai tagihan aktif. Hanya
+pemilik booking yang boleh memanggil; booking orang lain dijawab `403`.
+
 ### `POST /payments/:id/refund`
 
 Peran `admin_finance` / `admin_super`. Body: `{ amount_idr, reason, evidence_url? }`.
@@ -611,8 +658,50 @@ Refund pada atau di bawah ambang dieksekusi langsung seperti sebelumnya.
 
 Untuk Midtrans, refund QRIS dipanggil ke `POST /v2/{order_id}/refund` dengan
 `refund_key` = id refund, lalu status refund langsung difinalkan (`succeeded`) dan
-jurnal `refund_disbursed` diposting. **Refund VA/Mandiri ditolak** karena Midtrans
-tidak mendukung refund bank transfer; catat transfer manual.
+jurnal `refund_disbursed` diposting. **Refund VA/Mandiri tidak didukung gateway**;
+gunakan `POST /payments/:id/refund/manual` di bawah.
+
+Refund yang `succeeded` selalu ikut memindahkan status pembayaran booking:
+
+- Booking yang masih berjalan (`confirmed`/`in_progress`) menjadi
+  `partially_refunded`, meskipun seluruh DP dikembalikan; booking belum selesai,
+  jadi tidak boleh tampil `refunded`.
+- Booking yang sudah selesai/dibatalkan dan seluruh uangnya dikembalikan sebelum
+  dana dilepas menjadi `refunded` + settlement `not_eligible` (transisi P-04/P-09).
+- Booking yang dananya sudah `released` tetap `partially_refunded`; penarikan
+  dana setelah pencairan adalah jalur clawback, bukan refund.
+- Status ditulis dalam transaksi yang sama dengan jurnal, jadi refund gagal
+  (mis. provider menolak) tidak pernah mengubah booking.
+
+### `POST /payments/:id/refund/manual`
+
+Peran `admin_finance` / `admin_super`. Untuk pembayaran yang tidak bisa di-refund
+provider (VA/Mandiri), admin mencatat transfer bank:
+
+```json
+{
+  "amount_idr": 1500000,
+  "reason": "Pembatalan acara, transfer balik via BCA",
+  "transfer_ref": "TRF-20261117-001",
+  "transferred_at": "2026-11-17T10:30:00.000Z",
+  "evidence_url": "https://…"
+}
+```
+
+Aturan:
+- `payment` harus `paid`; nominal tidak boleh melebihi sisa yang belum di-refund.
+- `fee_idr` selalu `0` dan `fee_bearer='platform'`: biaya gateway tidak
+  dipotong dari uang pelanggan.
+- Nominal **> `REFUND_APPROVAL_THRESHOLD_IDR`** berhenti di `requested` tanpa
+  jurnal; admin lain menyetujui lewat `POST /payments/refunds/:id/approve`.
+  Approver wajib berbeda dari pencatat transfer.
+- Nominal di bawah ambang langsung `succeeded` dan memposting jurnal
+  `refund_full_recognized`/`refund_partial_recognized` + `refund_disbursed`
+  dalam satu transaksi.
+- `transfer_ref` wajib; `transferred_at` default waktu server.
+- Respons refund menyertakan `is_manual`, `transfer_ref`, dan `transferred_at`.
+  `POST /payments/refunds/:id/approve` tidak memanggil provider untuk refund
+  manual; ia memfinalkan jurnal dan status.
 
 ### `GET /payments/refunds`
 
@@ -1296,14 +1385,29 @@ Payout bersifat **admin-initiated**: vendor hanya mengelola rekening tujuan. Nom
 dihitung server dari booking `released` yang belum masuk payout lain, lalu dicek
 terhadap saldo ledger `vendor_payable` (2120).
 
+`GET /admin/payouts/eligible?vendor_id=...` mengembalikan dua angka yang berbeda:
+
+- `amount_idr` — total hak vendor dari seluruh booking released yang belum dicairkan;
+- `payable_idr` — bagian yang benar-benar bisa dicairkan, yaitu booking tertua
+  (urut `released_at`) yang **seluruhnya** tertutup saldo ledger. Payout beroperasi
+  per booking utuh, jadi booking yang nominalnya melebihi saldo dilewati, bukan
+  dibayar sebagian.
+
+Bila saldo 2120 negatif karena clawback, `payable_idr` bisa 0 dan `eligible: false`
+dengan alasan `Hak vendor Rp… belum bisa dicairkan: saldo 2120 Rp… (tertahan
+clawback/sengketa)`. Saldo positif dari release berikutnya otomatis dipakai, jadi
+utang clawback memotong payout berikutnya, bukan membekukannya selamanya.
+
 `POST /admin/payouts` (peran `admin_finance`/`admin_super`, header `Idempotency-Key`):
 
 ```json
 { "vendor_id": "uuid", "booking_ids": ["uuid", "uuid"] }
 ```
 
-`booking_ids` opsional; bila dihilangkan, semua booking released yang belum dicairkan
-diambil. Respons berisi `code`, `amount_idr`, `status: "requested"`, `bank`, `items`.
+`booking_ids` opsional; bila dihilangkan, server mengambil subset booking released
+yang tertutup saldo ledger (sama dengan `payable_idr`). Subset eksplisit yang
+nominalnya melebihi saldo dijawab `409`. Respons berisi `code`, `amount_idr`,
+`status: "requested"`, `bank`, `items`.
 
 `POST /admin/payouts/:id/approve` (checker berbeda dari pembuat, header
 `Idempotency-Key`): memposting jurnal `payout_requested` lalu memanggil provider.
@@ -1354,9 +1458,14 @@ putusan memicu refund.
   sebagai `rejected`.
 - `refund_full` — refund seluruh pembayaran DP yang sudah dibayar. Refund
   dieksekusi lebih dulu ke provider; bila provider menolak, sengketa tetap
-  terbuka.
+  terbuka. Bila refund langsung final (nominal di bawah ambang persetujuan),
+  modul payment sudah memindahkan booking ke `refunded`/`not_eligible`; penutupan
+  sengketa kemudian hanya mencatat keputusan tanpa menulis ulang status itu,
+  sehingga tidak ada respons `409` setelah uang keluar.
 - `refund_partial` — wajib menyertakan `amount_idr` dan nilainya harus lebih
-  kecil dari nilai pembayaran.
+  kecil dari nilai pembayaran. Bila refund sudah final, hanya settlement yang
+  ditutup (`disputed → not_eligible`) dan riwayat status pembayaran tidak
+  ditulis dua kali.
 
 Respons memuat `status`, `resolution`, `resolution_amount_idr`,
 `customer_share_idr`, `vendor_share_idr`, dan `journal_entry_id`/`refund_id`
@@ -1395,8 +1504,11 @@ maksimal 30 hari setelah `released_at`. Dua langkah, wajib admin berbeda:
 
 `GET /admin/disputes` menyertakan objek `clawback` (`id`, `status`,
 `amount_idr`, `request_note`, `requested_by_name`, `requested_at`) atau `null`.
-Saldo `vendor_payable` yang negatif otomatis memotong payout berikutnya karena
-payout membaca saldo ledger.
+Saldo `vendor_payable` yang negatif otomatis memotong payout berikutnya: nominal
+payout dibatasi `payable_idr` (lihat bagian Payout vendor), sehingga utang clawback
+harus tertutup dulu oleh release baru sebelum ada booking yang bisa dicairkan.
+Booking released yang haknya habis terserap utang tetap tampil di daftar eligible
+(`amount_idr`) tetapi tidak masuk `payable_idr` sampai saldo kembali positif.
 
 ### `GET/PUT /admin/vendors/:id/categories`
 
@@ -1523,7 +1635,8 @@ Respons (`200 OK`):
     "reconciliation_runs": { "count": 0, "oldest_hours": null },
     "payouts": { "count": 0, "oldest_hours": null },
     "outbox": { "count": 1, "oldest_hours": 3 },
-    "email": { "count": 0, "oldest_hours": null }
+    "email": { "count": 0, "oldest_hours": null },
+    "webhooks": { "count": 0, "oldest_hours": null }
   }
 }
 ```

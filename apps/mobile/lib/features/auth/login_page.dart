@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import '../../app/app.dart';
@@ -6,6 +7,8 @@ import '../../app/theme.dart';
 import '../../core/api_exception.dart';
 import '../../core/ui.dart';
 import 'auth_support.dart';
+import 'google_auth.dart';
+import 'google_button.dart';
 
 /// Login / daftar, rebuilt from the Stitch "Masuk atau Daftar" screen:
 /// lavender canvas, terracotta CTA, 52 px white fields.
@@ -24,6 +27,11 @@ class _LoginPageState extends State<LoginPage> {
 
   bool _obscure = true;
   bool _loading = false;
+  bool _googleLoading = false;
+
+  /// Persetujuan S&K untuk jalur web: diambil sebelum popup Google supaya
+  /// popup tidak terputus dialog.
+  bool _webConsent = false;
   String? _error;
 
   @override
@@ -84,67 +92,130 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
+  /// FR-103: akun Google pertama kali adalah pendaftaran, jadi versi kebijakan
+  /// aktif harus disetujui. Akun yang sudah ada tidak terpengaruh.
+  Future<bool> _confirmGoogleConsent() async {
+    final agreed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Masuk dengan Google'),
+        content: const Text(
+          'Dengan melanjutkan, kamu menyetujui Syarat & Ketentuan serta '
+          'Kebijakan Privasi Tarlink yang berlaku.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Batal'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Setuju & lanjut'),
+          ),
+        ],
+      ),
+    );
+    return agreed ?? false;
+  }
+
+  Future<void> _signInWithGoogle() async {
+    if (_loading || _googleLoading) return;
+    setState(() => _error = null);
+
+    if (!GoogleAuth.isConfigured) {
+      setState(
+        () => _error =
+            'Login Google belum dikonfigurasi pada build ini '
+            '(GOOGLE_CLIENT_ID kosong).',
+      );
+      return;
+    }
+
+    if (!await _confirmGoogleConsent()) return;
+    if (!mounted) return;
+    setState(() => _googleLoading = true);
+
+    try {
+      final idToken = await GoogleAuth.idToken();
+      if (idToken == null || idToken.isEmpty) {
+        throw const ApiException(
+          code: 'UNAUTHENTICATED',
+          message: 'Google tidak mengirim ID token.',
+        );
+      }
+      await _finishGoogleSignIn(idToken);
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() => _error = authErrorMessage(error));
+    } catch (error) {
+      // Jangan telan penyebabnya: kode GoogleSignInException menentukan apakah
+      // ini konfigurasi client, origin, atau pengguna menutup popup.
+      debugPrint('google sign-in gagal: $error');
+      if (!mounted) return;
+      setState(() => _error = _googleErrorMessage(error));
+    } finally {
+      if (mounted) setState(() => _googleLoading = false);
+    }
+  }
+
+  /// Jalur web: token datang dari tombol GIS resmi yang dirender browser,
+  /// karena `authenticate()` tidak didukung di platform web.
+  ///
+  /// Persetujuan S&K diambil sebelum tombol Google ditekan (lihat checkbox di
+  /// UI). Jangan menampilkan dialog di sini: dialog saat popup GIS menutup
+  /// memutus postMessage dan membuat pengguna harus klik dua kali.
+  Future<void> _handleWebGoogleToken(String? idToken) async {
+    if (_googleLoading) return;
+    if (idToken == null || idToken.isEmpty) {
+      setState(() => _error = 'Google tidak mengirim ID token.');
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _error = null;
+      _googleLoading = true;
+    });
+    try {
+      await _finishGoogleSignIn(idToken);
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() => _error = authErrorMessage(error));
+    } catch (error) {
+      debugPrint('google sign-in gagal: $error');
+      if (!mounted) return;
+      setState(() => _error = _googleErrorMessage(error));
+    } finally {
+      if (mounted) setState(() => _googleLoading = false);
+    }
+  }
+
+  /// Menukar ID token Google menjadi sesi Tarlink. Dipakai web dan mobile.
+  Future<void> _finishGoogleSignIn(String idToken) async {
+    await finishGoogleSignIn(context, idToken);
+    if (!mounted) return;
+    _goHome();
+  }
+
+  String _googleErrorMessage(Object error) => googleAuthErrorMessage(error);
+
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     final notice = AppScope.of(context).session.notice;
-    final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
 
     return Scaffold(
-      body: SafeArea(
-        bottom: false,
-        child: SingleChildScrollView(
-          padding: EdgeInsets.fromLTRB(20, Sp.md, 20, Sp.xl + bottomInset),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 460),
+      backgroundColor: AppColors.ink,
+      body: Column(
+        children: [
+          const AuthStage(
+            title: 'Masuk atau Daftar',
+            subtitle: 'Lanjutkan booking, pantau jadwal, dan chat vendor.',
+          ),
+          Expanded(
+            child: AuthBody(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Row(
-                    children: [
-                      const BrandLockup(),
-                      const SizedBox(width: Sp.md),
-                      Flexible(
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 5,
-                          ),
-                          decoration: BoxDecoration(
-                            color: AppColors.secondarySoft,
-                            borderRadius: BorderRadius.circular(Radii.pill),
-                          ),
-                          child: Text(
-                            'Gerbang Hiburan Pantura',
-                            style: text.labelSmall?.copyWith(
-                              color: AppColors.onSecondaryContainer,
-                              fontWeight: FontWeight.w600,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: Sp.xl),
-                  Text(
-                    'Masuk atau Daftar',
-                    style: text.headlineSmall?.copyWith(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -0.4,
-                    ),
-                  ),
-                  const SizedBox(height: Sp.xs),
-                  Text(
-                    'Pesan hiburan hajatan & kelola jadwal manggung dengan aman, cepat, dan transparan.',
-                    style: text.bodyMedium?.copyWith(
-                      color: AppColors.inkMuted,
-                      height: 1.45,
-                    ),
-                  ),
-                  const SizedBox(height: Sp.xl),
                   if (notice != null) ...[
                     InfoStrip(
                       message: notice,
@@ -153,77 +224,143 @@ class _LoginPageState extends State<LoginPage> {
                     ),
                     const SizedBox(height: Sp.md),
                   ],
-                  _buildEmailForm(text),
-                  const SizedBox(height: Sp.xl),
-                  Center(
-                    child: Wrap(
-                      alignment: WrapAlignment.center,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        Text(
-                          'Belum punya akun Sahibul Hajat / Seniman? ',
-                          style: text.bodyMedium?.copyWith(
-                            color: AppColors.inkMuted,
-                          ),
-                        ),
-                        TextButton(
-                          onPressed: _loading
-                              ? null
-                              : () => Navigator.pushNamed(
-                                  context,
-                                  Routes.register,
-                                ),
-                          style: TextButton.styleFrom(
-                            minimumSize: const Size(0, 40),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: Sp.xs,
-                            ),
-                            textStyle: text.bodyMedium?.copyWith(
-                              color: AppColors.primary,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          child: const Text('Daftar Sekarang'),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: Sp.sm),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: Sp.md,
-                      vertical: Sp.sm,
-                    ),
-                    decoration: BoxDecoration(
-                      color: AppColors.surfaceTint,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(
-                          Icons.verified_user_outlined,
-                          size: 16,
-                          color: AppColors.secondary,
-                        ),
-                        const SizedBox(width: Sp.sm),
-                        Flexible(
-                          child: Text(
-                            'Koneksi ke server dienkripsi HTTPS',
-                            style: text.labelSmall?.copyWith(
-                              color: AppColors.inkMuted,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+                  AuthCard(children: [_buildEmailForm(text)]),
+                  if (GoogleAuth.isConfigured) ...[
+                    const SizedBox(height: 18),
+                    if (kIsWeb) ...[
+                      AuthConsentBox(
+                        value: _webConsent,
+                        onChanged: (_loading || _googleLoading)
+                            ? null
+                            : (value) =>
+                                  setState(() => _webConsent = value ?? false),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    _googleButton(text),
+                  ],
+                  const SizedBox(height: 18),
+                  _registerLink(text),
+                  const SizedBox(height: 14),
+                  _securityNote(text),
                 ],
               ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _registerLink(TextTheme text) {
+    return Wrap(
+      alignment: WrapAlignment.center,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        Text(
+          'Belum punya akun?',
+          style: text.bodyMedium?.copyWith(
+            color: Colors.white.withValues(alpha: 0.60),
+          ),
         ),
+        TextButton(
+          onPressed: _loading
+              ? null
+              : () => Navigator.pushNamed(context, Routes.register),
+          style: TextButton.styleFrom(
+            minimumSize: const Size(0, 44),
+            padding: const EdgeInsets.symmetric(horizontal: Sp.sm),
+            foregroundColor: AppColors.lime,
+            disabledForegroundColor: Colors.white.withValues(alpha: 0.38),
+            textStyle: text.bodyMedium?.copyWith(fontWeight: FontWeight.w800),
+          ),
+          child: const Text('Daftar sekarang'),
+        ),
+      ],
+    );
+  }
+
+  Widget _securityNote(TextTheme text) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(
+          Icons.lock_outline,
+          size: 13,
+          color: Colors.white.withValues(alpha: 0.32),
+        ),
+        const SizedBox(width: 6),
+        Flexible(
+          child: Text(
+            'Koneksi ke server dienkripsi HTTPS',
+            textAlign: TextAlign.center,
+            style: text.labelSmall?.copyWith(
+              fontSize: 10.5,
+              color: Colors.white.withValues(alpha: 0.32),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _googleButton(TextTheme text) {
+    if (kIsWeb) {
+      if (!_webConsent) {
+        return SizedBox(
+          height: 52,
+          child: OutlinedButton(
+            onPressed: null,
+            style: OutlinedButton.styleFrom(
+              side: BorderSide(color: Colors.white.withValues(alpha: 0.18)),
+              foregroundColor: Colors.white,
+              disabledForegroundColor: Colors.white.withValues(alpha: 0.55),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            child: const Text('Centang persetujuan dulu'),
+          ),
+        );
+      }
+      return IgnorePointer(
+        ignoring: _loading || _googleLoading,
+        child: Opacity(
+          opacity: (_loading || _googleLoading) ? 0.5 : 1,
+          child: GoogleSignInWebButton(onIdToken: _handleWebGoogleToken),
+        ),
+      );
+    }
+    return SizedBox(
+      height: 52,
+      child: OutlinedButton(
+        onPressed: (_loading || _googleLoading) ? null : _signInWithGoogle,
+        style: OutlinedButton.styleFrom(
+          backgroundColor: Colors.white,
+          foregroundColor: AppColors.ink,
+          side: const BorderSide(color: Colors.white),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+        ),
+        child: _googleLoading
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Image.asset(
+                    'assets/images/google_g.png',
+                    width: 18,
+                    height: 18,
+                  ),
+                  const SizedBox(width: 10),
+                  const Text('Lanjutkan dengan Google'),
+                ],
+              ),
       ),
     );
   }
@@ -236,8 +373,8 @@ class _LoginPageState extends State<LoginPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const _FieldLabel(label: 'Alamat Email', trailing: 'Wajib diisi'),
-            const SizedBox(height: 6),
+            const AuthFieldLabel('Alamat email'),
+            const SizedBox(height: 4),
             TextFormField(
               controller: _email,
               keyboardType: TextInputType.emailAddress,
@@ -245,8 +382,8 @@ class _LoginPageState extends State<LoginPage> {
               autofillHints: const [AutofillHints.email],
               autocorrect: false,
               enableSuggestions: false,
-              style: text.bodyMedium,
-              decoration: authField(
+              style: text.bodyLarge?.copyWith(fontWeight: FontWeight.w500),
+              decoration: authLineField(
                 hint: 'contoh@tarlink.id',
                 prefixIcon: const AuthFieldIcon(Icons.alternate_email),
               ),
@@ -255,8 +392,8 @@ class _LoginPageState extends State<LoginPage> {
               onFieldSubmitted: (_) => _passwordFocus.requestFocus(),
             ),
             const SizedBox(height: Sp.lg),
-            const _FieldLabel(label: 'Kata Sandi'),
-            const SizedBox(height: 6),
+            const AuthFieldLabel('Kata sandi'),
+            const SizedBox(height: 4),
             TextFormField(
               controller: _password,
               focusNode: _passwordFocus,
@@ -264,8 +401,8 @@ class _LoginPageState extends State<LoginPage> {
               keyboardType: TextInputType.visiblePassword,
               textInputAction: TextInputAction.done,
               autofillHints: const [AutofillHints.password],
-              style: text.bodyMedium,
-              decoration: authField(
+              style: text.bodyLarge?.copyWith(fontWeight: FontWeight.w500),
+              decoration: authLineField(
                 hint: 'Minimal 8 karakter',
                 prefixIcon: const AuthFieldIcon(Icons.lock_outline),
                 suffixIcon: IconButton(
@@ -280,10 +417,6 @@ class _LoginPageState extends State<LoginPage> {
                         : Icons.visibility_off_outlined,
                     size: 20,
                   ),
-                  constraints: const BoxConstraints(
-                    minWidth: 48,
-                    minHeight: 48,
-                  ),
                 ),
               ),
               validator: passwordError,
@@ -295,111 +428,29 @@ class _LoginPageState extends State<LoginPage> {
               children: [
                 const Icon(
                   Icons.info_outline,
-                  size: 15,
-                  color: AppColors.inkMuted,
+                  size: 14,
+                  color: AppColors.muted2,
                 ),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
                     'Gunakan kombinasi minimal huruf dan angka.',
-                    style: text.bodySmall,
+                    style: text.labelSmall?.copyWith(
+                      fontSize: 11,
+                      color: AppColors.muted2,
+                    ),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: Sp.lg),
             if (_error != null) AuthInlineError(_error!),
-            const SizedBox(height: Sp.md),
-            _SubmitButton(
+            const SizedBox(height: Sp.lg),
+            AuthSubmitButton(
               label: 'Masuk ke Akun',
               loadingLabel: 'Sedang masuk…',
               loading: _loading,
               onPressed: _submit,
             ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _FieldLabel extends StatelessWidget {
-  const _FieldLabel({required this.label, this.trailing});
-
-  final String label;
-  final String? trailing;
-
-  @override
-  Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            label,
-            style: text.labelMedium?.copyWith(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: AppColors.ink,
-            ),
-          ),
-        ),
-        if (trailing != null)
-          Text(
-            trailing!,
-            style: text.bodySmall?.copyWith(
-              fontSize: 11,
-              color: AppColors.inkMuted,
-            ),
-          ),
-      ],
-    );
-  }
-}
-
-class _SubmitButton extends StatelessWidget {
-  const _SubmitButton({
-    required this.label,
-    required this.loadingLabel,
-    required this.loading,
-    required this.onPressed,
-  });
-
-  final String label;
-  final String loadingLabel;
-  final bool loading;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 52,
-      child: FilledButton(
-        onPressed: loading ? null : onPressed,
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            if (loading) ...[
-              const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: AppColors.onPrimary,
-                ),
-              ),
-              const SizedBox(width: Sp.sm),
-            ],
-            Flexible(
-              child: Text(
-                loading ? loadingLabel : label,
-                textAlign: TextAlign.center,
-              ),
-            ),
-            if (!loading) ...[
-              const SizedBox(width: Sp.sm),
-              const Icon(Icons.arrow_forward, size: 20),
-            ],
           ],
         ),
       ),

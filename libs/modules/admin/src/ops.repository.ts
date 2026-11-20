@@ -13,6 +13,7 @@
  * - payouts: `processing` for over 1 hour, or `approved` for over 24 hours
  * - outbox: `failed`/`dead` (the relay keeps retrying)
  * - email deliveries: `failed` within the last 24 hours
+ * - payment webhooks: `failed` within the last 24 hours (money received but not applied)
  *
  * `oldest_hours` is rounded **up** so a queue that just crossed its deadline
  * reads "1 jam", never "0 jam". An empty queue returns 0 and NULL.
@@ -103,6 +104,14 @@ SELECT 'email' AS key,
  WHERE channel = 'email'
    AND status = 'failed'
    AND updated_at > now() - interval '24 hours'
+UNION ALL
+SELECT 'webhooks' AS key,
+       count(*)::int AS count,
+       COALESCE(ceil(EXTRACT(EPOCH FROM (now() - min(received_at))) / 3600), 0)::int
+         AS oldest_hours
+  FROM webhook_events
+ WHERE status = 'failed'
+   AND received_at > now() - interval '24 hours'
 ORDER BY key
 `;
 

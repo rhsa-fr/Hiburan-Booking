@@ -199,6 +199,103 @@ void main() {
     await _dispose(tester);
   });
 
+  testWidgets('changing the payment method abandons the pending charge', (
+    tester,
+  ) async {
+    var abandoned = false;
+    await _pumpStatus(tester, (request) async {
+      final path = request.url.path;
+      if (request.method == 'POST' && path.endsWith('/payments/dp')) {
+        return _json({
+          'data': {
+            'id': '11111111-1111-4111-8111-111111111111',
+            'status': 'pending',
+            'amount_idr': 1500000,
+            'method': 'va_bca',
+            'expires_at': '2026-12-05T10:00:00.000Z',
+            'payment_instruction': {
+              'type': 'va',
+              'va_number': '8808123456789012',
+              'bank': 'bca',
+              'expires_at': '2026-12-05T10:00:00.000Z',
+            },
+          },
+        }, 201);
+      }
+      if (request.method == 'POST' && path.endsWith('/payments/abandon')) {
+        abandoned = true;
+        return _json({
+          'data': {
+            'cancelled': true,
+            'payment_id': '11111111-1111-4111-8111-111111111111',
+          },
+        }, 200);
+      }
+      if (path.endsWith('/payments/by-booking/$_bookingId')) {
+        return _json({
+          'error': {'code': 'NOT_FOUND', 'message': 'Belum ada tagihan DP'},
+        }, 404);
+      }
+      return _json({'data': _booking()}, 200);
+    });
+
+    await tester.tap(find.text('BCA Virtual Account'));
+    await tester.pump();
+    await tester.tap(find.widgetWithText(PrimaryButton, 'Bayar DP'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.text('8808123456789012'), findsOneWidget);
+
+    await tester.tap(find.text('Ganti metode pembayaran'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(abandoned, isTrue);
+    expect(find.text('8808123456789012'), findsNothing);
+    expect(find.widgetWithText(PrimaryButton, 'Bayar DP'), findsOneWidget);
+
+    await _dispose(tester);
+  });
+
+  testWidgets('shows the refund status, including a manual transfer reference', (
+    tester,
+  ) async {
+    await _pumpStatus(tester, (request) async {
+      final path = request.url.path;
+      if (path.endsWith('/payments/refunds/by-booking/$_bookingId')) {
+        return _json({
+          'data': {
+            'refund': {
+              'id': '22222222-2222-4222-8222-222222222222',
+              'amount_idr': 1234000,
+              'status': 'succeeded',
+              'reason_note': 'Pembatalan acara',
+              'is_manual': true,
+              'transfer_ref': 'TRF-0001',
+              'transferred_at': '2026-11-17T10:00:00.000Z',
+            },
+          },
+        }, 200);
+      }
+      if (path.endsWith('/payments/by-booking/$_bookingId')) {
+        return _json({
+          'error': {'code': 'NOT_FOUND', 'message': 'Belum ada tagihan DP'},
+        }, 404);
+      }
+      return _json({
+        'data': _booking(lifecycle: 'cancelled', payment: 'refunded', outstanding: 0),
+      }, 200);
+    });
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(find.text('Refund'), findsOneWidget);
+    expect(find.text('Selesai'), findsOneWidget);
+    expect(find.text('Rp1.234.000'), findsOneWidget);
+    expect(find.text('Transfer manual · TRF-0001'), findsOneWidget);
+
+    await _dispose(tester);
+  });
+
   testWidgets('list shows Lunas and Sisa Rp 0 for a fully_paid booking', (
     tester,
   ) async {

@@ -210,6 +210,14 @@ export function RefundsView() {
                         Catatan review: {item.review_note}
                       </span>
                     ) : null}
+                    {item.is_manual ? (
+                      <span className="mt-1 block text-xs text-textMuted">
+                        Transfer manual · {item.transfer_ref ?? 'tanpa referensi'}
+                        {item.transferred_at
+                          ? ` · ${formatDateTimeID(item.transferred_at)}`
+                          : ''}
+                      </span>
+                    ) : null}
                   </TableCell>
                   <TableCell>
                     <span className="text-sm text-textMain">

@@ -63,8 +63,26 @@ const RefundBody = z.object({
   evidence_url: z.string().url().max(500).optional()
 });
 
+/**
+ * Refund manual: dipakai untuk pembayaran yang tidak bisa di-refund provider
+ * (VA/Mandiri). `transfer_ref` wajib karena menjadi bukti transfer satu-satunya.
+ */
+const ManualRefundBody = z.object({
+  amount_idr: z.union([z.string().regex(/^\d+$/), z.number().int().positive()]),
+  reason: z.string().min(5).max(1000),
+  transfer_ref: z.string().min(3).max(120),
+  transferred_at: z.string().datetime().optional(),
+  evidence_url: z.string().url().max(500).optional()
+});
+
 const RefundRejectBody = z.object({
   note: z.string().min(5).max(500)
+});
+
+/** Melepas tagihan pending agar pelanggan bisa memilih metode lain. */
+const BookingPaymentKindBody = z.object({
+  booking_id: z.string().uuid(),
+  kind: z.enum(['dp', 'settlement'])
 });
 
 @Controller()
@@ -125,6 +143,52 @@ export class PaymentController {
       }
     );
     return { data: result };
+  }
+
+  /**
+   * Melepas tagihan `pending` supaya pelanggan bisa mengganti metode
+   * pembayaran. Charge yang sudah dibayar ditolak dengan CONFLICT.
+   */
+  @Post('payments/abandon')
+  @HttpCode(200)
+  async abandonPending(
+    @Body() body: unknown,
+    @Req() req: AuthenticatedRequest
+  ): Promise<{ data: { cancelled: boolean; payment_id: string | null } }> {
+    const parsed = BookingPaymentKindBody.safeParse(body);
+    if (!parsed.success) {
+      throw new AppError('VALIDATION_ERROR', 'invalid abandon request', parsed.error.issues);
+    }
+    return {
+      data: await this.payments.abandonPendingPayment({
+        bookingId: parsed.data.booking_id,
+        kind: parsed.data.kind,
+        customerId: req.user?.id ?? null
+      })
+    };
+  }
+
+  /**
+   * Cek status ke provider. Dipakai klien saat webhook tidak bisa masuk
+   * (mis. server lokal tanpa domain publik).
+   */
+  @Post('payments/sync')
+  @HttpCode(200)
+  async syncPayment(
+    @Body() body: unknown,
+    @Req() req: AuthenticatedRequest
+  ): Promise<{ data: { status: string; updated: boolean } }> {
+    const parsed = BookingPaymentKindBody.safeParse(body);
+    if (!parsed.success) {
+      throw new AppError('VALIDATION_ERROR', 'invalid sync request', parsed.error.issues);
+    }
+    return {
+      data: await this.payments.syncPaymentStatus({
+        bookingId: parsed.data.booking_id,
+        kind: parsed.data.kind,
+        customerId: req.user?.id ?? null
+      })
+    };
   }
 
   /**
@@ -197,6 +261,40 @@ export class PaymentController {
         actorId: req.user?.id ?? null,
         actorRoles: req.user?.roles,
         evidenceUrl: parsed.data.evidence_url ?? null,
+        requestHash: hashRequest({ payment_id: paymentId, ...parsed.data })
+      }
+    );
+    return { data: result };
+  }
+
+  /**
+   * Refund manual untuk pembayaran yang tidak bisa di-refund gateway
+   * (VA/Mandiri): admin mencatat transfer bank + bukti.
+   */
+  @Post('payments/:id/refund/manual')
+  @HttpCode(201)
+  @Roles('admin_finance', 'admin_super')
+  async refundManual(
+    @Param('id') paymentId: string,
+    @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @Req() req: AuthenticatedRequest
+  ): Promise<{ data: RefundResult }> {
+    const parsed = ManualRefundBody.safeParse(body);
+    if (!parsed.success) {
+      throw new AppError('VALIDATION_ERROR', 'invalid manual refund request', parsed.error.issues);
+    }
+    const result = await this.payments.refundManual(
+      paymentId,
+      toBigInt(parsed.data.amount_idr, 'amount_idr'),
+      parsed.data.reason,
+      parsed.data.transfer_ref,
+      {
+        idempotencyKey,
+        actorId: req.user?.id ?? null,
+        actorRoles: req.user?.roles,
+        evidenceUrl: parsed.data.evidence_url ?? null,
+        transferredAt: parsed.data.transferred_at ? new Date(parsed.data.transferred_at) : null,
         requestHash: hashRequest({ payment_id: paymentId, ...parsed.data })
       }
     );

@@ -35,7 +35,8 @@ const ALERT_ICONS: Record<string, typeof Activity> = {
   reconciliation_runs: ShieldAlert,
   payouts: Wallet,
   outbox: Bell,
-  email: Bell
+  email: Bell,
+  webhooks: AlertTriangle
 };
 
 const STATUS_COPY: Record<OpsAlerts['status'], { title: string; body: string; tone: 'ok' | 'warning' | 'danger' }> = {
@@ -119,7 +120,8 @@ const METRIC_ORDER: Array<{ key: string; label: string }> = [
   { key: 'reconciliation_runs', label: 'Run rekonsiliasi gagal (24 jam)' },
   { key: 'payouts', label: 'Payout macet' },
   { key: 'outbox', label: 'Pesan outbox gagal' },
-  { key: 'email', label: 'Email notifikasi gagal (24 jam)' }
+  { key: 'email', label: 'Email notifikasi gagal (24 jam)' },
+  { key: 'webhooks', label: 'Webhook pembayaran gagal (24 jam)' }
 ];
 
 function AlertsCard({ alerts }: { alerts: OpsAlertItem[] }) {

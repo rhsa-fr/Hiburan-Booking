@@ -237,5 +237,82 @@ void main() {
         expect(find.text('Tolak Booking'), findsOneWidget);
       },
     );
+
+    testWidgets('confirmed booking offers check-in and cancel', (tester) async {
+      final client = MockClient((request) async {
+        if (request.url.path.endsWith('/vendor/bookings/b102')) {
+          return http.Response(
+            jsonEncode({
+              'data': {
+                'id': 'b102',
+                'code': 'BK-261027-B01',
+                'lifecycle_status': 'confirmed',
+                'payment_status': 'dp_paid',
+                'event_title': 'Hajatan Keluarga',
+                'event_start_date': '2026-11-15',
+                'event_region_code': 'Indramayu Barat',
+                'guest_count': 300,
+                'customer_name': 'Ibu Ratna',
+                'customer_phone': '081234567890',
+                'total_customer_idr': '10000000',
+                'dp_amount_idr': '3000000',
+                'vendor_entitlement_idr': '9500000',
+              },
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        return http.Response('Not Found', 404);
+      });
+
+      await pumpTestWidget(
+        tester,
+        child: const VendorBookingDetailPage(bookingId: 'b102'),
+        client: client,
+      );
+
+      expect(find.text('Saya sudah sampai'), findsOneWidget);
+      expect(find.text('Batalkan Booking'), findsOneWidget);
+      expect(find.text('Tolak Booking'), findsNothing);
+    });
+
+    testWidgets('accepted booking offers cancel while waiting for DP', (tester) async {
+      final client = MockClient((request) async {
+        if (request.url.path.endsWith('/vendor/bookings/b103')) {
+          return http.Response(
+            jsonEncode({
+              'data': {
+                'id': 'b103',
+                'code': 'BK-261027-C01',
+                'lifecycle_status': 'accepted',
+                'payment_status': 'unpaid',
+                'event_title': 'Acara Keluarga',
+                'event_start_date': '2026-11-15',
+                'event_region_code': 'Indramayu Barat',
+                'guest_count': 200,
+                'customer_name': 'Bapak Dedi',
+                'customer_phone': '081298765432',
+                'total_customer_idr': '8000000',
+                'dp_amount_idr': '2400000',
+                'vendor_entitlement_idr': '7600000',
+              },
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        return http.Response('Not Found', 404);
+      });
+
+      await pumpTestWidget(
+        tester,
+        child: const VendorBookingDetailPage(bookingId: 'b103'),
+        client: client,
+      );
+
+      expect(find.text('Batalkan Booking'), findsOneWidget);
+      expect(find.text('Terima Booking'), findsNothing);
+    });
   });
 }

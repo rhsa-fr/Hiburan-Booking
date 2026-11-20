@@ -129,6 +129,8 @@ export interface EligiblePayoutView {
     readonly event_title: string | null;
   }[];
   readonly amount_idr: number;
+  /** Part of `amount_idr` the ledger balance actually covers (see clawback). */
+  readonly payable_idr: number;
   readonly ledger_payable_idr: number;
   readonly minimum_idr: number;
   readonly eligible: boolean;
@@ -216,6 +218,30 @@ function sumIdr(rows: readonly { readonly amount_idr: string }[]): bigint {
   return rows.reduce((total, row) => total + BigInt(row.amount_idr), 0n);
 }
 
+/**
+ * Payout items are whole bookings, so the claim is capped at the ledger
+ * balance: a clawback leaves `vendor_payable` (2120) negative and the next
+ * payout may only take bookings the balance fully covers. Oldest release first,
+ * and a booking that would overshoot is skipped so a later, smaller one can
+ * still be paid in the same run.
+ */
+function claimableSelection<T extends { readonly amount_idr: string }>(
+  bookings: readonly T[],
+  ledger: bigint
+): T[] {
+  if (ledger <= 0n) return [];
+  const picked: T[] = [];
+  let total = 0n;
+  for (const booking of bookings) {
+    const amount = BigInt(booking.amount_idr);
+    if (total + amount <= ledger) {
+      picked.push(booking);
+      total += amount;
+    }
+  }
+  return picked;
+}
+
 function requireKey(key: string | undefined): string {
   if (!key || key.trim().length === 0) {
     throw new AppError('VALIDATION_ERROR', 'Idempotency-Key header is required');
@@ -294,6 +320,7 @@ export class PayoutService {
     ]);
 
     const amount = sumIdr(bookings);
+    const payable = sumIdr(claimableSelection(bookings, ledger));
     const reason =
       vendor.verification_status === 'suspended'
         ? 'Vendor sedang ditangguhkan; pencairan dibekukan.'
@@ -301,6 +328,7 @@ export class PayoutService {
             hasBookings: bookings.length > 0,
             account,
             amount,
+            payable,
             ledger,
             minimum
           });
@@ -325,6 +353,7 @@ export class PayoutService {
         event_title: row.event_title
       })),
       amount_idr: idrToJson(amount, 'eligible.amount_idr'),
+      payable_idr: idrToJson(payable, 'eligible.payable_idr'),
       ledger_payable_idr: idrToJson(ledger, 'eligible.ledger_payable_idr'),
       minimum_idr: minimum,
       eligible: reason === null,
@@ -378,9 +407,16 @@ export class PayoutService {
             throw new AppError('CONFLICT', 'Belum ada dana released yang bisa dicairkan.');
           }
 
+          const ledger = await this.deps.repository.ledgerPayable(vendor.id, client);
           const selection = input.booking_ids
             ? this.selectBookings(eligible, input.booking_ids)
-            : eligible;
+            : claimableSelection(eligible, ledger);
+          if (selection.length === 0) {
+            throw new AppError(
+              'CONFLICT',
+              `Hak vendor belum bisa dicairkan: saldo vendor_payable Rp${ledger.toString()} (tertahan clawback/sengketa).`
+            );
+          }
           const amount = sumIdr(selection);
 
           const minimum = BigInt(await this.deps.repository.readSetting('payout_min_idr'));
@@ -391,11 +427,10 @@ export class PayoutService {
             );
           }
 
-          const ledger = await this.deps.repository.ledgerPayable(vendor.id, client);
           if (amount > ledger) {
             throw new AppError(
               'CONFLICT',
-              'Saldo vendor_payable di ledger lebih kecil dari nominal payout. Periksa clawback/sengketa.'
+              `Saldo vendor_payable di ledger (Rp${ledger.toString()}) lebih kecil dari nominal payout (Rp${amount.toString()}). Periksa clawback/sengketa.`
             );
           }
 
@@ -899,6 +934,7 @@ export class PayoutService {
       readonly cooling_until: Date;
     } | null;
     readonly amount: bigint;
+    readonly payable: bigint;
     readonly ledger: bigint;
     readonly minimum: number;
   }): string | null {
@@ -909,11 +945,13 @@ export class PayoutService {
       return `Rekening masih masa tunggu sampai ${input.account.cooling_until.toISOString()}.`;
     }
     if (!input.hasBookings) return 'Belum ada booking released yang belum dicairkan.';
-    if (input.amount < BigInt(input.minimum)) {
+    if (input.payable < BigInt(input.minimum)) {
+      // A clawback leaves the ledger negative; new releases keep the booking
+      // total above the balance until the debt is fully covered.
+      if (input.payable === 0n && input.amount > 0n) {
+        return `Hak vendor Rp${input.amount.toString()} belum bisa dicairkan: saldo 2120 Rp${input.ledger.toString()} (tertahan clawback/sengketa).`;
+      }
       return `Nominal di bawah minimum Rp${input.minimum.toString()}.`;
-    }
-    if (input.amount > input.ledger) {
-      return 'Saldo vendor_payable di ledger lebih kecil dari nominal. Periksa clawback/sengketa.';
     }
     return null;
   }
