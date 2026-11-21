@@ -328,14 +328,15 @@ class AuthSubmitButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     return SizedBox(
-      height: 52,
+      height: 54,
       child: FilledButton(
         onPressed: loading ? null : onPressed,
         style: FilledButton.styleFrom(
           padding: const EdgeInsets.symmetric(horizontal: 18),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(Radii.lg),
           ),
+          side: const BorderSide(color: AppColors.limeDark),
           textStyle: text.labelLarge?.copyWith(
             fontWeight: FontWeight.w800,
             letterSpacing: -0.1,
@@ -583,8 +584,15 @@ class AuthCard extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: AppColors.card,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(Radii.xxl),
         border: Border.all(color: AppColors.line),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x1F000000),
+            blurRadius: 30,
+            offset: Offset(0, 14),
+          ),
+        ],
       ),
       clipBehavior: Clip.antiAlias,
       child: Column(

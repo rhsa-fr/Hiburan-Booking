@@ -5,11 +5,11 @@ import 'package:flutter/material.dart';
 /// is frozen and deliberately uses a different (maroon/parchment) language.
 abstract final class VendorColors {
   static const ink = Color(0xFF0B1220);
-  static const canvas = Color(0xFFEEEEE9);
-  static const card = Color(0xFFFAFAF7);
+  static const canvas = Color(0xFFFBF9F4);
+  static const card = Color(0xFFFFFFFF);
   static const cardWhite = Color(0xFFFFFFFF);
-  static const line = Color(0xFFDDDDD7);
-  static const lineSoft = Color(0xFFEBEBE5);
+  static const line = Color(0xFFE6E1D6);
+  static const lineSoft = Color(0xFFF0ECE4);
   static const muted = Color(0xFF606870);
   static const mutedSoft = Color(0xFF88929C);
   static const lime = Color(0xFFD9FB4F);
@@ -18,8 +18,8 @@ abstract final class VendorColors {
   static const danger = Color(0xFF9E2B25);
   static const green = Color(0xFF076C48);
   static const headerTop = Color(0xFF182540);
-  static const softFill = Color(0xFFF4F4EF);
-  static const softRow = Color(0xFFF7F7F3);
+  static const softFill = Color(0xFFF3F0E9);
+  static const softRow = Color(0xFFF7F4ED);
 
   static const waitBg = Color(0xFFFCEFE2);
   static const waitFg = Color(0xFF8C3D05);
@@ -29,6 +29,8 @@ abstract final class VendorColors {
   static const doneFg = Color(0xFF414C5C);
   static const noBg = Color(0xFFF2F2ED);
   static const noFg = Color(0xFF626A74);
+  static const limeSoft = Color(0xFFF2FBD3);
+  static const night = Color(0xFF141D2E);
 }
 
 abstract final class VendorSp {
@@ -36,19 +38,21 @@ abstract final class VendorSp {
   static const double sm = 8;
   static const double md = 12;
   static const double lg = 16;
-  static const double xl = 20;
+  static const double xl = 24;
 }
 
 abstract final class VendorRadii {
-  static const double sm = 6;
-  static const double md = 10;
+  static const double sm = 10;
+  static const double md = 16;
+  static const double lg = 22;
+  static const double pill = 999;
 }
 
 const _font = 'Plus Jakarta Sans';
 const _fallback = <String>['PlusJakartaSans', 'sans-serif'];
 
 TextStyle vendorText({
-  double size = 12,
+  double size = 13,
   FontWeight weight = FontWeight.w500,
   Color color = VendorColors.ink,
   double? height,
@@ -67,10 +71,10 @@ TextStyle vendorText({
 
 /// Uppercase section label from the OpenDesign board.
 TextStyle get vendorKicker => vendorText(
-  size: 11,
-  weight: FontWeight.w700,
+  size: 11.5,
+  weight: FontWeight.w800,
   color: const Color(0xFF3F4A58),
-  letterSpacing: 0.14 * 11,
+  letterSpacing: 1.25,
 );
 
-TextStyle get vendorHint => vendorText(size: 11, color: VendorColors.muted);
+TextStyle get vendorHint => vendorText(size: 11.5, color: VendorColors.muted);

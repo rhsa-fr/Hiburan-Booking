@@ -78,11 +78,7 @@ class _VendorPackageEditPageState extends State<VendorPackageEditPage> {
     if (_id == null) return;
     setState(() => _uploadingPhoto = true);
     final picker = widget.picker ?? pickAndUploadVendorImage;
-    final result = await picker(
-      context,
-      kind: 'package_photo',
-      packageId: _id,
-    );
+    final result = await picker(context, kind: 'package_photo', packageId: _id);
     if (!mounted) return;
     setState(() => _uploadingPhoto = false);
 
@@ -184,7 +180,9 @@ class _VendorPackageEditPageState extends State<VendorPackageEditPage> {
 
   void _notice(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -204,12 +202,7 @@ class _VendorPackageEditPageState extends State<VendorPackageEditPage> {
       body: ColoredBox(
         color: VendorColors.canvas,
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(
-            VendorSp.lg,
-            14,
-            VendorSp.lg,
-            24,
-          ),
+          padding: const EdgeInsets.fromLTRB(VendorSp.lg, 14, VendorSp.lg, 24),
           children: [
             const VendorSectionTitle(label: 'Detail paket'),
             VendorCard(
@@ -267,7 +260,8 @@ class _VendorPackageEditPageState extends State<VendorPackageEditPage> {
                 controller: _inclusions,
                 maxLines: 5,
                 hint: 'Sound System 5.000 Watt\nGenset 10 kVA',
-                helper: 'Satu fasilitas per baris. Tampil di halaman pelanggan.',
+                helper:
+                    'Satu fasilitas per baris. Tampil di halaman pelanggan.',
               ),
             ),
             const VendorSectionTitle(label: 'Foto paket'),
@@ -278,7 +272,9 @@ class _VendorPackageEditPageState extends State<VendorPackageEditPage> {
                 children: [
                   () {
                     final isPending = _pendingPhoto != null;
-                    final displayUrl = isPending ? _pendingPhoto!.url : _photoUrl;
+                    final displayUrl = isPending
+                        ? _pendingPhoto!.url
+                        : _photoUrl;
                     return IgnorePointer(
                       ignoring: isNew,
                       child: Opacity(
@@ -294,11 +290,11 @@ class _VendorPackageEditPageState extends State<VendorPackageEditPage> {
                               onClear: isNew
                                   ? null
                                   : (_photoUrl != null || _pendingPhoto != null)
-                                      ? () => setState(() {
-                                            _photoUrl = null;
-                                            _pendingPhoto = null;
-                                          })
-                                      : null,
+                                  ? () => setState(() {
+                                      _photoUrl = null;
+                                      _pendingPhoto = null;
+                                    })
+                                  : null,
                             ),
                             if (isPending)
                               const Positioned(
@@ -374,10 +370,22 @@ class _VendorPackageEditPageState extends State<VendorPackageEditPage> {
         ),
       ),
       bottomNavigationBar: Container(
-        color: VendorColors.cardWhite,
+        decoration: const BoxDecoration(
+          color: VendorColors.cardWhite,
+          borderRadius: BorderRadius.vertical(
+            top: Radius.circular(VendorRadii.lg),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Color(0x160B1220),
+              blurRadius: 20,
+              offset: Offset(0, -6),
+            ),
+          ],
+        ),
         padding: EdgeInsets.fromLTRB(
           VendorSp.lg,
-          10,
+          12,
           VendorSp.lg,
           12 + MediaQuery.viewPaddingOf(context).bottom,
         ),

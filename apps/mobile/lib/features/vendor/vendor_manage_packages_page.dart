@@ -71,9 +71,7 @@ class _VendorManagePackagesPageState extends State<VendorManagePackagesPage> {
   Future<void> _openEditor([Map<String, dynamic>? item]) async {
     final saved = await Navigator.push<bool>(
       context,
-      MaterialPageRoute(
-        builder: (_) => VendorPackageEditPage(initial: item),
-      ),
+      MaterialPageRoute(builder: (_) => VendorPackageEditPage(initial: item)),
     );
     if (saved == true) await _load(silent: true);
   }
@@ -129,9 +127,9 @@ class _VendorManagePackagesPageState extends State<VendorManagePackagesPage> {
     try {
       await AppScope.of(context).api.delete('/vendor/packages/$id');
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Paket dinonaktifkan.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Paket dinonaktifkan.')));
       await _load(silent: true);
     } on ApiException catch (error) {
       if (!mounted) return;
@@ -171,11 +169,23 @@ class _VendorManagePackagesPageState extends State<VendorManagePackagesPage> {
       bottomNavigationBar: _loading || _error != null
           ? null
           : Container(
-              color: VendorColors.cardWhite,
+              decoration: const BoxDecoration(
+                color: VendorColors.cardWhite,
+                borderRadius: BorderRadius.vertical(
+                  top: Radius.circular(VendorRadii.lg),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Color(0x160B1220),
+                    blurRadius: 20,
+                    offset: Offset(0, -6),
+                  ),
+                ],
+              ),
               padding: EdgeInsets.fromLTRB(
                 VendorSp.lg,
-                10,
-                VendorSp.lg,
+                12,
+                16,
                 12 + MediaQuery.viewPaddingOf(context).bottom,
               ),
               child: VendorButton(
@@ -193,25 +203,108 @@ class _VendorManagePackagesPageState extends State<VendorManagePackagesPage> {
       padding: const EdgeInsets.all(VendorSp.lg),
       children: [
         VendorEmpty(
+          icon: Icons.inventory_2_outlined,
           title: 'Belum ada paket',
           message:
               'Tambahkan paket pertama agar pelanggan bisa melihat harga dan '
               'memilih jadwal.',
+          action: VendorButton(
+            label: 'Tambah paket pertama',
+            icon: Icons.add,
+            onPressed: () => _openEditor(),
+          ),
         ),
       ],
     );
   }
 
   Widget _list() {
+    final active = _items.where((item) => item['is_active'] != false).length;
+    var cheapest = 0;
+    for (final item in _items) {
+      final price = moneyValue(item, 'base_price_idr') ?? 0;
+      if (price <= 0) continue;
+      if (cheapest == 0 || price < cheapest) cheapest = price;
+    }
+
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(
-        VendorSp.lg,
-        14,
-        VendorSp.lg,
-        24,
-      ),
+      padding: const EdgeInsets.fromLTRB(VendorSp.lg, 14, VendorSp.lg, 24),
       children: [
+        Container(
+          padding: const EdgeInsets.all(VendorSp.lg),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF182540), VendorColors.ink],
+            ),
+            borderRadius: BorderRadius.circular(VendorRadii.lg),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x240B1220),
+                blurRadius: 20,
+                offset: Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 28,
+                      height: 3,
+                      decoration: BoxDecoration(
+                        color: VendorColors.lime,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    const SizedBox(height: 9),
+                    Text(
+                      'Katalog $active aktif',
+                      style: vendorText(
+                        size: 17,
+                        weight: FontWeight.w800,
+                        color: Colors.white,
+                        letterSpacing: -0.3,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      cheapest > 0
+                          ? 'Mulai ${rupiahTight(cheapest)} per acara'
+                          : 'Harga paket belum diisi',
+                      style: vendorText(
+                        size: 11.5,
+                        color: Colors.white.withValues(alpha: 0.62),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: VendorSp.md),
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: VendorColors.lime.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: VendorColors.lime.withValues(alpha: 0.38),
+                  ),
+                ),
+                child: const Icon(
+                  Icons.inventory_2_outlined,
+                  size: 22,
+                  color: VendorColors.lime,
+                ),
+              ),
+            ],
+          ),
+        ),
         const VendorSectionTitle(label: 'Daftar paket'),
         for (final item in _items) ...[
           _PackageCard(
@@ -226,7 +319,97 @@ class _VendorManagePackagesPageState extends State<VendorManagePackagesPage> {
           'tersimpan untuk riwayat booking.',
           style: vendorText(size: 11, color: VendorColors.muted, height: 1.5),
         ),
+        const SizedBox(height: VendorSp.sm),
+        const VendorSectionTitle(label: 'Tips paket'),
+        const VendorCard(
+          child: Column(
+            children: [
+              _PackageTip(
+                icon: Icons.photo_camera_outlined,
+                title: 'Pasang foto paket',
+                body:
+                    'Paket dengan foto panggung lebih mudah dipilih '
+                    'pelanggan.',
+              ),
+              _PackageTip(
+                icon: Icons.list_alt_outlined,
+                title: 'Tulis fasilitas dengan jelas',
+                body:
+                    'Sound, personel, dan durasi yang jujur mengurangi '
+                    'pertanyaan berulang.',
+              ),
+              _PackageTip(
+                icon: Icons.event_repeat_outlined,
+                title: 'Nonaktifkan, jangan hapus',
+                body:
+                    'Riwayat booking tetap tersimpan saat paket dinonaktifkan.',
+                last: true,
+              ),
+            ],
+          ),
+        ),
       ],
+    );
+  }
+}
+
+class _PackageTip extends StatelessWidget {
+  const _PackageTip({
+    required this.icon,
+    required this.title,
+    required this.body,
+    this.last = false,
+  });
+
+  final IconData icon;
+  final String title;
+  final String body;
+  final bool last;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 11),
+      decoration: BoxDecoration(
+        border: last
+            ? null
+            : const Border(bottom: BorderSide(color: VendorColors.lineSoft)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 30,
+            height: 30,
+            decoration: BoxDecoration(
+              color: VendorColors.limeSoft,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, size: 16, color: VendorColors.ink),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: vendorText(size: 12.5, weight: FontWeight.w700),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  body,
+                  style: vendorText(
+                    size: 11.5,
+                    color: VendorColors.muted,
+                    height: 1.45,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -256,26 +439,26 @@ class _PackageCard extends StatelessWidget {
 
     return VendorCard(
       onTap: onTap,
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(13),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           ClipRRect(
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(14),
             child: Container(
-              width: 62,
-              height: 62,
+              width: 76,
+              height: 76,
               color: VendorColors.softFill,
               child: photo.isEmpty
-                  ? Icon(
+                  ? const Icon(
                       Icons.music_note,
-                      size: 22,
+                      size: 24,
                       color: VendorColors.mutedSoft,
                     )
                   : Image.network(
                       photo,
                       fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) => Icon(
+                      errorBuilder: (_, _, _) => const Icon(
                         Icons.broken_image_outlined,
                         size: 20,
                         color: VendorColors.mutedSoft,
@@ -283,7 +466,7 @@ class _PackageCard extends StatelessWidget {
                     ),
             ),
           ),
-          const SizedBox(width: 11),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -295,7 +478,7 @@ class _PackageCard extends StatelessWidget {
                         item['name']?.toString() ?? 'Paket',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: vendorText(size: 13.5, weight: FontWeight.w700),
+                        style: vendorText(size: 14.5, weight: FontWeight.w800),
                       ),
                     ),
                     const SizedBox(width: 6),
@@ -309,21 +492,26 @@ class _PackageCard extends StatelessWidget {
                   const SizedBox(height: 3),
                   Text(
                     meta,
-                    style: vendorText(size: 11, color: VendorColors.muted),
+                    style: vendorText(size: 11.5, color: VendorColors.muted),
                   ),
                 ],
-                const SizedBox(height: 7),
+                const SizedBox(height: 8),
                 Row(
                   children: [
                     Expanded(
                       child: Text(
                         price > 0 ? rupiahTight(price) : 'Harga belum diisi',
-                        style: vendorText(size: 13, weight: FontWeight.w700),
+                        style: vendorText(
+                          size: 15,
+                          weight: FontWeight.w800,
+                          letterSpacing: -0.3,
+                        ),
                       ),
                     ),
                     IconButton(
                       onPressed: onDelete,
                       tooltip: 'Nonaktifkan paket',
+                      visualDensity: VisualDensity.compact,
                       icon: const Icon(
                         Icons.delete_outline,
                         size: 18,

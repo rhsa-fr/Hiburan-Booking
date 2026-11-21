@@ -48,16 +48,17 @@ Sumber kebenaran: ekspor OpenDesign **Graphite · Lime**, disalin apa adanya ke
 | `limeDark` | `#BDDB2C` | Fokus input, progress |
 | `onPrimary` | `#FFFFFF` | Teks di atas ink |
 | `secondary` | `#606870` | Aksi sekunder, ikon netral |
-| `secondarySoft` / `neutralSoft` | `#EFEFEA` | Latar chip netral |
+| `secondarySoft` | `#E7EEF3` | Latar chip netral (kategori Pendukung Acara) |
+| `neutralSoft` | `#EFEFEA` | Latar netral di dalam kartu |
 | `tertiary` / `warning` | `#9A4208` | Menunggu, ditahan, data lama |
 | `tertiarySoft` / `warningSoft` | `#FBEEDF` | Latar chip menunggu |
-| `surface` | `#EEEEE9` | Kanvas aplikasi (hangat) |
-| `card` | `#FAFAF7` | Kartu, input, bottom bar |
-| `surfaceSoft` | `#F4F4EF` | Field pencarian, latar lembut |
+| `surface` | `#FBF9F4` | Kanvas aplikasi (putih susu) |
+| `card` | `#FFFFFF` | Kartu, input, bottom bar |
+| `surfaceSoft` | `#F3F0E9` | Field pencarian, latar lembut |
 | `surfaceTint` | `#F2FBD3` | Area info, kotak consent |
-| `surfaceHigh` | `#E7E7E1` | Lapisan di atas kanvas |
-| `line` | `#DDDDD7` | Garis 1 px divider |
-| `lineStrong` | `#CFD1CB` | Garis tombol outline |
+| `surfaceHigh` | `#EDE9E0` | Lapisan di atas kanvas |
+| `line` | `#E6E1D6` | Garis 1 px divider |
+| `lineStrong` | `#D5CFC2` | Garis tombol outline |
 | `ink` | `#0B1220` | Teks utama |
 | `inkMuted` | `#606870` | Teks sekunder, label, hint |
 | `muted2` | `#88929C` | Label tab non-aktif |
@@ -65,7 +66,7 @@ Sumber kebenaran: ekspor OpenDesign **Graphite · Lime**, disalin apa adanya ke
 | `accentSoft` | `#E4F1EA` | Latar chip sukses |
 | `danger` | `#A22A22` | Gagal, batal, kedaluwarsa |
 | `dangerSoft` | `#F8E7E4` | Latar chip/error |
-| `skeleton` | `#E7E7E1` | Blok loading |
+| `skeleton` | `#EFEBE3` | Blok loading |
 
 Aturan:
 - **Lime hanya untuk aksi utama dan penanda aktif.** Jangan memakai lime untuk teks
@@ -73,7 +74,7 @@ Aturan:
 - **Hijau hanya untuk uang/kesuksesan.** Jangan pakai hijau untuk tombol navigasi.
 - **Merah hanya untuk kegagalan/keputusan merusak.** Tombol "Batalkan booking" memakai
   gaya outline merah, bukan tombol merah penuh — batal bukan aksi utama.
-- Kanvas **terang hangat** (`surface`); header layar **gelap** dengan gradien
+- Kanvas **putih susu** (`surface`); header layar **gelap** dengan gradien
   `primaryDeep → primary` dan garis bawah lime 2 px (`StageHeader`).
 - Tidak ada glassmorphism, tidak ada blur. Kartu memakai border 1 px `line` plus
   bayangan sangat tipis `0x060F172A` (blur 8, offset 0/2).
@@ -97,6 +98,22 @@ Aturannya:
 4. **Angka uang** memakai `primary`/`ink`; hanya "Lunas" yang hijau `accent`.
 5. **CTA sekunder** outline `lineStrong` dengan teks `ink`.
 6. Jangan mewarnai body text dengan `lime`; kontras dan kelelahan mata.
+
+---
+
+### 2.2 Logo
+
+- Aset dalam aplikasi: `assets/images/logo_mark.png` — emblem panggung (tirai,
+  not, tiket, gelombang suara) di atas tile putih radius 25%, tampil 40 px di
+  header lewat `BrandMark`/`BrandLockup`.
+- Master sumber: `design/logo_tarlink_source.jpg`; tidak dibundel ke aplikasi.
+- Ikon launcher Android: `mipmap-*/ic_launcher.png` (legacy) dan
+  `mipmap-anydpi-v26/ic_launcher.xml` (adaptive, latar putih, foreground di
+  dalam safe zone 52%).
+- Ikon web: `web/icons/Icon-*.png`, `Icon-maskable-*.png` (safe zone 55%), dan
+  `web/favicon.png`.
+- Logo selalu diletakkan di atas tile putih. Di latar gelap tanpa tile, garis
+  ink menyatu dengan latar dan bentuknya hilang.
 
 ---
 
@@ -132,13 +149,16 @@ Aturan:
 
 - Skala spasi: **4 / 8 / 12 / 16 / 24 / 32**. Tidak ada nilai lain.
 - Padding layar: **16** kiri-kanan (login 20). Jarak antar-seksi: **24**. Dalam kartu: **16**.
-- Radius: `sm` **6** (input, tombol kecil), `lg` **8** (tombol, kartu), `xl` **12**
-  (sheet), `pill` **999**.
-- Tinggi tombol utama: **50**. Field login: **52**. Target sentuh minimum: **48 × 48**.
-- Elevasi: kartu memakai border 1 px `line` + bayangan `0x060F172A` (blur 8, offset 0/2);
-  bottom bar memakai garis atas `line`. Tidak ada border ganda.
-- Bottom nav: bar kustom tinggi **58** + safe area, latar `card`, garis atas `line`,
-  penanda aktif garis lime; item aktif `ink`, non-aktif `muted2`.
+- Radius: `sm` **8** (badge kecil), `lg` **16** (tombol, input, kartu isi), `xl` **20**
+  (panel/sheet), `xxl` **26** (kartu besar, bottom bar), `pill` **999** (chip, filter).
+- Tinggi tombol utama: **52**. Field: **52–56**. Target sentuh minimum: **48 × 48**.
+- Elevasi: permukaan memakai border 1 px `line`/`lineSoft` + bayangan lembut
+  (`0x0A–0x14 0B1220`, blur 14–24, offset 4–8). Tidak ada border ganda.
+- Bottom nav pelanggan: bar mengambang **58** + margin 12, radius 18, pil lime untuk
+  ikon aktif, label 10.5. Bottom nav vendor memakai pola yang sama (radius 22,
+  tinggi 62, pil lime).
+- Header layar memakai sudut bawah membulat **24**; garis lime 2 px digambar di dalam
+  klip agar tidak menabrak radius.
 
 Grid vertikal mengikuti kelipatan 4; hindari "kartu di dalam kartu".
 
@@ -174,13 +194,14 @@ dibuka kapan saja dari Status booking (pelanggan) dan Detail pesanan (vendor).
 ## 6. Komponen
 
 ### 6.1 Kartu vendor (dipakai di Beranda & Jelajah)
-- Radius 16, latar `card`, **tanpa border**, bayangan lembut (`0x12 0B1220`, blur 18,
-  offset 6) supaya kartu terangkat dari kanvas tanpa garis kotak.
-- Atas: `PosterTile` tinggi 176 px, full-bleed sampai sudut kartu. Bila API mengirim
+- Radius 22, latar `card`, border 1 px `line`, bayangan lembut (`0x12 0B1220`, blur 22,
+  offset 8) supaya kartu terangkat dari kanvas tanpa terasa kotak.
+- Atas: `PosterTile` tinggi 184 px, full-bleed sampai sudut kartu. Bila API mengirim
   `avatar_url`/`banner_url`, foto itu yang dipakai; bila kosong, gradien graphite/lime
   deterministik dari nama vendor plus inisial. Badge kategori + video.
 - Bawah: nama (17/800, 2 baris), `kategori · wilayah · N paket` (Body S `inkMuted`),
-  baris "Mulai dari" + harga 22/800 `ink`, chip DP, dan chevron tipis.
+  baris "Mulai dari" + harga 22/800 `ink`, chip DP, dan tombol panah bulat `ink` + ikon
+  lime di kanan bawah.
 - Seluruh kartu adalah target sentuh (InkWell); **tidak ada tombol CTA terpisah** di kartu.
 - Baris rating `★ 4.8 (12)` dan `Respons 92%` hanya muncul bila API mengirim
   `rating`/`response_rate_bp`; nilai null dihilangkan, bukan diisi `0`.
@@ -189,7 +210,8 @@ dibuka kapan saja dari Status booking (pelanggan) dan Detail pesanan (vendor).
 - Skeleton `VendorCardSkeleton` memakai tinggi poster yang sama agar tidak melompat.
 
 ### 6.2 Header layar (`StageHeader`)
-- Latar gradien `primaryDeep → primary` (graphite), judul putih, garis bawah lime 2 px.
+- Latar gradien `primaryDeep → primary` (graphite), judul putih, sudut bawah membulat
+  24, garis bawah lime 2 px di dalam klip.
 - **StageBeams** (`ui.dart`): tiga berkas lampu lime statis dari kanan atas + sumber
   radial, digambar sekali. Dipakai di header Beranda (intensitas 0.85), seluruh
   `StageHeader` (0.55), kartu identitas Profil (0.7), dan tiket booking aktif (0.55).
@@ -199,9 +221,9 @@ dibuka kapan saja dari Status booking (pelanggan) dan Detail pesanan (vendor).
   judulnya tampak di tengah (bug lama di layar Profil).
 - Beranda memakai header khusus (bukan `StageHeader`): brand lockup + avatar, tanggal
   kapital lime 9.5/800, sapaan 26/800, lokasi + pil jumlah grup, lalu pencarian 52 px
-  radius 12.
-- Layar detail: `StageHeader.back()` dengan tombol kembali kotak 38×38 berlatar putih
-  transparan, judul 20/800, aksi kanan opsional (mis. WhatsApp).
+  radius 20.
+- Layar detail: `StageHeader.back()` dengan tombol kembali 38×38 radius 16 berlatar
+  putih transparan, judul 20/800, aksi kanan opsional (mis. WhatsApp).
 - Status bar memakai ikon terang (`SystemUiOverlayStyle.light`) karena header gelap;
   layar tanpa header tetap memakai ikon gelap di atas kanvas terang.
 
@@ -212,38 +234,50 @@ Sudah ada di `widgets.dart`. Aturan pemakaian:
 - Chip "Ditahan" (uang di PJP) memakai nada `warning` + ikon gembok kecil.
 
 ### 6.4 Kartu uang (money block)
-Dipakai di Status booking dan konfirmasi:
+Kartu **gelap** (`ink`, radius 26) dengan garis lime 3 px di atas; label putih 64%,
+nilai putih 94%, dan satu angka besar lime:
 ```
-Total acara            Rp5.050.000     (Body M / inkMuted)
-Sudah dibayar (DP)    −Rp1.500.000     (Body M)
+Total acara            Rp5.050.000     (Body M / putih 64%)
+Sudah dibayar (DP)    −Rp1.500.000     (Body M / putih 94%)
 ────────────────────────────────────
-Sisa yang harus dibayar Rp3.550.000    (Display / ink) ← satu-satunya angka besar
+Sisa yang harus dibayar Rp3.550.000    (Display / lime) ← satu-satunya angka besar
 ```
 - `fully_paid` → baris sisa diganti "Lunas" + chip hijau, angka besar = total.
 - `refunded` → "Dana dikembalikan" + chip netral, tanpa angka sisa.
 - Format: `Rp1.500.000` (titik ribuan, tanpa desimal, tanpa spasi setelah Rp).
 
 ### 6.5 Bottom action bar
-- Menempel di bawah, latar `card`, garis atas, padding 16 + safe area.
-- Satu tombol `PrimaryButton` tinggi 52 selebar layar.
-- Bila ada info harga, taruh ringkas di kiri (Title M) dan tombol di kanan selebar 60%.
-- Selalu muncul saat ada aksi; tidak pernah menutupi konten (konten diberi padding bawah 96).
+- Menempel di bawah, latar `card`, sudut atas membulat **26**, border 1 px `line`,
+  bayangan ke atas, padding 16 + safe area.
+- Satu tombol `PrimaryButton` tinggi 52 selebar layar; bila ada harga, ringkasan di
+  kiri dan tombol 60% di kanan.
+- Detail vendor memakai varian **gelap** (`ink`, sudut atas 26) dengan harga putih/lime
+  dan tombol lime; ini satu-satunya bottom bar gelap di alur pelanggan.
+- Selalu muncul saat ada aksi; tidak pernah menutupi konten (konten diberi padding
+  bawah 96–110).
 
 ### 6.6 Jadwal 45 hari
-- Strip horizontal per minggu; 7 kolom, tiap sel 44×56 radius 12.
-- State: `available` (`accentSoft` + garis `accent` 35%, teks hijau tua),
-  `held`/`unconfirmed` (`warningSoft` + titik), `booked`/`blocked`
-  (`neutralSoft`, teks `inkMuted`, tidak bisa dipilih), `terpilih`
-  (`primary` penuh, teks putih).
-- Legenda 1 baris: "Tersedia · Menunggu konfirmasi · Terisi".
-- Bila `stale == true`: banner `warningSoft` di atas strip — "Jadwal terakhir diperbarui
+- **Rail horizontal** 76 px, satu chip per tanggal (58×76, radius 16), bukan kisi
+  mingguan. Chip berisi hari (9.5/700 kapital), tanggal (19/800), bulan (9.5), dan
+  titik status 5 px.
+- State: `available` (`card` + titik `limeDark`), `waiting`/`unconfirmed`
+  (`warningSoft` + titik `warning`), `blocked` (`surfaceSoft`, teks `muted2`, tidak
+  bisa dipilih), `terpilih` (`ink` penuh, tanggal putih, titik lime). Tombol
+  "Kalender" di judul seksi membuka pemilih tanggal penuh.
+- Legenda 1 baris: "Tersedia · Belum pasti · Terisi".
+- Bila `stale == true`: banner `warningSoft` di atas rail — "Jadwal terakhir diperbarui
   N hari lalu. Konfirmasi ke vendor lewat WhatsApp." dengan tautan WA.
+- Header detail vendor memakai bar tetap: transparan di puncak hero, berubah menjadi
+  `ink` solid setelah scroll 28 px supaya judul tidak bertabrakan dengan konten.
 
 ### 6.7 Empty state
-- Ikon garis 56 di lingkaran `neutralSoft`, satu kalimat, satu aksi.
+- Tanda panggung 78×78 (gradien ink, `StageBeams`, ikon lime) + satu judul tebal +
+  satu kalimat + satu aksi. Bukan sekadar ikon garis di lingkaran abu-abu.
 - Booking kosong: "Belum ada booking. Mulai dari melihat vendor yang sedang tampil."
   Aksi: `Jelajah vendor`.
 - Pencarian kosong: "Tidak ada vendor yang cocok dengan 'wayang'." Aksi: `Hapus pencarian`.
+- Error memakai tanda panggung bernada merah (`#FF9A8F`) agar tetap terbaca sebagai
+  kondisi gagal, bukan hiasan.
 
 ### 6.8 Error & offline
 - Error jaringan: kartu `dangerSoft` inline (bukan halaman penuh) + tombol `Coba lagi`
@@ -269,8 +303,9 @@ Sisa yang harus dibayar Rp3.550.000    (Display / ink) ← satu-satunya angka be
    kode + tanggal + chip H-N, nominal sisa 28/800 lime, panah di lingkaran lime,
    progress pembayaran lime, dan satu baris "Sudah dibayar … dari …". Tidak ada
    tombol "Lihat booking" terpisah — seluruh tiket bisa ditekan.
-3. "Kategori": rel 4 pintasan (Tarling & Dangdut, Organ Tunggal, Seni Tradisi,
-   Pendukung Acara) dengan cakram 54 px dan label 11/700, tanpa kotak pembungkus.
+3. "Kategori": rel 4 **kartu pintasan** (Tarling & Dangdut, Organ Tunggal, Seni
+   Tradisi, Pendukung Acara) setinggi 96 px, latar tint pastel per kategori,
+   border 10% warna ikon, ikon 26 px, dan label 11.5/800 dua baris di dalam kartu.
    Setiap pintasan membuka Jelajah dengan filter kategori nyata.
 4. Judul seksi memakai **garis lime 3 px** + judul 18/800 (bukan ikon kotak).
    Seksi "Vendor di Pantura" + tautan "Lihat semua", lalu kartu vendor.
@@ -284,8 +319,9 @@ Sisa yang harus dibayar Rp3.550.000    (Display / ink) ← satu-satunya angka be
   pencarian 52 px. Favorit dikelola dari detail vendor dan Profil.
 - Baris **"Filter & urutan"** tanpa kartu pembungkus: ikon tune, jumlah filter aktif
   dalam pil ink, panah buka/tutup, dan jumlah vendor di kanan (atau "Reset" bila ada
-  filter). Panel terbuka memakai latar `surfaceSoft` radius 12 berisi chip kategori,
-  pemilih tanggal, wilayah, dan `SegmentBar` Termurah / Nama A-Z.
+  filter). Panel terbuka memakai kartu `card` radius 26 + bayangan tipis berisi chip
+  kategori berbentuk pil (aktif = `ink` + teks lime), pemilih tanggal & wilayah
+  berbentuk pil, dan `SegmentBar` Termurah / Nama A-Z dengan segmen aktif lime.
 - Chip kategori dari `GET /categories` (chip pertama "Semua kategori").
 - Tanggal mengirim query `date`; wilayah difilter di klien dari hasil yang sudah dimuat.
 - Daftar kartu vendor memakai §6.1 (radius 16, bayangan lembut), jarak 12.
@@ -294,37 +330,58 @@ Sisa yang harus dibayar Rp3.550.000    (Display / ink) ← satu-satunya angka be
 - Kosong: pesan spesifik per filter + satu aksi untuk melepas filter.
 
 ### 7.3 Detail vendor
-1. Header gelap `StageHeader.back()`: judul **"Detail Grup Hiburan"**, subjudul nama
-   vendor, aksi kanan WhatsApp (bila `whatsapp` ada).
-2. `PosterTile` hero 16:9 memakai `banner_url`/`avatar_url`; badge kategori, wilayah,
-   dan "▶ Cuplikan Video" bila `video_url` ada.
-3. Avatar (bila ada), nama (Headline 24/700), baris wilayah · kategori, rating hanya
-   bila tidak null, lalu "Mulai dari" + harga + chip DP.
-4. Deskripsi (maks 4 baris + "Baca selengkapnya") — **hanya bila ada**.
-5. Galeri **photo_urls** (bila ada) dan kartu cuplikan video (dibuka in-app).
-6. Seksi **Paket** — satu kartu paket **full day**: nama, durasi (`12 jam`), jumlah
-   personel, harga, `DP 30%`, serta daftar **Fasilitas** dari `inclusions` bila tidak
-   kosong. Satu vendor = satu grup, jadi tidak ada pemilih paket.
-7. Seksi **Jadwal** — strip 45 hari (§6.6) + legenda; banner peringatan bila `stale`.
-8. Seksi **Lokasi & transport** — alamat (`baseAddress`) bila ada; teks biaya
-   transport. Tanpa peta bila koordinat tidak ada.
-9. Bottom bar: harga mulai + tombol `Pilih jadwal` (berubah menjadi `Lanjut · <tanggal>`
-   setelah tanggal dipilih).
+1. **Hero imersif** setinggi 44% layar (320–400 px): `PosterTile` full-bleed memakai
+   `banner_url`/`avatar_url`, scrim gradien ink, badge kategori lime + wilayah kaca,
+   nama 27/800 putih, lalu baris rating · respons · jumlah paket (hanya field yang
+   ada). Kontrol kembali/favorit/chat mengambang di atas foto dalam cakram kaca.
+   Ikon chat membuka **thread in-app** bila pelanggan sudah punya booking dengan
+   vendor itu (titik lime menandakan thread tersedia); bila belum, sheet menjelaskan
+   bahwa chat terikat ke pesanan, dengan tombol "Lihat paket & tanggal" dan
+   "WhatsApp (cadangan)" bila nomor vendor ada.
+2. Bar atas **tetap**: gradien transparan di puncak hero, berubah menjadi `ink` solid
+   setelah scroll 28 px; judul "Detail Grup Hiburan" selalu terbaca. Status bar ikon
+   terang.
+3. **Pita fakta** putih: durasi, personel, DP, jangkauan — dipisah garis rambut,
+   angka 15/800 + label kapital 8.5, bukan baris pil.
+4. **Tentang grup** (maks 4 baris + "Baca selengkapnya") hanya bila ada.
+5. **Paket & fasilitas**: judul editorial bergaris lime + caption jumlah pilihan.
+   Setiap paket satu kartu; yang dipilih berubah **gelap** (`ink`) dengan harga lime,
+   chip "DIPILIH", dan cakram centang lime; yang tidak dipilih tetap `card`.
+   Fasilitas/add-on hanya dari `inclusions`/`addons`.
+6. **Jadwal**: rail 45 hari (§6.6) + legenda, tombol "Kalender" di judul seksi,
+   banner `stale` bila data lama.
+7. **Video** (bila `video_url`) dan **galeri** (`photo_urls`) memakai `SectionHeader`
+   editorial + kartu radius 20.
+8. **Aman & jelas**: tiga janji PJP pada panel `surfaceSoft` radius 20.
+9. **Lokasi & transport** pada kartu `card`; tanpa peta bila koordinat tidak ada.
+10. **Ulasan** hanya dari API; kosong = satu strip netral, bukan bintang palsu.
+11. **Bottom bar gelap** radius atas 26: label "Harga mulai"/"Tanggal dipilih", nilai
+    putih/lime, tombol lime `Pilih jadwal` → `Lanjut · <tanggal>`.
+12. "Laporkan vendor" tetap di paling bawah, tenang, bukan tombol merah besar.
 
 ### 7.4 Buat booking
-Satu halaman scroll, tiga blok bernomor (bukan stepper dengan tombol mati):
-1. **Acara** — nama acara, jenis (dropdown dari pilihan tetap), tanggal acara
-   (dibawa dari jadwal yang sudah dipilih di detail vendor, tidak diminta ulang),
-   perkiraan tamu, alamat lokasi, catatan. Tidak ada pemilih sesi: booking selalu
-   sehari penuh.
-2. **Paket & tambahan** — paket full-day terpilih (ringkas, bukan pilihan), add-on
+Satu halaman scroll, empat blok bernomor (bukan stepper dengan tombol mati):
+1. **Acara** — nama acara, **jenis acara berupa chip pilihan** `Hajatan`,
+   `Khitanan / Sunatan`, `Syukuran`, `Unjungan`, `Pesta Panen`, `Lainnya`
+   (bukan dropdown; satu ketukan, semua pilihan terlihat). `Lainnya` membuka field
+   "Sebutkan jenis acara" (maks 50) yang nilainya dikirim sebagai `event_type`.
+   Lalu tanggal acara (dibawa dari jadwal yang sudah dipilih di detail vendor),
+   perkiraan tamu, dan catatan. Tidak ada pemilih sesi: booking selalu sehari penuh.
+2. **Lokasi acara** — nama tempat (`venue_name`, opsional), lalu pilihan
+   **`Ketik alamat` / `Pakai GPS`** (hanya tampil bila perangkat mendukung lokasi).
+   Mode ketik: textarea alamat & patokan (wajib, 10–1.000 karakter). Mode GPS:
+   tombol "Gunakan lokasi saat ini", kartu pin gelap berisi koordinat + akurasi,
+   tombol "Perbarui", dan "Patokan tambahan" opsional. Alamat yang dikirim =
+   `patokan · lat, lng`, plus `venue_location` `{lat, lng}`. Izin/lokasi gagal
+   dijelaskan dalam bahasa Indonesia, bukan pesan mentah browser.
+3. **Paket & tambahan** — paket full-day terpilih (ringkas, bukan pilihan), add-on
    dengan stepper jumlah, harga mengikuti.
-3. **Ringkasan uang** — kartu uang (§6.4) dengan DP dan sisa; teks aturan DP
+4. **Ringkasan uang** — kartu uang (§6.4) dengan DP dan sisa; teks aturan DP
    ("DP berlaku 24 jam; untuk nilai ≥ Rp10 juta, 48 jam") dan catatan bahwa
    pembayaran DP dibuka setelah vendor menerima booking.
 Bottom bar: `Kirim permintaan booking`. Validasi inline per field, pesan di bawah
 field, bukan dialog. Tombol bayar DP baru muncul di Status booking setelah vendor
-menerima.
+menerima. Vendor melihat nama tempat + alamat dan tombol **Peta** di detail pesanan.
 
 ### 7.5 Status booking
 1. Header: kode booking (mono/`Label M`, bisa disalin) + chip siklus hidup + chip bayar.
@@ -359,7 +416,7 @@ menerima.
   pintu masuk formulir vendor — bukan baris kesembilan di daftar pengaturan.
 - Tiga kelompok dengan judul bergaris lime: **Aktivitas** (Vendor favorit, Banding
   konten), **Bantuan & kebijakan** (pembatalan, privasi, WhatsApp), dan **Akun**
-  (Hapus akun, Keluar). Tiap kelompok satu kartu radius 16 + bayangan lembut; ikon
+  (Hapus akun, Keluar). Tiap kelompok satu kartu radius 22 + bayangan lembut; ikon
   baris di kotak tint 32 px.
 - Kebijakan dibuka di sheet dengan teks dari `GET /policies/:code`; tanpa teks hukum
   palsu.
@@ -374,14 +431,14 @@ menerima.
 - Login/daftar memakai pola **stage + ticket**: seluruh layar gelap `ink` dengan
   beam lime statis di header (bukan flat gradient), brand lockup terang, garis lime
   34×3, judul 31/800 dan satu kalimat penjelas. Form duduk di **kartu tiket**
-  `card` radius 18 dengan garis lime 3 px di sisi atas; tidak ada shadow, jadi
-  field adalah satu-satunya elemen yang "timbul". Komponennya `AuthStage`,
-  `AuthBody`, `AuthCard` di `auth_support.dart`.
+  `card` radius 26 dengan garis lime 3 px di sisi atas dan bayangan lembut; field
+  tetap menjadi elemen yang paling menonjol. Komponennya `AuthStage`, `AuthBody`,
+  `AuthCard` di `auth_support.dart`.
 - Field memakai **garis bawah** (`authLineField`), bukan kotak putih: label
   kapital 10/800 `letterSpacing 1.15`, teks 15, garis fokus 2 px `ink`. Tinggi
   sentuh tetap ≥ 48.
-- CTA lime tinggi 52, label di kiri dan panah di disc `ink` 28 px di kanan
-  (`AuthSubmitButton`), dipakai Masuk dan Daftar.
+- CTA lime tinggi 54, radius 16, label di kiri dan panah di disc `ink` 28 px di
+  kanan (`AuthSubmitButton`), dipakai Masuk dan Daftar.
 - Login: kartu berisi email + kata sandi + CTA; **di bawah kartu** ada consent
   (web), tombol Google, tautan "Daftar sekarang", lalu catatan HTTPS.
 - Daftar: kartu berisi nama, email, kata sandi, konfirmasi + CTA; **di bawah
@@ -395,6 +452,35 @@ menerima.
 - **Tidak ada** "Lupa Kata Sandi?" karena backend belum menyediakannya.
 - Error kredensial: baris inline di atas CTA (atau di bawah kartu saat error
   menyangkut kebijakan), bukan snackbar.
+
+### 7.9 Portal vendor (bahasa visual terpisah)
+Portal vendor memakai `vendor_theme.dart` dan `vendor_ui.dart`, tetapi mengikuti
+ritme yang sama dengan aplikasi pelanggan:
+- **Header** gelap `#182540 → ink` dengan beam lime, mark inisial 38 px, kicker lime,
+  judul 15.5/800, dan pita uang `Ditahan PJP` (angka 23/800 lime).
+- **Kartu** `VendorCard`: `cardWhite`, radius 22, border `lineSoft`, bayangan
+  `0x10 0B1220` blur 20. Judul seksi memakai garis lime 3×18 + label kapital 11.5.
+- **Tombol** `VendorButton`: lime/putih/outline-on-dark, tinggi 46 (36 small),
+  radius 16/10, teks 13.5/800. **Pil** status berbentuk pill dengan titik 5 px.
+- **Bottom nav** mengambang radius 22, tinggi 62, pil lime untuk ikon aktif —
+  sama seperti pelanggan, bukan bar penuh dengan garis atas.
+- **Beranda vendor**: sapaan tanggal + "Perlu jawaban" 28/800, tiga kartu statistik
+  (total, menunggu, bulan ini) dengan ikon berwarna, antrean/empty state beraksi,
+  jadwal 7 hari dengan tombol "Atur ketersediaan", panel uang **gelap** dengan angka
+  lime + "Lihat saldo", lalu kartu "Panduan cepat" tiga baris.
+- **Profil vendor**: kartu identitas gelap (inisial, nama 17/800, pil verifikasi,
+  tombol "Ubah"), tiga kartu statistik, grid 2×2 aksi (Profil & media, Paket & harga,
+  Rekening, Ketersediaan), daftar akun, dan catatan admin.
+- **Paket**: header ringkasan gelap (katalog aktif + harga mulai), kartu paket dengan
+  foto 76 px, pil Aktif, harga 15/800, lalu kartu "Tips paket" tiga baris; bottom bar
+  "Tambah paket" radius atas 22.
+- **Form vendor**: `VendorTextField` label kapital 11/800, field putih radius 12,
+  fokus lime; bottom bar simpan radius atas 22; error/empty memakai tanda panggung
+  gelap 58 px.
+- **Detail pesanan vendor**: header menyimpan pil status + tombol chat 34 px
+  (selalu terlihat), kartu PELANGGAN punya tombol "Chat pelanggan"; keduanya
+  membuka thread in-app yang sama. Detail pesanan juga punya tombol **Peta** di
+  samping alamat.
 
 ---
 

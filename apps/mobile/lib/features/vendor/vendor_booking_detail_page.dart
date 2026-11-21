@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/app.dart';
 import '../../app/routes.dart';
@@ -102,7 +103,9 @@ class _VendorBookingDetailPageState extends State<VendorBookingDetailPage> {
       await api.post('/bookings/${widget.bookingId}/checkin', body: {});
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Check-in tercatat. Acara ditandai berlangsung.')),
+        const SnackBar(
+          content: Text('Check-in tercatat. Acara ditandai berlangsung.'),
+        ),
       );
       await _load();
     } on ApiException catch (error) {
@@ -159,7 +162,11 @@ class _VendorBookingDetailPageState extends State<VendorBookingDetailPage> {
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Booking dibatalkan. Admin akan menindaklanjuti refund.')),
+        const SnackBar(
+          content: Text(
+            'Booking dibatalkan. Admin akan menindaklanjuti refund.',
+          ),
+        ),
       );
       await _load();
     } on ApiException catch (error) {
@@ -217,6 +224,39 @@ class _VendorBookingDetailPageState extends State<VendorBookingDetailPage> {
     );
   }
 
+  /// The vendor has no map picker, but a coordinate string or a written
+  /// address is enough for Google Maps to put a pin on the stage.
+  Future<void> _openMap(String address) async {
+    final query = address.trim();
+    if (query.isEmpty) return;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final opened = await launchUrl(
+        Uri.parse(
+          'https://www.google.com/maps/search/?api=1'
+          '&query=${Uri.encodeComponent(query)}',
+        ),
+        mode: LaunchMode.externalApplication,
+      );
+      if (!opened) {
+        messenger.showSnackBar(
+          const SnackBar(content: Text('Peta tidak bisa dibuka di sini.')),
+        );
+      }
+    } catch (_) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Peta tidak bisa dibuka di sini.')),
+      );
+    }
+  }
+
+  String _customerNameOf(Map<String, dynamic> booking) =>
+      booking['customer_name']?.toString() ??
+      (booking['customer'] is Map
+          ? (booking['customer'] as Map)['name']?.toString()
+          : null) ??
+      'Pelanggan';
+
   @override
   Widget build(BuildContext context) {
     final booking = _booking;
@@ -233,12 +273,22 @@ class _VendorBookingDetailPageState extends State<VendorBookingDetailPage> {
         showBack: true,
         trailing: booking == null
             ? null
-            : VendorPill(
-                label: _headerStatus(lifecycle),
-                tone: vendorToneForStatus(lifecycle),
+            : Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  VendorPill(
+                    label: _headerStatus(lifecycle),
+                    tone: vendorToneForStatus(lifecycle),
+                  ),
+                  const SizedBox(width: 6),
+                  _HeaderChatButton(
+                    onPressed: () => _openChat(_customerNameOf(booking)),
+                  ),
+                ],
               ),
       ),
-      bottomNavigationBar: booking != null &&
+      bottomNavigationBar:
+          booking != null &&
               (isRequested || isConfirmed || lifecycle == 'accepted')
           ? _actionBar(booking)
           : null,
@@ -277,16 +327,15 @@ class _VendorBookingDetailPageState extends State<VendorBookingDetailPage> {
         '-';
     final venueName = booking['event_venue_name']?.toString();
     final venueAddress = booking['event_venue_address']?.toString();
+    final eventLocationLine = [
+      if (venueName != null && venueName.isNotEmpty) venueName,
+      if (venueAddress != null && venueAddress.isNotEmpty) venueAddress,
+    ].join(' · ');
     final guests = booking['event_guest_estimate'] ?? booking['guest_count'];
     final packageName = booking['package_name']?.toString();
     final notes = booking['event_notes']?.toString();
 
-    final customerName =
-        booking['customer_name']?.toString() ??
-        (booking['customer'] is Map
-            ? (booking['customer'] as Map)['name']?.toString()
-            : null) ??
-        'Pelanggan';
+    final customerName = _customerNameOf(booking);
     final customerPhone =
         booking['customer_phone']?.toString() ??
         (booking['customer'] is Map
@@ -425,16 +474,52 @@ class _VendorBookingDetailPageState extends State<VendorBookingDetailPage> {
                           : '$eventTitle — $packageName',
                       style: vendorText(size: 13, weight: FontWeight.w700),
                     ),
-                    if (venueName != null && venueName.isNotEmpty) ...[
-                      const SizedBox(height: 3),
-                      Text(
-                        venueAddress == null || venueAddress.isEmpty
-                            ? venueName
-                            : '$venueName · $venueAddress',
-                        style: vendorText(
-                          size: 11.5,
-                          color: VendorColors.muted,
-                          height: 1.4,
+                    if (eventLocationLine.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
+                        decoration: BoxDecoration(
+                          color: VendorColors.softRow,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: VendorColors.lineSoft),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.place_outlined,
+                              size: 16,
+                              color: VendorColors.muted,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                eventLocationLine,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: vendorText(
+                                  size: 11.5,
+                                  color: VendorColors.ink,
+                                  height: 1.4,
+                                ),
+                              ),
+                            ),
+                            if (venueAddress != null && venueAddress.isNotEmpty)
+                              TextButton(
+                                onPressed: () => _openMap(venueAddress),
+                                style: TextButton.styleFrom(
+                                  foregroundColor: VendorColors.ink,
+                                  minimumSize: const Size(0, 40),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                  ),
+                                  textStyle: vendorText(
+                                    size: 11,
+                                    weight: FontWeight.w800,
+                                  ),
+                                ),
+                                child: const Text('Peta'),
+                              ),
+                          ],
                         ),
                       ),
                     ],
@@ -1089,6 +1174,44 @@ class _VendorDeclineSheetState extends State<VendorDeclineSheet> {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Persistent chat shortcut in the dark header, next to the status pill.
+class _HeaderChatButton extends StatelessWidget {
+  const _HeaderChatButton({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'Chat pelanggan',
+      child: Semantics(
+        button: true,
+        label: 'Chat pelanggan',
+        child: Material(
+          color: Colors.white.withValues(alpha: 0.06),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+            side: BorderSide(color: Colors.white.withValues(alpha: 0.16)),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: onPressed,
+            child: const SizedBox(
+              width: 34,
+              height: 34,
+              child: Icon(
+                Icons.forum_outlined,
+                size: 17,
+                color: VendorColors.lime,
+              ),
+            ),
+          ),
         ),
       ),
     );

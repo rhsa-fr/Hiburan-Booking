@@ -242,17 +242,6 @@ class _VendorProfilePageState extends State<VendorProfilePage> {
         ? public!['packages'] as List
         : const [];
 
-    final stats = <({String value, String label})>[
-      (value: '$_completed', label: 'Pesanan selesai'),
-      if (rating is num && ratingCount > 0)
-        (
-          value: rating.toStringAsFixed(1).replaceAll('.', ','),
-          label: 'Rating vendor',
-        ),
-      if (packages.isNotEmpty)
-        (value: '${packages.length}', label: 'Paket aktif'),
-    ];
-
     return RefreshIndicator(
       color: VendorColors.limeDark,
       onRefresh: () => _load(silent: true),
@@ -265,56 +254,95 @@ class _VendorProfilePageState extends State<VendorProfilePage> {
           VendorSp.xl,
         ),
         children: [
-          if (stats.isNotEmpty)
-            VendorCard(
-              padding: EdgeInsets.zero,
-              child: IntrinsicHeight(
-                child: Row(
-                  children: [
-                    for (var i = 0; i < stats.length; i++)
-                      Expanded(
-                        child: VendorStatCell(
-                          value: stats[i].value,
-                          label: stats[i].label,
-                          showDivider: i != stats.length - 1,
-                        ),
-                      ),
-                  ],
+          _ProfileHero(
+            name: me['display_name']?.toString() ?? 'Vendor',
+            subtitle: [
+              if ((public?['category_name']?.toString().trim() ?? '')
+                  .isNotEmpty)
+                public!['category_name'].toString().trim(),
+              if (regionName.isNotEmpty)
+                regionName
+              else if (regionCode.isNotEmpty)
+                'Wilayah $regionCode',
+            ].join(' · '),
+            verification: verification,
+            onEdit: _openManageProfile,
+          ),
+          const SizedBox(height: VendorSp.md),
+          Row(
+            children: [
+              Expanded(
+                child: _ProfileStat(
+                  icon: Icons.task_alt_rounded,
+                  value: '$_completed',
+                  label: 'Pesanan selesai',
                 ),
               ),
-            ),
-          const VendorSectionTitle(label: 'Kelola'),
-          VendorCard(
-            padding: EdgeInsets.zero,
-            child: Column(
-              children: [
-                _InfoRow(
-                  title: 'Profil & media',
-                  subtitle: 'Nama, deskripsi, alamat, foto, video',
-                  trailingIcon: Icons.storefront_outlined,
-                  onTap: _openManageProfile,
-                ),
-                _InfoRow(
-                  title: 'Paket & harga',
-                  subtitle: 'Harga, durasi, personel, fasilitas, foto paket',
-                  trailingIcon: Icons.inventory_2_outlined,
-                  onTap: _openManagePackages,
-                ),
-                _InfoRow(
-                  title: 'Rekening pencairan',
-                  subtitle: 'Rekening tujuan transfer, diverifikasi admin',
-                  trailingIcon: Icons.account_balance_outlined,
-                  onTap: _openBankAccounts,
-                ),
-                _InfoRow(
-                  title: 'Ketersediaan',
-                  subtitle: 'Atur tanggal tersedia atau tutup',
-                  trailingIcon: Icons.edit_calendar_outlined,
-                  onTap: widget.onOpenCalendar,
-                  showDivider: false,
+              if (rating is num && ratingCount > 0) ...[
+                const SizedBox(width: VendorSp.sm),
+                Expanded(
+                  child: _ProfileStat(
+                    icon: Icons.star_outline_rounded,
+                    value: rating.toStringAsFixed(1).replaceAll('.', ','),
+                    label: 'Rating vendor',
+                  ),
                 ),
               ],
-            ),
+              if (packages.isNotEmpty) ...[
+                const SizedBox(width: VendorSp.sm),
+                Expanded(
+                  child: _ProfileStat(
+                    icon: Icons.inventory_2_outlined,
+                    value: '${packages.length}',
+                    label: 'Paket aktif',
+                  ),
+                ),
+              ],
+            ],
+          ),
+          const VendorSectionTitle(label: 'Kelola'),
+          Row(
+            children: [
+              Expanded(
+                child: _ActionTile(
+                  icon: Icons.storefront_outlined,
+                  title: 'Profil & media',
+                  subtitle: 'Nama, foto, video',
+                  onTap: _openManageProfile,
+                ),
+              ),
+              const SizedBox(width: VendorSp.sm),
+              Expanded(
+                child: _ActionTile(
+                  icon: Icons.inventory_2_outlined,
+                  title: 'Paket & harga',
+                  subtitle: 'Harga dan fasilitas',
+                  onTap: _openManagePackages,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: VendorSp.sm),
+          Row(
+            children: [
+              Expanded(
+                child: _ActionTile(
+                  icon: Icons.account_balance_outlined,
+                  title: 'Rekening pencairan',
+                  subtitle: 'Tujuan transfer',
+                  onTap: _openBankAccounts,
+                ),
+              ),
+              const SizedBox(width: VendorSp.sm),
+              Expanded(
+                child: _ActionTile(
+                  icon: Icons.edit_calendar_outlined,
+                  title: 'Ketersediaan',
+                  subtitle: 'Tanggal buka atau tutup',
+                  onTap: widget.onOpenCalendar,
+                ),
+              ),
+            ],
           ),
           const VendorSectionTitle(label: 'Akun'),
           VendorCard(
@@ -375,6 +403,234 @@ class _VendorProfilePageState extends State<VendorProfilePage> {
             style: vendorText(size: 11, color: VendorColors.muted, height: 1.5),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _ProfileHero extends StatelessWidget {
+  const _ProfileHero({
+    required this.name,
+    required this.subtitle,
+    required this.verification,
+    required this.onEdit,
+  });
+
+  final String name;
+  final String subtitle;
+  final String verification;
+  final VoidCallback onEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF182540), VendorColors.ink],
+        ),
+        borderRadius: BorderRadius.circular(VendorRadii.lg),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x240B1220),
+            blurRadius: 22,
+            offset: Offset(0, 8),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        children: [
+          const Positioned.fill(child: VendorBeams(intensity: 0.8)),
+          Padding(
+            padding: const EdgeInsets.all(VendorSp.lg),
+            child: Row(
+              children: [
+                Container(
+                  width: 58,
+                  height: 58,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: VendorColors.lime.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(VendorRadii.md),
+                    border: Border.all(
+                      color: VendorColors.lime.withValues(alpha: 0.45),
+                    ),
+                  ),
+                  child: Text(
+                    vendorInitials(name),
+                    style: vendorText(
+                      size: 18,
+                      weight: FontWeight.w800,
+                      color: VendorColors.lime,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: VendorSp.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: vendorText(
+                          size: 17,
+                          weight: FontWeight.w800,
+                          color: Colors.white,
+                          letterSpacing: -0.35,
+                          height: 1.16,
+                        ),
+                      ),
+                      if (subtitle.isNotEmpty) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          subtitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: vendorText(
+                            size: 11.5,
+                            color: Colors.white.withValues(alpha: 0.62),
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        children: [
+                          if (verification.isNotEmpty)
+                            VendorPill(
+                              label: _verificationLabel(verification),
+                              tone: _verificationTone(verification),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: VendorSp.sm),
+                Column(
+                  children: [
+                    VendorButton(
+                      label: 'Ubah',
+                      icon: Icons.edit_outlined,
+                      kind: VendorButtonKind.outlineOnDark,
+                      small: true,
+                      onPressed: onEdit,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProfileStat extends StatelessWidget {
+  const _ProfileStat({
+    required this.icon,
+    required this.value,
+    required this.label,
+  });
+
+  final IconData icon;
+  final String value;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(11),
+      decoration: BoxDecoration(
+        color: VendorColors.cardWhite,
+        borderRadius: BorderRadius.circular(VendorRadii.md),
+        border: Border.all(color: VendorColors.lineSoft),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 16, color: VendorColors.muted),
+          const SizedBox(height: 6),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: vendorText(size: 18, weight: FontWeight.w800),
+          ),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: vendorText(size: 10.5, color: VendorColors.muted),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ActionTile extends StatelessWidget {
+  const _ActionTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: VendorColors.cardWhite,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(VendorRadii.md),
+        side: const BorderSide(color: VendorColors.lineSoft),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: VendorColors.limeSoft,
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                child: Icon(icon, size: 18, color: VendorColors.ink),
+              ),
+              const SizedBox(height: 9),
+              Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: vendorText(size: 12.5, weight: FontWeight.w800),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: vendorText(size: 10.5, color: VendorColors.muted),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

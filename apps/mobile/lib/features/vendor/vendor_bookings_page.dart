@@ -220,23 +220,23 @@ class _FilterChip extends StatelessWidget {
       child: Material(
         color: selected ? VendorColors.ink : VendorColors.cardWhite,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(VendorRadii.pill),
           side: BorderSide(
-            color: selected ? VendorColors.ink : const Color(0xFFD4D6D0),
+            color: selected ? VendorColors.ink : VendorColors.lineSoft,
           ),
         ),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: onTap,
           child: SizedBox(
-            height: 36,
+            height: 38,
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 13),
+              padding: const EdgeInsets.symmetric(horizontal: 14),
               child: Center(
                 child: Text(
                   label,
                   style: vendorText(
-                    size: 11.5,
+                    size: 12,
                     weight: FontWeight.w700,
                     color: selected
                         ? VendorColors.lime

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app/theme.dart';
+import 'ui.dart';
 
 /// Skeleton screen, not a lone spinner: the shell keeps its shape while loading.
 class AppLoading extends StatefulWidget {
@@ -59,21 +60,40 @@ class _AppLoadingState extends State<AppLoading>
           children: [
             for (var i = 0; i < widget.rows; i++)
               Container(
-                margin: const EdgeInsets.only(bottom: Sp.sm),
+                margin: const EdgeInsets.only(bottom: Sp.md),
                 padding: const EdgeInsets.all(Sp.lg),
                 decoration: BoxDecoration(
                   color: AppColors.card,
-                  borderRadius: BorderRadius.circular(Radii.lg),
+                  borderRadius: BorderRadius.circular(Radii.xxl),
                   border: Border.all(color: AppColors.line),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _bar(0.45, 14),
-                    const SizedBox(height: Sp.md),
-                    _bar(0.85, 12),
-                    const SizedBox(height: Sp.sm),
-                    _bar(0.6, 12),
+                    if (i == 0)
+                      Row(
+                        children: [
+                          _block(48, 48, radius: Radii.lg),
+                          const SizedBox(width: Sp.md),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _bar(0.55, 14),
+                                const SizedBox(height: Sp.sm),
+                                _bar(0.85, 11),
+                              ],
+                            ),
+                          ),
+                        ],
+                      )
+                    else ...[
+                      _bar(0.4, 12),
+                      const SizedBox(height: Sp.md),
+                      _bar(0.92, 12),
+                      const SizedBox(height: Sp.sm),
+                      _bar(0.64, 12),
+                    ],
                   ],
                 ),
               ),
@@ -86,14 +106,63 @@ class _AppLoadingState extends State<AppLoading>
   Widget _bar(double widthFactor, double height) => FractionallySizedBox(
     widthFactor: widthFactor,
     alignment: Alignment.centerLeft,
-    child: Container(
-      height: height,
-      decoration: BoxDecoration(
-        color: AppColors.skeleton,
-        borderRadius: BorderRadius.circular(Sp.xs),
-      ),
-    ),
+    child: _block(double.infinity, height),
   );
+
+  Widget _block(double width, double height, {double radius = Sp.xs}) =>
+      Container(
+        width: width,
+        height: height,
+        decoration: BoxDecoration(
+          color: AppColors.skeleton,
+          borderRadius: BorderRadius.circular(radius),
+        ),
+      );
+}
+
+/// Round stage pill used by the empty and error states. The beam wash keeps a
+/// blank screen from reading as a broken one.
+class _StateArt extends StatelessWidget {
+  const _StateArt({
+    required this.icon,
+    required this.background,
+    required this.foreground,
+  });
+
+  final IconData icon;
+  final List<Color> background;
+  final Color foreground;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 78,
+      height: 78,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: background,
+        ),
+        borderRadius: BorderRadius.circular(26),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x180B1220),
+            blurRadius: 18,
+            offset: Offset(0, 8),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          const StageBeams(intensity: 0.8),
+          Center(child: Icon(icon, color: foreground, size: 30)),
+        ],
+      ),
+    );
+  }
 }
 
 /// Failure state: plain Indonesian + a retry the thumb can reach.
@@ -119,7 +188,8 @@ class AppError extends StatelessWidget {
         padding: const EdgeInsets.all(Sp.md),
         decoration: BoxDecoration(
           color: AppColors.dangerSoft,
-          borderRadius: BorderRadius.circular(Radii.sm),
+          borderRadius: BorderRadius.circular(Radii.lg),
+          border: Border.all(color: AppColors.danger.withValues(alpha: 0.18)),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -143,21 +213,17 @@ class AppError extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              width: 56,
-              height: 56,
-              decoration: const BoxDecoration(
-                color: AppColors.dangerSoft,
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.cloud_off_outlined,
-                color: AppColors.danger,
-                size: 26,
-              ),
+            const _StateArt(
+              icon: Icons.cloud_off_outlined,
+              background: [Color(0xFF3B1512), Color(0xFF0B1220)],
+              foreground: Color(0xFFFF9A8F),
             ),
             const SizedBox(height: Sp.lg),
-            Text(message, textAlign: TextAlign.center, style: text.bodyLarge),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: text.bodyLarge?.copyWith(color: AppColors.inkMuted),
+            ),
             if (onRetry != null) ...[
               const SizedBox(height: Sp.xl),
               PrimaryButton(
@@ -173,16 +239,18 @@ class AppError extends StatelessWidget {
   }
 }
 
-/// Empty state: one sentence, no illustration hunt.
+/// Empty state: a stage-lit mark, one clear sentence, and one way forward.
 class AppEmpty extends StatelessWidget {
   const AppEmpty({
     super.key,
     required this.message,
+    this.title,
     this.icon = Icons.inbox_outlined,
     this.action,
   });
 
   final String message;
+  final String? title;
   final IconData icon;
   final Widget? action;
 
@@ -195,21 +263,28 @@ class AppEmpty extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              width: 56,
-              height: 56,
-              decoration: const BoxDecoration(
-                color: AppColors.neutralSoft,
-                shape: BoxShape.circle,
-              ),
-              child: Icon(icon, color: AppColors.inkMuted, size: 26),
+            _StateArt(
+              icon: icon,
+              background: const [Color(0xFF182540), Color(0xFF0B1220)],
+              foreground: AppColors.lime,
             ),
             const SizedBox(height: Sp.lg),
             Text(
-              message,
+              title ?? message,
               textAlign: TextAlign.center,
-              style: text.bodyLarge?.copyWith(color: AppColors.inkMuted),
+              style: text.titleMedium?.copyWith(
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.25,
+              ),
             ),
+            if (title != null) ...[
+              const SizedBox(height: Sp.xs),
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: text.bodyMedium?.copyWith(color: AppColors.inkMuted),
+              ),
+            ],
             if (action != null) ...[const SizedBox(height: Sp.lg), action!],
           ],
         ),
@@ -289,16 +364,31 @@ class StatusChip extends StatelessWidget {
     final tone = _tone(status, kind);
     return Container(
       padding: const EdgeInsets.symmetric(
-        horizontal: Sp.md,
-        vertical: Sp.xs + 2,
+        horizontal: Sp.sm + 2,
+        vertical: Sp.xs + 1,
       ),
       decoration: BoxDecoration(
         color: tone.bg,
         borderRadius: BorderRadius.circular(Radii.pill),
+        border: Border.all(color: tone.fg.withValues(alpha: 0.18)),
       ),
-      child: Text(
-        tone.label,
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(color: tone.fg),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 5,
+            height: 5,
+            decoration: BoxDecoration(color: tone.fg, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 5),
+          Text(
+            tone.label,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: tone.fg,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
       ),
     );
   }

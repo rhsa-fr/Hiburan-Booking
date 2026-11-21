@@ -470,9 +470,16 @@ class _BrowsePageState extends State<BrowsePage> {
             Container(
               padding: const EdgeInsets.all(Sp.md),
               decoration: BoxDecoration(
-                color: AppColors.surfaceSoft,
-                borderRadius: BorderRadius.circular(Radii.xl),
+                color: AppColors.card,
+                borderRadius: BorderRadius.circular(Radii.xxl),
                 border: Border.all(color: AppColors.line),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x0D0B1220),
+                    blurRadius: 16,
+                    offset: Offset(0, 5),
+                  ),
+                ],
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -531,26 +538,26 @@ class _BrowsePageState extends State<BrowsePage> {
   Widget _dateTile() {
     final active = _date != null;
     return Material(
-      color: active ? AppColors.surfaceTint : AppColors.surfaceSoft,
+      color: active ? AppColors.limeSoft : AppColors.card,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(Radii.sm),
+        borderRadius: BorderRadius.circular(Radii.pill),
         side: BorderSide(
-          color: active ? AppColors.primary : AppColors.line,
-          width: active ? 1.5 : 1.0,
+          color: active ? AppColors.limeDark : AppColors.line,
+          width: active ? 1.4 : 1.0,
         ),
       ),
       child: InkWell(
         onTap: _pickDate,
-        borderRadius: BorderRadius.circular(Radii.sm),
+        borderRadius: BorderRadius.circular(Radii.pill),
         child: Container(
-          height: 44,
+          height: 46,
           padding: const EdgeInsets.symmetric(horizontal: Sp.md),
           child: Row(
             children: [
               Icon(
                 Icons.event_outlined,
                 size: 16,
-                color: active ? AppColors.primary : AppColors.inkMuted,
+                color: active ? AppColors.ink : AppColors.inkMuted,
               ),
               const SizedBox(width: Sp.xs + 2),
               Expanded(
@@ -561,7 +568,7 @@ class _BrowsePageState extends State<BrowsePage> {
                   style: TextStyle(
                     fontSize: 12.5,
                     fontWeight: active ? FontWeight.w700 : FontWeight.w500,
-                    color: active ? AppColors.primary : AppColors.inkMuted,
+                    color: active ? AppColors.ink : AppColors.inkMuted,
                   ),
                 ),
               ),
@@ -571,11 +578,7 @@ class _BrowsePageState extends State<BrowsePage> {
                   onTap: _clearDate,
                   child: const Padding(
                     padding: EdgeInsets.all(4),
-                    child: Icon(
-                      Icons.close,
-                      size: 16,
-                      color: AppColors.primary,
-                    ),
+                    child: Icon(Icons.close, size: 16, color: AppColors.ink),
                   ),
                 ),
               ] else ...[
@@ -596,26 +599,26 @@ class _BrowsePageState extends State<BrowsePage> {
     final active = _region != null;
     final hasRegions = regions.isNotEmpty;
     return Material(
-      color: active ? AppColors.surfaceTint : AppColors.surfaceSoft,
+      color: active ? AppColors.limeSoft : AppColors.card,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(Radii.sm),
+        borderRadius: BorderRadius.circular(Radii.pill),
         side: BorderSide(
-          color: active ? AppColors.primary : AppColors.line,
-          width: active ? 1.5 : 1.0,
+          color: active ? AppColors.limeDark : AppColors.line,
+          width: active ? 1.4 : 1.0,
         ),
       ),
       child: InkWell(
         onTap: hasRegions ? () => _openRegionPicker(regions) : null,
-        borderRadius: BorderRadius.circular(Radii.sm),
+        borderRadius: BorderRadius.circular(Radii.pill),
         child: Container(
-          height: 44,
+          height: 46,
           padding: const EdgeInsets.symmetric(horizontal: Sp.md),
           child: Row(
             children: [
               Icon(
                 Icons.location_on_outlined,
                 size: 16,
-                color: active ? AppColors.primary : AppColors.inkMuted,
+                color: active ? AppColors.ink : AppColors.inkMuted,
               ),
               const SizedBox(width: Sp.xs + 2),
               Expanded(
@@ -626,7 +629,7 @@ class _BrowsePageState extends State<BrowsePage> {
                   style: TextStyle(
                     fontSize: 12.5,
                     fontWeight: active ? FontWeight.w700 : FontWeight.w500,
-                    color: active ? AppColors.primary : AppColors.inkMuted,
+                    color: active ? AppColors.ink : AppColors.inkMuted,
                   ),
                 ),
               ),
@@ -636,11 +639,7 @@ class _BrowsePageState extends State<BrowsePage> {
                   onTap: () => setState(() => _region = null),
                   child: const Padding(
                     padding: EdgeInsets.all(4),
-                    child: Icon(
-                      Icons.close,
-                      size: 16,
-                      color: AppColors.primary,
-                    ),
+                    child: Icon(Icons.close, size: 16, color: AppColors.ink),
                   ),
                 ),
               ] else ...[

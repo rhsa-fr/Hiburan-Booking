@@ -2059,36 +2059,55 @@ class _MethodOption extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(Radii.sm),
+        borderRadius: BorderRadius.circular(Radii.lg),
         child: Container(
-          constraints: const BoxConstraints(minHeight: 48),
+          constraints: const BoxConstraints(minHeight: 54),
           padding: const EdgeInsets.symmetric(
             horizontal: Sp.md,
             vertical: Sp.md,
           ),
           decoration: BoxDecoration(
-            color: selected ? AppColors.primarySoft : AppColors.card,
-            borderRadius: BorderRadius.circular(Radii.sm),
+            color: selected ? AppColors.limeSoft : AppColors.card,
+            borderRadius: BorderRadius.circular(Radii.lg),
             border: Border.all(
-              color: selected ? AppColors.primary : AppColors.line,
-              width: selected ? 1.6 : 1,
+              color: selected ? AppColors.limeDark : AppColors.line,
+              width: selected ? 1.5 : 1,
             ),
           ),
           child: Row(
             children: [
-              Icon(
-                selected
-                    ? Icons.radio_button_checked
-                    : Icons.radio_button_unchecked,
-                size: 22,
-                color: selected ? AppColors.primary : AppColors.inkMuted,
+              Container(
+                width: 22,
+                height: 22,
+                decoration: BoxDecoration(
+                  color: selected ? AppColors.ink : Colors.transparent,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: selected ? AppColors.ink : AppColors.lineStrong,
+                    width: 1.5,
+                  ),
+                ),
+                child: selected
+                    ? const Icon(
+                        Icons.check_rounded,
+                        size: 14,
+                        color: AppColors.lime,
+                      )
+                    : null,
               ),
               if (method != null) ...[
                 const SizedBox(width: Sp.sm),
                 ExcludeSemantics(child: _PaymentBadge(method: method!)),
               ],
               const SizedBox(width: Sp.sm),
-              Expanded(child: Text(label, style: text.titleMedium)),
+              Expanded(
+                child: Text(
+                  label,
+                  style: text.titleMedium?.copyWith(
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  ),
+                ),
+              ),
             ],
           ),
         ),
@@ -2485,9 +2504,9 @@ class _RefundStatusCardState extends State<_RefundStatusCard> {
 
   Future<void> _load() async {
     try {
-      final raw = await AppScope.of(context).api.get(
-        '/payments/refunds/by-booking/${widget.bookingId}',
-      );
+      final raw = await AppScope.of(
+        context,
+      ).api.get('/payments/refunds/by-booking/${widget.bookingId}');
       final data = raw is Map ? raw.cast<String, dynamic>() : null;
       final refund = data?['refund'];
       if (!mounted) return;

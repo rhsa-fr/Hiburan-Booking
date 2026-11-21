@@ -99,9 +99,9 @@ class _VendorManageProfilePageState extends State<VendorManageProfilePage> {
           ..clear()
           ..addAll(
             (me['photo_urls'] is List)
-                ? (me['photo_urls'] as List)
-                      .whereType<String>()
-                      .where((value) => value.trim().isNotEmpty)
+                ? (me['photo_urls'] as List).whereType<String>().where(
+                    (value) => value.trim().isNotEmpty,
+                  )
                 : const <String>[],
           );
         _pendingAvatar = null;
@@ -334,7 +334,9 @@ class _VendorManageProfilePageState extends State<VendorManageProfilePage> {
 
   void _notice(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -357,10 +359,22 @@ class _VendorManageProfilePageState extends State<VendorManageProfilePage> {
       bottomNavigationBar: _loading || _error != null
           ? null
           : Container(
-              color: VendorColors.cardWhite,
+              decoration: const BoxDecoration(
+                color: VendorColors.cardWhite,
+                borderRadius: BorderRadius.vertical(
+                  top: Radius.circular(VendorRadii.lg),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Color(0x160B1220),
+                    blurRadius: 20,
+                    offset: Offset(0, -6),
+                  ),
+                ],
+              ),
               padding: EdgeInsets.fromLTRB(
                 VendorSp.lg,
-                10,
+                12,
                 VendorSp.lg,
                 12 + MediaQuery.viewPaddingOf(context).bottom,
               ),
@@ -374,12 +388,7 @@ class _VendorManageProfilePageState extends State<VendorManageProfilePage> {
 
   Widget _form() {
     return ListView(
-      padding: const EdgeInsets.fromLTRB(
-        VendorSp.lg,
-        14,
-        VendorSp.lg,
-        24,
-      ),
+      padding: const EdgeInsets.fromLTRB(VendorSp.lg, 14, VendorSp.lg, 24),
       children: [
         const VendorSectionTitle(label: 'Identitas'),
         VendorCard(
@@ -468,10 +477,7 @@ class _VendorManageProfilePageState extends State<VendorManageProfilePage> {
                 alignment: Alignment.centerLeft,
                 child: Text(
                   'Harga paket diatur di menu Paket & harga.',
-                  style: vendorText(
-                    size: 10.5,
-                    color: VendorColors.muted,
-                  ),
+                  style: vendorText(size: 10.5, color: VendorColors.muted),
                 ),
               ),
             ],
@@ -490,9 +496,9 @@ class _VendorManageProfilePageState extends State<VendorManageProfilePage> {
                 onPick: _pickAvatar,
                 onClear: (_avatarUrl != null || _pendingAvatar != null)
                     ? () => setState(() {
-                          _avatarUrl = null;
-                          _pendingAvatar = null;
-                        })
+                        _avatarUrl = null;
+                        _pendingAvatar = null;
+                      })
                     : null,
               ),
               const SizedBox(height: 4),
@@ -513,9 +519,9 @@ class _VendorManageProfilePageState extends State<VendorManageProfilePage> {
                 onPick: _pickBanner,
                 onClear: (_bannerUrl != null || _pendingBanner != null)
                     ? () => setState(() {
-                          _bannerUrl = null;
-                          _pendingBanner = null;
-                        })
+                        _bannerUrl = null;
+                        _pendingBanner = null;
+                      })
                     : null,
               ),
               const SizedBox(height: 4),
@@ -545,7 +551,9 @@ class _VendorManageProfilePageState extends State<VendorManageProfilePage> {
                         () {
                           final pending = _pendingPhotoReplacements[i];
                           final isPending = pending != null;
-                          final displayUrl = isPending ? pending.url : _photos[i];
+                          final displayUrl = isPending
+                              ? pending.url
+                              : _photos[i];
                           return SizedBox(
                             width: width,
                             child: Stack(
@@ -556,12 +564,18 @@ class _VendorManageProfilePageState extends State<VendorManageProfilePage> {
                                   height: 92,
                                   onPick: () => _replacePhoto(i),
                                   onClear: () => setState(() {
-                                    if (_pendingPhotoReplacements.containsKey(i)) {
+                                    if (_pendingPhotoReplacements.containsKey(
+                                      i,
+                                    )) {
                                       _pendingPhotoReplacements.remove(i);
                                     } else {
                                       _photos.removeAt(i);
-                                      final updated = <int, VendorMediaUpload>{};
-                                      _pendingPhotoReplacements.forEach((key, val) {
+                                      final updated =
+                                          <int, VendorMediaUpload>{};
+                                      _pendingPhotoReplacements.forEach((
+                                        key,
+                                        val,
+                                      ) {
                                         if (key > i) {
                                           updated[key - 1] = val;
                                         } else if (key < i) {
@@ -597,7 +611,8 @@ class _VendorManageProfilePageState extends State<VendorManageProfilePage> {
                                 label: 'Galeri ${_photos.length + j + 1}',
                                 url: _pendingPhotos[j].url,
                                 height: 92,
-                                onClear: () => setState(() => _pendingPhotos.removeAt(j)),
+                                onClear: () =>
+                                    setState(() => _pendingPhotos.removeAt(j)),
                               ),
                               const Positioned(
                                 top: 24,

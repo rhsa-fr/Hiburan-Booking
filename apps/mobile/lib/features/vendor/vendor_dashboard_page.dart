@@ -17,10 +17,12 @@ class VendorDashboardPage extends StatefulWidget {
     super.key,
     this.onOpenBookings,
     this.onOpenEarnings,
+    this.onOpenCalendar,
   });
 
   final VoidCallback? onOpenBookings;
   final VoidCallback? onOpenEarnings;
+  final VoidCallback? onOpenCalendar;
 
   @override
   State<VendorDashboardPage> createState() => _VendorDashboardPageState();
@@ -313,32 +315,37 @@ class _VendorDashboardPageState extends State<VendorDashboardPage> {
                   ),
                   children: [
                     _lead(pending),
-                    VendorCard(
-                      padding: EdgeInsets.zero,
-                      child: IntrinsicHeight(
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: VendorStatCell(
-                                value: '$total',
-                                label: 'Total Pesanan',
-                              ),
+                    IntrinsicHeight(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Expanded(
+                            child: _DashStat(
+                              value: '$total',
+                              label: 'Total pesanan',
+                              icon: Icons.receipt_long_outlined,
+                              tone: VendorColors.ink,
                             ),
-                            Expanded(
-                              child: VendorStatCell(
-                                value: '$pending',
-                                label: 'Menunggu',
-                              ),
+                          ),
+                          const SizedBox(width: VendorSp.sm),
+                          Expanded(
+                            child: _DashStat(
+                              value: '$pending',
+                              label: 'Menunggu',
+                              icon: Icons.hourglass_top_rounded,
+                              tone: VendorColors.amber,
                             ),
-                            Expanded(
-                              child: VendorStatCell(
-                                value: '$monthCount',
-                                label: 'Bulan Ini',
-                                showDivider: false,
-                              ),
+                          ),
+                          const SizedBox(width: VendorSp.sm),
+                          Expanded(
+                            child: _DashStat(
+                              value: '$monthCount',
+                              label: 'Bulan ini',
+                              icon: Icons.calendar_month_outlined,
+                              tone: VendorColors.green,
                             ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
                     ),
                     VendorSectionTitle(
@@ -379,6 +386,8 @@ class _VendorDashboardPageState extends State<VendorDashboardPage> {
                     _weekCard(),
                     const VendorSectionTitle(label: 'Uang'),
                     _moneyPanel(monthIdr),
+                    const VendorSectionTitle(label: 'Panduan cepat'),
+                    _guideCard(),
                   ],
                 ),
               ),
@@ -389,25 +398,45 @@ class _VendorDashboardPageState extends State<VendorDashboardPage> {
   }
 
   Widget _lead(int pending) {
+    final now = DateTime.now();
     return Padding(
-      padding: const EdgeInsets.only(top: 18, bottom: 12),
+      padding: const EdgeInsets.only(top: 18, bottom: 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Row(
+            children: [
+              Container(
+                width: 22,
+                height: 3,
+                decoration: BoxDecoration(
+                  color: VendorColors.limeDark,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(width: 7),
+              Text(
+                '${vendorFullDay(now)} · ${now.day} '
+                '${vendorMonthName(now.month)}',
+                style: vendorKicker,
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
           Text(
             'Perlu jawaban',
             style: vendorText(
-              size: 25,
+              size: 28,
               weight: FontWeight.w800,
-              letterSpacing: -0.8,
-              height: 1.08,
+              letterSpacing: -1,
+              height: 1.04,
             ),
           ),
           const SizedBox(height: 7),
           Text.rich(
             TextSpan(
               style: vendorText(
-                size: 12.5,
+                size: 13,
                 color: VendorColors.muted,
                 height: 1.5,
               ),
@@ -416,7 +445,7 @@ class _VendorDashboardPageState extends State<VendorDashboardPage> {
                   TextSpan(
                     text: '$pending',
                     style: vendorText(
-                      size: 12.5,
+                      size: 13,
                       weight: FontWeight.w800,
                       color: VendorColors.ink,
                     ),
@@ -446,11 +475,20 @@ class _VendorDashboardPageState extends State<VendorDashboardPage> {
         .take(5)
         .toList();
     if (waiting.isEmpty) {
-      return const VendorEmpty(
+      return VendorEmpty(
+        icon: Icons.event_available_outlined,
         title: 'Belum ada antrean booking',
         message:
             'Pesanan baru muncul setelah pelanggan mengirim permintaan dan '
             'DP masuk.',
+        action: VendorButton(
+          label: 'Kelola paket & harga',
+          icon: Icons.inventory_2_outlined,
+          kind: VendorButtonKind.secondary,
+          small: true,
+          onPressed: () =>
+              Navigator.pushNamed(context, Routes.vendorManagePackages),
+        ),
       );
     }
     return Column(
@@ -491,9 +529,19 @@ class _VendorDashboardPageState extends State<VendorDashboardPage> {
   Widget _weekCard() {
     final availability = _availability;
     if (availability == null || availability.days.isEmpty) {
-      return const VendorEmpty(
+      return VendorEmpty(
+        icon: Icons.calendar_month_outlined,
         title: 'Jadwal belum tersedia',
         message: 'Kalender vendor belum diisi untuk 7 hari ke depan.',
+        action: widget.onOpenCalendar == null
+            ? null
+            : VendorButton(
+                label: 'Atur kalender',
+                icon: Icons.edit_calendar_outlined,
+                kind: VendorButtonKind.secondary,
+                small: true,
+                onPressed: widget.onOpenCalendar,
+              ),
       );
     }
 
@@ -542,40 +590,282 @@ class _VendorDashboardPageState extends State<VendorDashboardPage> {
               ],
             ),
           ),
+          if (widget.onOpenCalendar != null) ...[
+            const SizedBox(height: 10),
+            VendorButton(
+              label: 'Atur ketersediaan',
+              icon: Icons.edit_calendar_outlined,
+              kind: VendorButtonKind.secondary,
+              small: true,
+              expand: true,
+              onPressed: widget.onOpenCalendar,
+            ),
+          ],
         ],
       ),
     );
   }
 
   Widget _moneyPanel(int monthIdr) {
-    return VendorCard(
+    return Container(
+      padding: const EdgeInsets.all(VendorSp.lg),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF182540), VendorColors.ink],
+        ),
+        borderRadius: BorderRadius.circular(VendorRadii.lg),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x240B1220),
+            blurRadius: 22,
+            offset: Offset(0, 8),
+          ),
+        ],
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Potensi Penghasilan Bulan Ini',
-            style: vendorText(size: 12, color: VendorColors.muted),
+          Row(
+            children: [
+              Container(
+                width: 30,
+                height: 3,
+                decoration: BoxDecoration(
+                  color: VendorColors.lime,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Potensi Penghasilan Bulan Ini',
+                  style: vendorText(
+                    size: 10,
+                    weight: FontWeight.w800,
+                    color: Colors.white.withValues(alpha: 0.55),
+                    letterSpacing: 0.9,
+                  ),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 8),
           Text(
             rupiahTight(monthIdr),
             style: vendorText(
-              size: 22,
+              size: 27,
               weight: FontWeight.w800,
-              letterSpacing: -0.7,
+              color: VendorColors.lime,
+              letterSpacing: -0.9,
             ),
           ),
+          const SizedBox(height: VendorSp.md),
+          Divider(height: 1, color: Colors.white.withValues(alpha: 0.12)),
           const SizedBox(height: VendorSp.sm),
-          const Divider(height: 1, color: VendorColors.lineSoft),
-          VendorLedgerRow(
-            label: 'Saldo tertahan (PJP)',
-            value: rupiahTight(_heldIdr),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Saldo tertahan (PJP)',
+                  style: vendorText(
+                    size: 12.5,
+                    color: Colors.white.withValues(alpha: 0.62),
+                  ),
+                ),
+              ),
+              Text(
+                rupiahTight(_heldIdr),
+                style: vendorText(
+                  size: 14,
+                  weight: FontWeight.w800,
+                  color: Colors.white,
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: VendorSp.sm),
           Text(
             'Dana pelanggan ditahan PJP berizin. Pencairan H+3 setelah acara '
             'selesai dan jendela sengketa tutup.',
-            style: vendorText(size: 11, color: VendorColors.muted, height: 1.5),
+            style: vendorText(
+              size: 11.5,
+              color: Colors.white.withValues(alpha: 0.52),
+              height: 1.5,
+            ),
+          ),
+          if (widget.onOpenEarnings != null) ...[
+            const SizedBox(height: VendorSp.md),
+            VendorButton(
+              label: 'Lihat saldo & pencairan',
+              icon: Icons.account_balance_wallet_outlined,
+              kind: VendorButtonKind.outlineOnDark,
+              small: true,
+              expand: true,
+              onPressed: widget.onOpenEarnings,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _guideCard() {
+    return VendorCard(
+      child: Column(
+        children: const [
+          _GuideRow(
+            icon: Icons.bolt_outlined,
+            title: 'Balas dalam 24 jam',
+            body:
+                'Setelah DP masuk, jawab permintaan sebelum batas waktu agar '
+                'booking tidak batal otomatis.',
+          ),
+          _GuideRow(
+            icon: Icons.event_available_outlined,
+            title: 'Jaga kalender tetap segar',
+            body:
+                'Tandai tanggal yang sudah terisi supaya pelanggan tidak '
+                'memesan di hari yang sama.',
+          ),
+          _GuideRow(
+            icon: Icons.photo_camera_outlined,
+            title: 'Foto panggung menaikkan minat',
+            body:
+                'Unggah foto dan video terbaik dari acara terakhir lewat menu '
+                'Profil & media.',
+            last: true,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DashStat extends StatelessWidget {
+  const _DashStat({
+    required this.value,
+    required this.label,
+    required this.icon,
+    required this.tone,
+  });
+
+  final String value;
+  final String label;
+  final IconData icon;
+  final Color tone;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(11, 11, 10, 11),
+      decoration: BoxDecoration(
+        color: VendorColors.cardWhite,
+        borderRadius: BorderRadius.circular(VendorRadii.md),
+        border: Border.all(color: VendorColors.lineSoft),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x0D0B1220),
+            blurRadius: 14,
+            offset: Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              color: tone.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Icon(icon, size: 15, color: tone),
+          ),
+          const SizedBox(height: 9),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: vendorText(
+              size: 19,
+              weight: FontWeight.w800,
+              letterSpacing: -0.5,
+            ),
+          ),
+          const SizedBox(height: 1),
+          Text(
+            label,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: vendorText(
+              size: 10.5,
+              color: VendorColors.muted,
+              height: 1.25,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _GuideRow extends StatelessWidget {
+  const _GuideRow({
+    required this.icon,
+    required this.title,
+    required this.body,
+    this.last = false,
+  });
+
+  final IconData icon;
+  final String title;
+  final String body;
+  final bool last;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 11),
+      decoration: BoxDecoration(
+        border: last
+            ? null
+            : const Border(bottom: BorderSide(color: VendorColors.lineSoft)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 30,
+            height: 30,
+            decoration: BoxDecoration(
+              color: VendorColors.limeSoft,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, size: 16, color: VendorColors.ink),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: vendorText(size: 13, weight: FontWeight.w700),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  body,
+                  style: vendorText(
+                    size: 11.5,
+                    color: VendorColors.muted,
+                    height: 1.45,
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -857,11 +1147,11 @@ class _SlotBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 6,
+      height: 7,
       width: double.infinity,
       decoration: BoxDecoration(
         color: _slotColor(state),
-        borderRadius: BorderRadius.circular(2),
+        borderRadius: BorderRadius.circular(3),
       ),
     );
   }

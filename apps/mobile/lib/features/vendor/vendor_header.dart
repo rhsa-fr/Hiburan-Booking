@@ -40,7 +40,7 @@ class VendorHeader extends StatelessWidget implements PreferredSizeWidget {
       scrolledUnderElevation: 0,
       toolbarHeight: 60,
       systemOverlayStyle: SystemUiOverlayStyle.light,
-      titleSpacing: 14,
+      titleSpacing: 16,
       flexibleSpace: Stack(
         fit: StackFit.expand,
         children: [
@@ -53,10 +53,11 @@ class VendorHeader extends StatelessWidget implements PreferredSizeWidget {
               ),
             ),
           ),
+          const Positioned.fill(child: VendorBeams(intensity: 0.7)),
           CustomPaint(
             painter: VendorDotGridPainter(
-              color: Colors.white.withValues(alpha: 0.08),
-              spacing: 9,
+              color: Colors.white.withValues(alpha: 0.05),
+              spacing: 11,
             ),
           ),
         ],
@@ -65,31 +66,36 @@ class VendorHeader extends StatelessWidget implements PreferredSizeWidget {
         children: [
           if (showBack) ...[
             _BackButton(onTap: () => Navigator.maybePop(context)),
-            const SizedBox(width: 9),
+            const SizedBox(width: 10),
           ],
           if (mark != null && mark!.isNotEmpty) ...[
             Container(
-              width: 34,
-              height: 34,
+              width: 38,
+              height: 38,
               alignment: Alignment.center,
               decoration: BoxDecoration(
-                color: VendorColors.lime.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(7),
+                gradient: LinearGradient(
+                  colors: [
+                    VendorColors.lime.withValues(alpha: 0.18),
+                    VendorColors.lime.withValues(alpha: 0.05),
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(VendorRadii.md),
                 border: Border.all(
-                  color: VendorColors.lime.withValues(alpha: 0.4),
+                  color: VendorColors.lime.withValues(alpha: 0.45),
                 ),
               ),
               child: Text(
                 mark!,
                 style: vendorText(
-                  size: 11,
+                  size: 12,
                   weight: FontWeight.w800,
                   color: VendorColors.lime,
                   letterSpacing: 0.4,
                 ),
               ),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 11),
           ],
           Expanded(
             child: Column(
@@ -102,10 +108,10 @@ class VendorHeader extends StatelessWidget implements PreferredSizeWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: vendorText(
-                      size: 9.5,
-                      weight: FontWeight.w700,
-                      color: Colors.white.withValues(alpha: 0.55),
-                      letterSpacing: 1.25,
+                      size: 10,
+                      weight: FontWeight.w800,
+                      color: VendorColors.lime.withValues(alpha: 0.9),
+                      letterSpacing: 1.3,
                     ),
                   ),
                   const SizedBox(height: 2),
@@ -115,10 +121,10 @@ class VendorHeader extends StatelessWidget implements PreferredSizeWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: vendorText(
-                    size: 14,
+                    size: 15.5,
                     weight: FontWeight.w800,
                     color: Colors.white,
-                    letterSpacing: -0.15,
+                    letterSpacing: -0.25,
                   ),
                 ),
                 if (subtitle != null && subtitle!.isNotEmpty) ...[
@@ -128,9 +134,9 @@ class VendorHeader extends StatelessWidget implements PreferredSizeWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: vendorText(
-                      size: 11,
+                      size: 11.5,
                       weight: FontWeight.w500,
-                      color: Colors.white.withValues(alpha: 0.55),
+                      color: Colors.white.withValues(alpha: 0.60),
                     ),
                   ),
                 ],
@@ -200,7 +206,7 @@ class VendorMoneyStrip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(18, 8, 18, 11),
+      padding: const EdgeInsets.fromLTRB(18, 9, 18, 12),
       decoration: BoxDecoration(
         border: Border(
           top: BorderSide(color: Colors.white.withValues(alpha: 0.10)),
@@ -219,10 +225,10 @@ class VendorMoneyStrip extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: vendorText(
-                    size: 9.5,
-                    weight: FontWeight.w600,
-                    color: Colors.white.withValues(alpha: 0.48),
-                    letterSpacing: 1.1,
+                    size: 10,
+                    weight: FontWeight.w700,
+                    color: Colors.white.withValues(alpha: 0.50),
+                    letterSpacing: 1.2,
                   ),
                 ),
                 const SizedBox(height: 1),
@@ -231,10 +237,10 @@ class VendorMoneyStrip extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: vendorText(
-                    size: 21,
+                    size: 23,
                     weight: FontWeight.w800,
                     color: VendorColors.lime,
-                    letterSpacing: -0.6,
+                    letterSpacing: -0.7,
                   ),
                 ),
               ],

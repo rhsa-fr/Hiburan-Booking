@@ -174,7 +174,7 @@ class StageHeader extends StatelessWidget {
       leading: Material(
         color: Colors.white.withValues(alpha: 0.12),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(Radii.sm),
+          borderRadius: BorderRadius.circular(Radii.lg),
           side: BorderSide(color: Colors.white.withValues(alpha: 0.16)),
         ),
         clipBehavior: Clip.antiAlias,
@@ -223,12 +223,11 @@ class StageHeader extends StatelessWidget {
               end: Alignment.bottomRight,
               colors: AppColors.primaryDeepEnd,
             ),
-            border: showDivider
-                ? const Border(
-                    bottom: BorderSide(color: AppColors.lime, width: 2),
-                  )
-                : null,
+            borderRadius: const BorderRadius.vertical(
+              bottom: Radius.circular(24),
+            ),
           ),
+          clipBehavior: Clip.antiAlias,
           child: Stack(
             children: [
               const Positioned.fill(child: StageBeams(intensity: 0.55)),
@@ -299,6 +298,14 @@ class StageHeader extends StatelessWidget {
                   ],
                 ),
               ),
+              if (showDivider)
+                const Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  height: 2,
+                  child: ColoredBox(color: AppColors.lime),
+                ),
             ],
           ),
         ),
@@ -542,19 +549,33 @@ class SectionHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
+        Container(
+          width: 3,
+          height: 22,
+          decoration: BoxDecoration(
+            color: AppColors.limeDark,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+        const SizedBox(width: 10),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
                 title,
-                style: text.titleLarge,
+                style: text.titleLarge?.copyWith(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.5,
+                ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
               if (caption != null) ...[
-                const SizedBox(height: 2),
+                const SizedBox(height: 1),
                 Text(
                   caption!,
                   style: text.bodySmall,
@@ -571,13 +592,17 @@ class SectionHeader extends StatelessWidget {
             child: TextButton(
               onPressed: onAction,
               style: TextButton.styleFrom(
-                foregroundColor: AppColors.primary,
-                padding: const EdgeInsets.symmetric(horizontal: Sp.sm),
-                minimumSize: const Size(0, 44),
+                foregroundColor: AppColors.ink,
+                backgroundColor: AppColors.primarySoft,
+                padding: const EdgeInsets.symmetric(horizontal: Sp.md),
+                minimumSize: const Size(0, 40),
                 tapTargetSize: MaterialTapTargetSize.padded,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(Radii.pill),
+                ),
                 textStyle: text.labelMedium?.copyWith(
                   fontWeight: FontWeight.w700,
-                  color: AppColors.primary,
+                  color: AppColors.ink,
                 ),
               ),
               child: Text(actionLabel!),
@@ -619,13 +644,13 @@ class SectionPanel extends StatelessWidget {
       padding: padding,
       decoration: BoxDecoration(
         color: AppColors.card,
-        borderRadius: BorderRadius.circular(Radii.lg),
+        borderRadius: BorderRadius.circular(Radii.xxl),
         border: Border.all(color: AppColors.line),
         boxShadow: const [
           BoxShadow(
-            color: Color(0x060F172A),
-            blurRadius: 8,
-            offset: Offset(0, 2),
+            color: Color(0x0A0B1220),
+            blurRadius: 18,
+            offset: Offset(0, 6),
           ),
         ],
       ),
@@ -649,7 +674,9 @@ class SectionPanel extends StatelessWidget {
                       Text(
                         title!,
                         style: text.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
+                          fontSize: 16.5,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.25,
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -674,7 +701,7 @@ class SectionPanel extends StatelessWidget {
                     child: TextButton(
                       onPressed: onAction,
                       style: TextButton.styleFrom(
-                        foregroundColor: AppColors.primary,
+                        foregroundColor: AppColors.ink,
                         padding: const EdgeInsets.symmetric(horizontal: Sp.sm),
                         minimumSize: const Size(0, 44),
                         textStyle: text.labelMedium?.copyWith(
@@ -703,7 +730,7 @@ class IconBadge extends StatelessWidget {
     super.key,
     required this.icon,
     this.tone = IconBadgeTone.lime,
-    this.size = 36,
+    this.size = 38,
   });
 
   final IconData icon;
@@ -713,7 +740,7 @@ class IconBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (background, foreground) = switch (tone) {
-      IconBadgeTone.lime => (AppColors.limeSoft, AppColors.primary),
+      IconBadgeTone.lime => (AppColors.limeSoft, AppColors.ink),
       IconBadgeTone.neutral => (AppColors.neutralSoft, AppColors.inkMuted),
       IconBadgeTone.success => (AppColors.accentSoft, AppColors.accent),
       IconBadgeTone.warning => (AppColors.warningSoft, AppColors.warning),
@@ -724,7 +751,10 @@ class IconBadge extends StatelessWidget {
       height: size,
       decoration: BoxDecoration(
         color: background,
-        borderRadius: BorderRadius.circular(Radii.sm),
+        borderRadius: BorderRadius.circular(size * 0.34),
+        border: tone == IconBadgeTone.lime
+            ? Border.all(color: AppColors.limeDark.withValues(alpha: 0.35))
+            : null,
       ),
       child: Icon(icon, size: size * 0.5, color: foreground),
     );
@@ -807,7 +837,7 @@ class ChoiceTile extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(Radii.lg),
         child: Container(
-          constraints: const BoxConstraints(minHeight: 56),
+          constraints: const BoxConstraints(minHeight: 58),
           padding: const EdgeInsets.symmetric(
             horizontal: Sp.md,
             vertical: Sp.sm + 2,
@@ -825,7 +855,7 @@ class ChoiceTile extends StatelessWidget {
                 IconBadge(
                   icon: icon!,
                   tone: selected ? IconBadgeTone.lime : IconBadgeTone.neutral,
-                  size: 32,
+                  size: 34,
                 ),
                 const SizedBox(width: Sp.md),
               ],
@@ -836,13 +866,14 @@ class ChoiceTile extends StatelessWidget {
                     Text(
                       label,
                       style: text.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.15,
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
                     if (caption != null) ...[
-                      const SizedBox(height: 2),
+                      const SizedBox(height: 1),
                       Text(
                         caption!,
                         style: text.bodySmall?.copyWith(
@@ -857,12 +888,25 @@ class ChoiceTile extends StatelessWidget {
               ),
               const SizedBox(width: Sp.sm),
               trailing ??
-                  Icon(
-                    selected
-                        ? Icons.radio_button_checked
-                        : Icons.radio_button_unchecked,
-                    size: 20,
-                    color: selected ? AppColors.primary : AppColors.inkMuted,
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 160),
+                    width: 22,
+                    height: 22,
+                    decoration: BoxDecoration(
+                      color: selected ? AppColors.ink : Colors.transparent,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: selected ? AppColors.ink : AppColors.lineStrong,
+                        width: 1.5,
+                      ),
+                    ),
+                    child: selected
+                        ? const Icon(
+                            Icons.check_rounded,
+                            size: 14,
+                            color: AppColors.lime,
+                          )
+                        : null,
                   ),
             ],
           ),
@@ -1039,8 +1083,15 @@ class VendorCard extends StatelessWidget {
         child: Container(
           decoration: BoxDecoration(
             color: AppColors.card,
-            borderRadius: BorderRadius.circular(Radii.xl),
+            borderRadius: BorderRadius.circular(Radii.xxl),
             border: Border.all(color: AppColors.line),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x080B1220),
+                blurRadius: 14,
+                offset: Offset(0, 5),
+              ),
+            ],
           ),
           clipBehavior: Clip.antiAlias,
           child: Material(
@@ -1055,7 +1106,7 @@ class VendorCard extends StatelessWidget {
                       name: vendor.displayName,
                       imageUrl: vendor.avatarUrl ?? vendor.bannerUrl,
                       compact: true,
-                      radius: Radii.sm,
+                      radius: Radii.lg,
                       heroTag: 'vendor-poster-${vendor.id}',
                     ),
                     const SizedBox(width: Sp.md),
@@ -1094,12 +1145,13 @@ class VendorCard extends StatelessWidget {
         child: Container(
           decoration: BoxDecoration(
             color: AppColors.card,
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: AppColors.line),
             boxShadow: const [
               BoxShadow(
                 color: Color(0x120B1220),
-                blurRadius: 18,
-                offset: Offset(0, 6),
+                blurRadius: 22,
+                offset: Offset(0, 8),
               ),
             ],
           ),
@@ -1114,7 +1166,7 @@ class VendorCard extends StatelessWidget {
                   PosterTile(
                     name: vendor.displayName,
                     imageUrl: vendor.bannerUrl ?? vendor.avatarUrl,
-                    height: 176,
+                    height: 184,
                     radius: 0,
                     heroTag: 'vendor-poster-${vendor.id}',
                     badges: [
@@ -1140,11 +1192,19 @@ class VendorCard extends StatelessWidget {
                               const SizedBox(width: Sp.sm),
                               _DpPill(percent: dpPercent),
                             ],
-                            const SizedBox(width: 6),
-                            const Icon(
-                              Icons.chevron_right,
-                              size: 20,
-                              color: AppColors.inkMuted,
+                            const SizedBox(width: 8),
+                            Container(
+                              width: 32,
+                              height: 32,
+                              decoration: const BoxDecoration(
+                                color: AppColors.ink,
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.arrow_forward,
+                                size: 16,
+                                color: AppColors.lime,
+                              ),
                             ),
                           ],
                         ),
@@ -1309,14 +1369,14 @@ class MoneyBlock extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(Sp.lg),
       decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(Radii.lg),
-        border: Border.all(color: AppColors.line),
+        color: AppColors.ink,
+        borderRadius: BorderRadius.circular(Radii.xxl),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
         boxShadow: const [
           BoxShadow(
-            color: Color(0x060F172A),
-            blurRadius: 8,
-            offset: Offset(0, 2),
+            color: Color(0x1F0B1220),
+            blurRadius: 24,
+            offset: Offset(0, 10),
           ),
         ],
       ),
@@ -1324,17 +1384,41 @@ class MoneyBlock extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
         children: [
+          Container(
+            width: 34,
+            height: 3,
+            decoration: BoxDecoration(
+              color: AppColors.lime,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(height: Sp.md),
           for (var i = 0; i < rows.length; i++) ...[
             if (i > 0)
-              const Divider(height: Sp.xl, color: AppColors.line, thickness: 1),
+              Divider(
+                height: Sp.xl,
+                color: Colors.white.withValues(alpha: 0.10),
+                thickness: 1,
+              ),
             _MoneyLine(row: rows[i], text: text),
           ],
           if (rows.isNotEmpty)
-            const Divider(height: Sp.xl, color: AppColors.line, thickness: 1),
+            Divider(
+              height: Sp.xl,
+              color: Colors.white.withValues(alpha: 0.10),
+              thickness: 1,
+            ),
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Expanded(child: Text(totalLabel, style: text.bodySmall)),
+              Expanded(
+                child: Text(
+                  totalLabel,
+                  style: text.bodySmall?.copyWith(
+                    color: Colors.white.withValues(alpha: 0.62),
+                  ),
+                ),
+              ),
               const SizedBox(width: Sp.md),
               Flexible(
                 child: FittedBox(
@@ -1353,7 +1437,13 @@ class MoneyBlock extends StatelessWidget {
           ),
           if (footnote != null) ...[
             const SizedBox(height: Sp.sm),
-            Text(footnote!, style: text.bodySmall),
+            Text(
+              footnote!,
+              style: text.bodySmall?.copyWith(
+                color: Colors.white.withValues(alpha: 0.52),
+                height: 1.45,
+              ),
+            ),
           ],
         ],
       ),
@@ -1376,7 +1466,9 @@ class _MoneyLine extends StatelessWidget {
         Expanded(
           child: Text(
             row.label,
-            style: text.bodyMedium?.copyWith(color: AppColors.inkMuted),
+            style: text.bodyMedium?.copyWith(
+              color: Colors.white.withValues(alpha: 0.64),
+            ),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
           ),
@@ -1385,6 +1477,7 @@ class _MoneyLine extends StatelessWidget {
         Text(
           value,
           style: text.bodyMedium?.copyWith(
+            color: Colors.white.withValues(alpha: 0.94),
             fontWeight: FontWeight.w600,
             fontFeatures: _tabularFigures,
           ),
@@ -1395,10 +1488,10 @@ class _MoneyLine extends StatelessWidget {
 }
 
 Color _moneyToneColor(MoneyTone tone) => switch (tone) {
-  MoneyTone.ink => AppColors.ink,
-  MoneyTone.primary => AppColors.primary,
-  MoneyTone.accent => AppColors.accent,
-  MoneyTone.danger => AppColors.danger,
+  MoneyTone.ink => AppColors.lime,
+  MoneyTone.primary => AppColors.lime,
+  MoneyTone.accent => const Color(0xFF9BE8B8),
+  MoneyTone.danger => const Color(0xFFFF9A8F),
 };
 
 /// Bottom action bar: card background, 1px top line, safe-area padding.
@@ -1417,17 +1510,20 @@ class StickyActionBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
     return Material(
-      color: AppColors.card,
+      color: Colors.transparent,
       elevation: 0,
       child: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           color: AppColors.card,
-          border: Border(top: BorderSide(color: AppColors.line)),
-          boxShadow: [
+          borderRadius: const BorderRadius.vertical(
+            top: Radius.circular(Radii.xxl),
+          ),
+          border: Border.all(color: AppColors.line),
+          boxShadow: const [
             BoxShadow(
-              color: Color(0x06000000),
-              blurRadius: 10,
-              offset: Offset(0, -3),
+              color: Color(0x160B1220),
+              blurRadius: 24,
+              offset: Offset(0, -6),
             ),
           ],
         ),
@@ -1466,10 +1562,10 @@ class SelectChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
-    final foreground = selected ? AppColors.onPrimary : AppColors.ink;
-    final background = selected ? AppColors.primary : AppColors.surfaceSoft;
-    final border = selected ? AppColors.primary : AppColors.line;
-    final radius = compact ? Radii.pill : Radii.sm;
+    final foreground = selected ? AppColors.lime : AppColors.ink;
+    final background = selected ? AppColors.ink : AppColors.card;
+    final border = selected ? AppColors.ink : AppColors.line;
+    final radius = Radii.pill;
     return Semantics(
       button: onTap != null,
       selected: selected,
@@ -1483,9 +1579,9 @@ class SelectChip extends StatelessWidget {
           boxShadow: selected
               ? [
                   BoxShadow(
-                    color: const Color(0x120F172A),
-                    blurRadius: compact ? 4 : 6,
-                    offset: Offset(0, compact ? 1 : 2),
+                    color: AppColors.ink.withValues(alpha: 0.16),
+                    blurRadius: 10,
+                    offset: const Offset(0, 3),
                   ),
                 ]
               : null,
@@ -1497,13 +1593,13 @@ class SelectChip extends StatelessWidget {
             onTap: onTap,
             borderRadius: BorderRadius.circular(radius),
             child: ConstrainedBox(
-              constraints: BoxConstraints(minHeight: compact ? 34 : 48),
+              constraints: BoxConstraints(minHeight: compact ? 38 : 48),
               child: Center(
                 widthFactor: 1.0,
                 child: Padding(
                   padding: EdgeInsets.symmetric(
-                    horizontal: Sp.md,
-                    vertical: compact ? Sp.xs : Sp.sm,
+                    horizontal: compact ? Sp.md : 14,
+                    vertical: Sp.xs,
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -1519,11 +1615,11 @@ class SelectChip extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: text.labelMedium?.copyWith(
-                            fontSize: compact ? 12.5 : null,
+                            fontSize: compact ? 12.5 : 13,
                             color: foreground,
                             fontWeight: selected
-                                ? FontWeight.w700
-                                : (compact ? FontWeight.w500 : FontWeight.w600),
+                                ? FontWeight.w800
+                                : FontWeight.w600,
                           ),
                         ),
                       ),
@@ -1559,8 +1655,8 @@ class SegmentBar extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(Sp.xs),
       decoration: BoxDecoration(
-        color: AppColors.surfaceSoft,
-        borderRadius: BorderRadius.circular(Radii.lg),
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(Radii.pill),
         border: Border.all(color: AppColors.line),
       ),
       child: Row(
@@ -1571,16 +1667,16 @@ class SegmentBar extends StatelessWidget {
                 button: true,
                 selected: i == index,
                 child: Material(
-                  color: i == index ? AppColors.primary : Colors.transparent,
+                  color: i == index ? AppColors.lime : Colors.transparent,
                   clipBehavior: Clip.antiAlias,
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(Radii.sm),
+                    borderRadius: BorderRadius.circular(Radii.pill),
                   ),
                   child: InkWell(
                     onTap: () => onChanged(i),
-                    borderRadius: BorderRadius.circular(Radii.sm),
+                    borderRadius: BorderRadius.circular(Radii.pill),
                     child: SizedBox(
-                      height: 34,
+                      height: 38,
                       child: Center(
                         child: Padding(
                           padding: const EdgeInsets.symmetric(
@@ -1591,12 +1687,12 @@ class SegmentBar extends StatelessWidget {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: text.labelMedium?.copyWith(
-                              fontSize: 12,
+                              fontSize: 12.5,
                               color: i == index
-                                  ? AppColors.onPrimary
+                                  ? AppColors.ink
                                   : AppColors.inkMuted,
                               fontWeight: i == index
-                                  ? FontWeight.w700
+                                  ? FontWeight.w800
                                   : FontWeight.w500,
                             ),
                           ),
@@ -1640,20 +1736,33 @@ class InfoStrip extends StatelessWidget {
       padding: const EdgeInsets.all(Sp.md),
       decoration: BoxDecoration(
         color: colors.background,
-        borderRadius: BorderRadius.circular(Radii.sm),
+        borderRadius: BorderRadius.circular(Radii.lg),
+        border: Border.all(color: colors.foreground.withValues(alpha: 0.14)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
-            padding: const EdgeInsets.only(top: 2),
-            child: Icon(icon, size: 20, color: colors.foreground),
+          Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              color: colors.foreground.withValues(alpha: 0.12),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, size: 16, color: colors.foreground),
           ),
           const SizedBox(width: Sp.md),
           Expanded(
-            child: Text(
-              message,
-              style: text.bodyMedium?.copyWith(fontSize: 13, height: 1.4),
+            child: Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: Text(
+                message,
+                style: text.bodyMedium?.copyWith(
+                  fontSize: 13,
+                  height: 1.45,
+                  color: AppColors.ink,
+                ),
+              ),
             ),
           ),
           if (actionLabel != null) ...[
@@ -1681,8 +1790,8 @@ class InfoStrip extends StatelessWidget {
 ({Color background, Color foreground}) _infoColors(InfoTone tone) =>
     switch (tone) {
       InfoTone.primary => (
-        background: AppColors.surfaceTint,
-        foreground: AppColors.secondary,
+        background: AppColors.limeSoft,
+        foreground: AppColors.ink,
       ),
       InfoTone.success => (
         background: AppColors.accentSoft,
@@ -1715,18 +1824,32 @@ class StatusPill extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = _pillColors(tone);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: Sp.sm, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: Sp.sm + 1, vertical: 4),
       decoration: BoxDecoration(
         color: colors.background,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: colors.foreground.withValues(alpha: 0.22)),
+        borderRadius: BorderRadius.circular(Radii.pill),
+        border: Border.all(color: colors.foreground.withValues(alpha: 0.2)),
       ),
-      child: Text(
-        label,
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-          color: colors.foreground,
-          fontWeight: FontWeight.w600,
-        ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 5,
+            height: 5,
+            decoration: BoxDecoration(
+              color: colors.foreground,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: colors.foreground,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1813,35 +1936,13 @@ class MediaGalleryReel extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            const Icon(
-              Icons.photo_library_outlined,
-              size: 20,
-              color: AppColors.primary,
-            ),
-            const SizedBox(width: Sp.xs + 2),
-            Text(
-              title,
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-                letterSpacing: -0.2,
-              ),
-            ),
-            const Spacer(),
-            Text(
-              '${photoUrls.length} Foto',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: AppColors.inkMuted,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
+        SectionHeader(
+          title: title,
+          caption: '${photoUrls.length} foto dari panggung',
         ),
         const SizedBox(height: Sp.sm),
         SizedBox(
-          height: 140,
+          height: 156,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
             itemCount: photoUrls.length,
@@ -1850,12 +1951,12 @@ class MediaGalleryReel extends StatelessWidget {
               final url = photoUrls[index];
               return InkWell(
                 onTap: () => showPhotoLightbox(context, url),
-                borderRadius: BorderRadius.circular(Radii.lg),
+                borderRadius: BorderRadius.circular(Radii.xl),
                 child: Container(
-                  width: 200,
-                  height: 140,
+                  width: 228,
+                  height: 156,
                   decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(Radii.lg),
+                    borderRadius: BorderRadius.circular(Radii.xl),
                     border: Border.all(color: AppColors.line),
                   ),
                   clipBehavior: Clip.antiAlias,
@@ -1874,13 +1975,16 @@ class MediaGalleryReel extends StatelessWidget {
                         ),
                       ),
                       Positioned(
-                        bottom: Sp.xs,
-                        right: Sp.xs,
+                        bottom: Sp.sm,
+                        right: Sp.sm,
                         child: Container(
-                          padding: const EdgeInsets.all(4),
+                          padding: const EdgeInsets.all(6),
                           decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: 0.6),
+                            color: Colors.black.withValues(alpha: 0.55),
                             shape: BoxShape.circle,
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.18),
+                            ),
                           ),
                           child: const Icon(
                             Icons.fullscreen,
@@ -1921,38 +2025,24 @@ class StageVideoCard extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            const Icon(
-              Icons.videocam_outlined,
-              size: 20,
-              color: AppColors.primary,
-            ),
-            const SizedBox(width: Sp.xs + 2),
-            Text(
-              'Cuplikan Video Pentas',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-                letterSpacing: -0.2,
-              ),
-            ),
-          ],
+        const SectionHeader(
+          title: 'Cuplikan panggung',
+          caption: 'Lihat grup ini tampil sebelum memesan',
         ),
         const SizedBox(height: Sp.sm),
         InkWell(
           onTap: onOpenVideo,
-          borderRadius: BorderRadius.circular(Radii.lg),
+          borderRadius: BorderRadius.circular(Radii.xl),
           child: Container(
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(Radii.lg),
+              borderRadius: BorderRadius.circular(Radii.xl),
               border: Border.all(color: AppColors.line),
               color: AppColors.card,
               boxShadow: const [
                 BoxShadow(
-                  color: Color(0x18000000),
-                  blurRadius: 12,
-                  offset: Offset(0, 4),
+                  color: Color(0x1A0B1220),
+                  blurRadius: 16,
+                  offset: Offset(0, 6),
                 ),
               ],
             ),

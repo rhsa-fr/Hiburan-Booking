@@ -48,6 +48,7 @@ class _VendorShellState extends State<VendorShell> {
               onOpenBookings: () =>
                   Navigator.pushNamed(context, Routes.vendorBookings),
               onOpenEarnings: () => _selectTab(_earnings),
+              onOpenCalendar: () => _selectTab(_calendar),
             ),
             if (_visited.contains(_calendar))
               const VendorCalendarPage()

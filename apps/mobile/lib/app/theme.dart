@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 /// Theme: OpenDesign "Graphite · Lime" tokens, aligned with the vendor app.
-/// Obsidian ink (#0B1220), warm canvas (#EEEEE9), paper cards (#FAFAF7),
+/// Obsidian ink (#0B1220), milk-white canvas (#FBF9F4), white cards (#FFFFFF),
 /// lime action (#D9FB4F), amber hold (#9A4208), and green money (#076C48).
 abstract final class AppColors {
   // OpenDesign "Graphite · Lime" palette.
@@ -13,22 +13,22 @@ abstract final class AppColors {
   static const onPrimary = Color(0xFFFFFFFF);
 
   static const secondary = Color(0xFF606870);
-  static const secondarySoft = Color(0xFFEFEFEA);
+  static const secondarySoft = Color(0xFFE7EEF3);
   static const onSecondaryContainer = Color(0xFF0B1220);
   static const onSecondary = Color(0xFFFFFFFF);
 
   static const tertiary = Color(0xFF9A4208);
   static const tertiarySoft = Color(0xFFFBEEDF);
 
-  static const surface = Color(0xFFEEEEE9);
-  static const card = Color(0xFFFAFAF7);
-  static const surfaceSoft = Color(0xFFF4F4EF);
+  static const surface = Color(0xFFFBF9F4);
+  static const card = Color(0xFFFFFFFF);
+  static const surfaceSoft = Color(0xFFF3F0E9);
   static const surfaceTint = Color(0xFFF2FBD3);
-  static const surfaceHigh = Color(0xFFE7E7E1);
-  static const surfaceHighest = Color(0xFFDDDDD7);
-  static const line = Color(0xFFDDDDD7);
-  static const lineStrong = Color(0xFFCFD1CB);
-  static const skeleton = Color(0xFFE7E7E1);
+  static const surfaceHigh = Color(0xFFEDE9E0);
+  static const surfaceHighest = Color(0xFFE4DFD4);
+  static const line = Color(0xFFE6E1D6);
+  static const lineStrong = Color(0xFFD5CFC2);
+  static const skeleton = Color(0xFFEFEBE3);
 
   static const ink = Color(0xFF0B1220);
   static const inkMuted = Color(0xFF606870);
@@ -61,11 +61,13 @@ abstract final class Sp {
   static const double xxl = 32;
 }
 
-/// Minimalist geometry: clean, compact, non-pill radius.
+/// Soft stage geometry: cards and sheets are rounded enough to feel warm,
+/// chips stay pill-shaped, and nothing reads as a hard wireframe box.
 abstract final class Radii {
-  static const double sm = 6;
-  static const double lg = 8;
-  static const double xl = 12;
+  static const double sm = 8;
+  static const double lg = 16;
+  static const double xl = 20;
+  static const double xxl = 26;
   static const double pill = 999;
 }
 
@@ -98,9 +100,10 @@ TextTheme _textTheme() {
     titleLarge: TextStyle(
       fontFamily: _display,
       fontFamilyFallback: _fontFallback,
-      fontSize: 18,
-      height: 1.4,
-      fontWeight: FontWeight.w600,
+      fontSize: 19,
+      height: 1.35,
+      fontWeight: FontWeight.w700,
+      letterSpacing: -0.35,
       color: AppColors.ink,
     ),
     titleMedium: TextStyle(
@@ -109,6 +112,7 @@ TextTheme _textTheme() {
       fontSize: 16,
       height: 1.33,
       fontWeight: FontWeight.w600,
+      letterSpacing: -0.15,
       color: AppColors.ink,
     ),
     bodyLarge: TextStyle(
@@ -122,43 +126,44 @@ TextTheme _textTheme() {
     bodyMedium: TextStyle(
       fontFamily: _body,
       fontFamilyFallback: _fontFallback,
-      fontSize: 13,
-      height: 1.43,
+      fontSize: 13.5,
+      height: 1.45,
       fontWeight: FontWeight.w400,
       color: AppColors.ink,
     ),
     bodySmall: TextStyle(
       fontFamily: _body,
       fontFamilyFallback: _fontFallback,
-      fontSize: 11.5,
-      height: 1.33,
+      fontSize: 12,
+      height: 1.38,
       fontWeight: FontWeight.w400,
       color: AppColors.inkMuted,
     ),
     labelLarge: TextStyle(
       fontFamily: _display,
       fontFamilyFallback: _fontFallback,
-      fontSize: 13,
-      height: 1.43,
+      fontSize: 14,
+      height: 1.35,
       fontWeight: FontWeight.w700,
+      letterSpacing: -0.1,
       color: AppColors.ink,
     ),
     labelMedium: TextStyle(
       fontFamily: _display,
       fontFamilyFallback: _fontFallback,
-      fontSize: 11.5,
+      fontSize: 12,
       height: 1.33,
       fontWeight: FontWeight.w600,
-      letterSpacing: 0.2,
+      letterSpacing: 0.1,
       color: AppColors.ink,
     ),
     labelSmall: TextStyle(
       fontFamily: _display,
       fontFamilyFallback: _fontFallback,
-      fontSize: 10.5,
+      fontSize: 11,
       height: 1.27,
       fontWeight: FontWeight.w600,
-      letterSpacing: 0.3,
+      letterSpacing: 0.25,
       color: AppColors.ink,
     ),
   );
@@ -235,12 +240,16 @@ ThemeData buildTheme() {
         foregroundColor: AppColors.ink,
         disabledBackgroundColor: AppColors.surfaceHighest,
         disabledForegroundColor: AppColors.inkMuted,
-        minimumSize: const Size.fromHeight(50),
+        minimumSize: const Size.fromHeight(52),
         padding: const EdgeInsets.symmetric(horizontal: Sp.xl, vertical: Sp.md),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(Radii.lg),
         ),
-        textStyle: text.labelLarge?.copyWith(color: AppColors.ink),
+        side: const BorderSide(color: AppColors.limeDark),
+        textStyle: text.labelLarge?.copyWith(
+          color: AppColors.ink,
+          fontWeight: FontWeight.w800,
+        ),
         elevation: 0,
         shadowColor: Colors.transparent,
       ),
@@ -248,7 +257,8 @@ ThemeData buildTheme() {
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
         foregroundColor: AppColors.ink,
-        minimumSize: const Size.fromHeight(48),
+        backgroundColor: AppColors.card,
+        minimumSize: const Size.fromHeight(50),
         side: const BorderSide(color: AppColors.lineStrong, width: 1.2),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(Radii.lg),
@@ -260,6 +270,9 @@ ThemeData buildTheme() {
       style: TextButton.styleFrom(
         foregroundColor: AppColors.ink,
         minimumSize: const Size(48, 48),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(Radii.sm),
+        ),
         textStyle: text.labelMedium?.copyWith(
           color: AppColors.ink,
           fontWeight: FontWeight.w700,
@@ -268,37 +281,37 @@ ThemeData buildTheme() {
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      // Soft filled fields, not hard boxes: the outline only appears on focus.
-      fillColor: AppColors.surfaceSoft,
+      // Warm white field on the canvas; the lime ring is the only focus cue.
+      fillColor: AppColors.card,
       hintStyle: text.bodyMedium?.copyWith(color: AppColors.muted2),
       labelStyle: text.labelMedium?.copyWith(color: AppColors.inkMuted),
       floatingLabelStyle: text.labelMedium?.copyWith(
-        color: AppColors.primary,
-        fontWeight: FontWeight.w600,
+        color: AppColors.ink,
+        fontWeight: FontWeight.w700,
       ),
       contentPadding: const EdgeInsets.symmetric(
         horizontal: Sp.lg,
         vertical: Sp.lg,
       ),
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(Radii.xl),
-        borderSide: BorderSide.none,
+        borderRadius: BorderRadius.circular(Radii.lg),
+        borderSide: const BorderSide(color: AppColors.line),
       ),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(Radii.xl),
-        borderSide: BorderSide.none,
+        borderRadius: BorderRadius.circular(Radii.lg),
+        borderSide: const BorderSide(color: AppColors.line),
       ),
       focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(Radii.xl),
-        borderSide: const BorderSide(color: AppColors.limeDark, width: 1.5),
+        borderRadius: BorderRadius.circular(Radii.lg),
+        borderSide: const BorderSide(color: AppColors.limeDark, width: 1.8),
       ),
       errorBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(Radii.xl),
+        borderRadius: BorderRadius.circular(Radii.lg),
         borderSide: const BorderSide(color: AppColors.danger, width: 1.5),
       ),
       focusedErrorBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(Radii.xl),
-        borderSide: const BorderSide(color: AppColors.danger, width: 1.5),
+        borderRadius: BorderRadius.circular(Radii.lg),
+        borderSide: const BorderSide(color: AppColors.danger, width: 1.8),
       ),
     ),
     cardTheme: CardThemeData(
@@ -308,7 +321,7 @@ ThemeData buildTheme() {
       elevation: 0,
       margin: EdgeInsets.zero,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(Radii.lg),
+        borderRadius: BorderRadius.circular(Radii.xxl),
         side: const BorderSide(color: AppColors.line),
       ),
     ),
@@ -316,9 +329,18 @@ ThemeData buildTheme() {
     snackBarTheme: SnackBarThemeData(
       backgroundColor: AppColors.ink,
       contentTextStyle: text.bodyMedium?.copyWith(color: AppColors.onPrimary),
+      actionTextColor: AppColors.lime,
       behavior: SnackBarBehavior.floating,
+      elevation: 0,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(Radii.sm),
+        borderRadius: BorderRadius.circular(Radii.lg),
+      ),
+    ),
+    dialogTheme: DialogThemeData(
+      backgroundColor: AppColors.card,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(Radii.xxl),
       ),
     ),
     navigationBarTheme: NavigationBarThemeData(
@@ -326,10 +348,10 @@ ThemeData buildTheme() {
       surfaceTintColor: Colors.transparent,
       shadowColor: Colors.transparent,
       elevation: 0,
-      height: 64,
+      height: 68,
       indicatorColor: AppColors.limeSoft,
       indicatorShape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(Radii.sm),
+        borderRadius: BorderRadius.circular(Radii.pill),
       ),
       labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
       iconTheme: WidgetStateProperty.resolveWith((states) {
@@ -359,14 +381,23 @@ ThemeData buildTheme() {
       ),
       checkColor: const WidgetStatePropertyAll(AppColors.ink),
       side: const BorderSide(color: AppColors.lineStrong, width: 1.5),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+    ),
+    popupMenuTheme: PopupMenuThemeData(
+      color: AppColors.card,
+      surfaceTintColor: Colors.transparent,
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(Radii.lg),
+        side: const BorderSide(color: AppColors.line),
+      ),
+      textStyle: text.bodyMedium,
     ),
     bottomSheetTheme: const BottomSheetThemeData(
       backgroundColor: AppColors.card,
       surfaceTintColor: Colors.transparent,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(Radii.xl)),
-        side: BorderSide(color: AppColors.line),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(Radii.xxl)),
       ),
     ),
   );

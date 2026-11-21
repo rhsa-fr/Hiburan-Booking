@@ -143,22 +143,23 @@ class VendorCard extends StatelessWidget {
       padding: padding,
       decoration: BoxDecoration(
         color: color,
-        borderRadius: BorderRadius.circular(VendorRadii.md),
-        border: Border.all(color: VendorColors.line),
+        borderRadius: BorderRadius.circular(VendorRadii.lg),
+        border: Border.all(color: VendorColors.lineSoft),
         boxShadow: const [
           BoxShadow(
-            color: Color(0x140B1220),
-            blurRadius: 10,
-            offset: Offset(0, 2),
+            color: Color(0x100B1220),
+            blurRadius: 20,
+            offset: Offset(0, 6),
           ),
         ],
       ),
+      clipBehavior: Clip.antiAlias,
       child: child,
     );
     if (onTap == null) return surface;
     return Material(
       color: Colors.transparent,
-      borderRadius: BorderRadius.circular(VendorRadii.md),
+      borderRadius: BorderRadius.circular(VendorRadii.lg),
       clipBehavior: Clip.antiAlias,
       child: InkWell(onTap: onTap, child: surface),
     );
@@ -175,17 +176,34 @@ class VendorSectionTitle extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(top: VendorSp.xl, bottom: 9),
+      padding: const EdgeInsets.only(top: VendorSp.xl, bottom: 10),
       child: Row(
         children: [
+          Container(
+            width: 3,
+            height: 18,
+            decoration: BoxDecoration(
+              color: VendorColors.limeDark,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(width: 9),
           Expanded(child: Text(label, style: vendorKicker)),
           if (trailing != null) ...[
             const SizedBox(width: VendorSp.sm),
-            Text(
-              trailing!,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: vendorHint,
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+              decoration: BoxDecoration(
+                color: VendorColors.cardWhite,
+                borderRadius: BorderRadius.circular(VendorRadii.pill),
+                border: Border.all(color: VendorColors.lineSoft),
+              ),
+              child: Text(
+                trailing!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: vendorHint,
+              ),
             ),
           ],
         ],
@@ -213,25 +231,35 @@ class VendorPill extends StatelessWidget {
       VendorPillTone.no => (VendorColors.noBg, VendorColors.noFg),
     };
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
       decoration: BoxDecoration(
         color: bg,
-        borderRadius: BorderRadius.circular(4),
+        borderRadius: BorderRadius.circular(VendorRadii.pill),
+        border: Border.all(color: fg.withValues(alpha: 0.16)),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 4,
-            height: 4,
-            decoration: BoxDecoration(color: fg, shape: BoxShape.circle),
-          ),
-          const SizedBox(width: 4),
-          Text(
-            label,
-            style: vendorText(size: 10.5, weight: FontWeight.w700, color: fg),
-          ),
-        ],
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: Alignment.centerLeft,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 5,
+              height: 5,
+              decoration: BoxDecoration(color: fg, shape: BoxShape.circle),
+            ),
+            const SizedBox(width: 5),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 160),
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: vendorText(size: 11, weight: FontWeight.w700, color: fg),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -278,16 +306,16 @@ class VendorButton extends StatelessWidget {
         Colors.white,
       ),
     };
-    final height = small ? 32.0 : 42.0;
+    final height = small ? 36.0 : 46.0;
     final content = Padding(
-      padding: EdgeInsets.symmetric(horizontal: small ? 10 : 14),
+      padding: EdgeInsets.symmetric(horizontal: small ? 12 : 16),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           if (icon != null) ...[
-            Icon(icon, size: small ? 14 : 16, color: fg),
-            const SizedBox(width: 5),
+            Icon(icon, size: small ? 15 : 18, color: fg),
+            const SizedBox(width: 6),
           ],
           Flexible(
             child: Text(
@@ -296,8 +324,8 @@ class VendorButton extends StatelessWidget {
               textAlign: TextAlign.center,
               overflow: TextOverflow.ellipsis,
               style: vendorText(
-                size: small ? 12 : 13,
-                weight: FontWeight.w700,
+                size: small ? 12.5 : 13.5,
+                weight: FontWeight.w800,
                 color: fg,
                 height: maxLines > 1 ? 1.1 : null,
               ),
@@ -313,7 +341,9 @@ class VendorButton extends StatelessWidget {
       child: Material(
         color: onPressed == null ? bg.withValues(alpha: 0.45) : bg,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(VendorRadii.sm),
+          borderRadius: BorderRadius.circular(
+            small ? VendorRadii.sm : VendorRadii.md,
+          ),
           side: BorderSide(
             color: onPressed == null ? border.withValues(alpha: 0.4) : border,
           ),
@@ -357,7 +387,11 @@ class VendorStatCell extends StatelessWidget {
             value,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: vendorText(size: 16, weight: FontWeight.w800),
+            style: vendorText(
+              size: 19,
+              weight: FontWeight.w800,
+              letterSpacing: -0.4,
+            ),
           ),
           const SizedBox(height: 2),
           Text(
@@ -365,11 +399,7 @@ class VendorStatCell extends StatelessWidget {
             textAlign: TextAlign.center,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: vendorText(
-              size: 10.5,
-              color: VendorColors.muted,
-              height: 1.3,
-            ),
+            style: vendorText(size: 11, color: VendorColors.muted, height: 1.3),
           ),
         ],
       ),
@@ -397,6 +427,70 @@ class VendorDotGridPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant VendorDotGridPainter oldDelegate) =>
       oldDelegate.color != color || oldDelegate.spacing != spacing;
+}
+
+/// Lime stage beams behind the dark vendor header. Static paint, no animation.
+class VendorBeams extends StatelessWidget {
+  const VendorBeams({super.key, this.intensity = 1});
+
+  final double intensity;
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: CustomPaint(painter: _VendorBeamsPainter(intensity: intensity)),
+    );
+  }
+}
+
+class _VendorBeamsPainter extends CustomPainter {
+  const _VendorBeamsPainter({required this.intensity});
+
+  final double intensity;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final source = Offset(size.width * 0.9, -size.height * 0.45);
+    for (var i = 0; i < 3; i++) {
+      final t = i / 2;
+      final footX = size.width * (0.32 + 0.44 * t);
+      final path = Path()
+        ..moveTo(footX - 30, size.height)
+        ..lineTo(footX + 30, size.height)
+        ..lineTo(source.dx, source.dy)
+        ..close();
+      canvas.drawPath(
+        path,
+        Paint()
+          ..shader = LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              VendorColors.lime.withValues(alpha: 0.11 * intensity),
+              VendorColors.lime.withValues(alpha: 0),
+            ],
+          ).createShader(Rect.fromLTWH(0, 0, size.width, size.height)),
+      );
+    }
+    canvas.drawCircle(
+      source,
+      size.width * 0.7,
+      Paint()
+        ..shader =
+            RadialGradient(
+              colors: [
+                VendorColors.lime.withValues(alpha: 0.14 * intensity),
+                VendorColors.lime.withValues(alpha: 0),
+              ],
+            ).createShader(
+              Rect.fromCircle(center: source, radius: size.width * 0.7),
+            ),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _VendorBeamsPainter oldDelegate) =>
+      oldDelegate.intensity != intensity;
 }
 
 class VendorBottomNav extends StatelessWidget {
@@ -427,24 +521,43 @@ class VendorBottomNav extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bottom = MediaQuery.viewPaddingOf(context).bottom;
-    return Container(
-      color: VendorColors.cardWhite,
-      padding: EdgeInsets.only(bottom: bottom),
-      child: DecoratedBox(
-        decoration: const BoxDecoration(
-          border: Border(top: BorderSide(color: VendorColors.line)),
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          VendorSp.md,
+          6,
+          VendorSp.md,
+          bottom > 0 ? 6 : VendorSp.sm,
         ),
-        child: Row(
-          children: [
-            for (var i = 0; i < _items.length; i++)
-              Expanded(
-                child: _VendorNavItem(
-                  item: _items[i],
-                  active: i == index,
-                  onTap: () => onSelected(i),
-                ),
+        child: Container(
+          decoration: BoxDecoration(
+            color: VendorColors.cardWhite,
+            borderRadius: BorderRadius.circular(VendorRadii.lg),
+            border: Border.all(color: VendorColors.lineSoft),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x160B1220),
+                blurRadius: 20,
+                offset: Offset(0, 6),
               ),
-          ],
+            ],
+          ),
+          child: SizedBox(
+            height: 62,
+            child: Row(
+              children: [
+                for (var i = 0; i < _items.length; i++)
+                  Expanded(
+                    child: _VendorNavItem(
+                      item: _items[i],
+                      active: i == index,
+                      onTap: () => onSelected(i),
+                    ),
+                  ),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -471,26 +584,33 @@ class _VendorNavItem extends StatelessWidget {
       label: item.label,
       child: InkWell(
         onTap: onTap,
+        borderRadius: BorderRadius.circular(VendorRadii.md),
         child: Column(
-          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Container(
-              width: 20,
-              height: 2,
-              color: active ? VendorColors.limeDark : Colors.transparent,
-            ),
-            const SizedBox(height: 7),
-            Icon(active ? item.active : item.icon, size: 20, color: color),
-            const SizedBox(height: 4),
-            Text(
-              item.label,
-              style: vendorText(
-                size: 11,
-                weight: active ? FontWeight.w700 : FontWeight.w600,
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOut,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+              decoration: BoxDecoration(
+                color: active ? VendorColors.lime : Colors.transparent,
+                borderRadius: BorderRadius.circular(VendorRadii.pill),
+              ),
+              child: Icon(
+                active ? item.active : item.icon,
+                size: 20,
                 color: color,
               ),
             ),
-            const SizedBox(height: 7),
+            const SizedBox(height: 2),
+            Text(
+              item.label,
+              style: vendorText(
+                size: 10.5,
+                weight: active ? FontWeight.w800 : FontWeight.w500,
+                color: color,
+              ),
+            ),
           ],
         ),
       ),
@@ -510,14 +630,63 @@ class VendorLoading extends StatelessWidget {
       children: [
         for (var i = 0; i < rows; i++)
           Container(
-            height: i == 0 ? 26 : 78,
+            height: i == 0 ? 92 : 86,
             margin: const EdgeInsets.only(bottom: VendorSp.md),
             decoration: BoxDecoration(
-              color: VendorColors.lineSoft,
-              borderRadius: BorderRadius.circular(VendorRadii.md),
+              color: VendorColors.cardWhite,
+              borderRadius: BorderRadius.circular(VendorRadii.lg),
+              border: Border.all(color: VendorColors.lineSoft),
+            ),
+            padding: const EdgeInsets.all(VendorSp.md),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: VendorColors.lineSoft,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                const SizedBox(width: VendorSp.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _VendorSkeletonBar(widthFactor: 0.52),
+                      const SizedBox(height: VendorSp.sm),
+                      _VendorSkeletonBar(widthFactor: 0.82),
+                      const SizedBox(height: VendorSp.sm),
+                      _VendorSkeletonBar(widthFactor: 0.64),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
       ],
+    );
+  }
+}
+
+class _VendorSkeletonBar extends StatelessWidget {
+  const _VendorSkeletonBar({required this.widthFactor});
+
+  final double widthFactor;
+
+  @override
+  Widget build(BuildContext context) {
+    return FractionallySizedBox(
+      widthFactor: widthFactor,
+      alignment: Alignment.centerLeft,
+      child: Container(
+        height: 11,
+        decoration: BoxDecoration(
+          color: VendorColors.lineSoft,
+          borderRadius: BorderRadius.circular(5),
+        ),
+      ),
     );
   }
 }
@@ -534,43 +703,47 @@ class VendorError extends StatelessWidget {
       padding: const EdgeInsets.all(VendorSp.lg),
       children: [
         VendorCard(
+          padding: const EdgeInsets.all(VendorSp.lg),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 children: [
-                  const Icon(
-                    Icons.error_outline,
-                    size: 18,
-                    color: VendorColors.amber,
+                  _VendorStateArt(
+                    icon: Icons.cloud_off_outlined,
+                    background: const [Color(0xFF3B1512), Color(0xFF141D2E)],
+                    foreground: const Color(0xFFFF9A8F),
                   ),
-                  const SizedBox(width: VendorSp.sm),
+                  const SizedBox(width: VendorSp.md),
                   Expanded(
-                    child: Text(
-                      'Data belum bisa dimuat',
-                      style: vendorText(size: 14, weight: FontWeight.w700),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Data belum bisa dimuat',
+                          style: vendorText(size: 15, weight: FontWeight.w800),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          message,
+                          style: vendorText(
+                            size: 12.5,
+                            color: VendorColors.muted,
+                            height: 1.45,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: VendorSp.sm),
-              Text(
-                message,
-                style: vendorText(
-                  size: 12.5,
-                  color: VendorColors.muted,
-                  height: 1.45,
-                ),
-              ),
               if (onRetry != null) ...[
                 const SizedBox(height: VendorSp.md),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: VendorButton(
-                    label: 'Coba lagi',
-                    onPressed: onRetry,
-                    small: true,
-                  ),
+                VendorButton(
+                  label: 'Coba lagi',
+                  icon: Icons.refresh,
+                  onPressed: onRetry,
+                  small: true,
                 ),
               ],
             ],
@@ -582,10 +755,18 @@ class VendorError extends StatelessWidget {
 }
 
 class VendorEmpty extends StatelessWidget {
-  const VendorEmpty({super.key, required this.title, this.message});
+  const VendorEmpty({
+    super.key,
+    required this.title,
+    this.message,
+    this.icon = Icons.auto_awesome_outlined,
+    this.action,
+  });
 
   final String title;
   final String? message;
+  final IconData icon;
+  final Widget? action;
 
   @override
   Widget build(BuildContext context) {
@@ -593,10 +774,16 @@ class VendorEmpty extends StatelessWidget {
       padding: const EdgeInsets.all(VendorSp.lg),
       child: Column(
         children: [
+          _VendorStateArt(
+            icon: icon,
+            background: const [Color(0xFF182540), Color(0xFF0B1220)],
+            foreground: VendorColors.lime,
+          ),
+          const SizedBox(height: VendorSp.md),
           Text(
             title,
             textAlign: TextAlign.center,
-            style: vendorText(size: 12.5, weight: FontWeight.w700),
+            style: vendorText(size: 15, weight: FontWeight.w800),
           ),
           if (message != null) ...[
             const SizedBox(height: VendorSp.xs),
@@ -604,12 +791,61 @@ class VendorEmpty extends StatelessWidget {
               message!,
               textAlign: TextAlign.center,
               style: vendorText(
-                size: 11.5,
+                size: 12.5,
                 color: VendorColors.muted,
                 height: 1.5,
               ),
             ),
           ],
+          if (action != null) ...[const SizedBox(height: VendorSp.md), action!],
+        ],
+      ),
+    );
+  }
+}
+
+class _VendorStateArt extends StatelessWidget {
+  const _VendorStateArt({
+    required this.icon,
+    required this.background,
+    required this.foreground,
+  });
+
+  final IconData icon;
+  final List<Color> background;
+  final Color foreground;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 58,
+      height: 58,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: background,
+        ),
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x160B1220),
+            blurRadius: 14,
+            offset: Offset(0, 6),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          CustomPaint(
+            painter: VendorDotGridPainter(
+              color: Colors.white.withValues(alpha: 0.10),
+              spacing: 8,
+            ),
+          ),
+          Center(child: Icon(icon, color: foreground, size: 25)),
         ],
       ),
     );
@@ -650,7 +886,7 @@ class VendorLedgerRow extends StatelessWidget {
             child: Text(
               label,
               style: vendorText(
-                size: emphasize ? 13 : 12.5,
+                size: emphasize ? 13.5 : 13,
                 weight: emphasize ? FontWeight.w600 : FontWeight.w500,
                 color: emphasize ? VendorColors.ink : VendorColors.muted,
               ),
@@ -660,8 +896,8 @@ class VendorLedgerRow extends StatelessWidget {
           Text(
             value,
             style: vendorText(
-              size: emphasize ? 14.5 : 13,
-              weight: FontWeight.w700,
+              size: emphasize ? 15.5 : 14,
+              weight: FontWeight.w800,
               color: valueColor,
             ),
           ),
@@ -704,51 +940,49 @@ class VendorTextField extends StatelessWidget {
         Text(
           label,
           style: vendorText(
-            size: 10.5,
-            weight: FontWeight.w700,
-            letterSpacing: 0.5,
+            size: 11,
+            weight: FontWeight.w800,
+            letterSpacing: 0.6,
             color: VendorColors.muted,
           ),
         ),
-        const SizedBox(height: 5),
+        const SizedBox(height: 6),
         TextField(
           controller: controller,
           keyboardType: keyboardType,
           maxLines: maxLines,
           enabled: enabled,
           onChanged: onChanged,
-          style: vendorText(size: 13.5, weight: FontWeight.w500),
+          style: vendorText(size: 14, weight: FontWeight.w500),
           decoration: InputDecoration(
             isDense: true,
             hintText: hint,
-            hintStyle: vendorText(size: 13, color: VendorColors.mutedSoft),
+            hintStyle: vendorText(size: 13.5, color: VendorColors.mutedSoft),
             prefixText: prefixText,
             prefixStyle: vendorText(
-              size: 13,
+              size: 13.5,
               weight: FontWeight.w600,
               color: VendorColors.muted,
             ),
             filled: true,
-            fillColor: enabled
-                ? VendorColors.cardWhite
-                : VendorColors.softFill,
+            fillColor: enabled ? VendorColors.cardWhite : VendorColors.softFill,
             contentPadding: EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: maxLines > 1 ? 11 : 13,
+              horizontal: 14,
+              vertical: maxLines > 1 ? 12 : 14,
             ),
             enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(VendorRadii.sm),
+              borderRadius: BorderRadius.circular(VendorRadii.sm + 2),
               borderSide: const BorderSide(color: VendorColors.line),
             ),
             focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(VendorRadii.sm),
+              borderRadius: BorderRadius.circular(VendorRadii.sm + 2),
               borderSide: const BorderSide(
                 color: VendorColors.limeDark,
-                width: 1.5,
+                width: 1.8,
               ),
             ),
             disabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(VendorRadii.sm),
+              borderRadius: BorderRadius.circular(VendorRadii.sm + 2),
               borderSide: const BorderSide(color: VendorColors.lineSoft),
             ),
           ),
@@ -798,20 +1032,20 @@ class VendorMediaTile extends StatelessWidget {
         Text(
           label,
           style: vendorText(
-            size: 10.5,
-            weight: FontWeight.w700,
-            letterSpacing: 0.5,
+            size: 11,
+            weight: FontWeight.w800,
+            letterSpacing: 0.6,
             color: VendorColors.muted,
           ),
         ),
-        const SizedBox(height: 5),
+        const SizedBox(height: 6),
         ClipRRect(
           borderRadius: BorderRadius.circular(VendorRadii.md),
           child: Container(
             height: height,
             decoration: BoxDecoration(
-              color: VendorColors.cardWhite,
-              border: Border.all(color: VendorColors.line),
+              color: VendorColors.softFill,
+              border: Border.all(color: VendorColors.lineSoft),
               borderRadius: BorderRadius.circular(VendorRadii.md),
             ),
             child: Stack(
@@ -831,12 +1065,23 @@ class VendorMediaTile extends StatelessWidget {
                   )
                 else
                   Center(
-                    child: Text(
-                      'Belum ada gambar',
-                      style: vendorText(
-                        size: 11.5,
-                        color: VendorColors.mutedSoft,
-                      ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.add_photo_alternate_outlined,
+                          size: 26,
+                          color: VendorColors.mutedSoft,
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'Belum ada gambar',
+                          style: vendorText(
+                            size: 11.5,
+                            color: VendorColors.mutedSoft,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 if (busy)

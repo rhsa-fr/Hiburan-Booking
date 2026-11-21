@@ -8,6 +8,7 @@ import '../../app/routes.dart';
 import '../../app/theme.dart';
 import '../../core/api_exception.dart';
 import '../../core/format.dart';
+import '../../core/geo/geo.dart';
 import '../../core/models.dart';
 import '../../core/ui.dart';
 import '../../core/widgets.dart';
@@ -22,14 +23,18 @@ const _dpRatePercent = 30;
 const _serviceFeeBp = 100;
 const _dpRule = 'DP berlaku 24 jam. Untuk nilai Rp10 juta ke atas, 48 jam.';
 
-const _eventTypes = <({String value, String label})>[
-  (value: 'tarling', label: 'Tarling'),
-  (value: 'organ_tunggal', label: 'Organ tunggal'),
-  (value: 'wayang', label: 'Wayang'),
-  (value: 'mc', label: 'MC'),
-  (value: 'tenda', label: 'Tenda'),
-  (value: 'lainnya', label: 'Lainnya'),
+/// Stored as `events.event_type` (free text, max 50). The API has no enum, so
+/// these are human labels the vendor and invoice can read as-is.
+const _eventTypes = <String>[
+  'Hajatan',
+  'Khitanan / Sunatan',
+  'Syukuran',
+  'Unjungan',
+  'Pesta Panen',
+  'Lainnya',
 ];
+
+enum _LocationMode { typed, gps }
 
 Map<String, dynamic> _asMap(dynamic value) =>
     value is Map ? value.cast<String, dynamic>() : const <String, dynamic>{};
@@ -100,6 +105,9 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
   final _guests = TextEditingController();
   final _address = TextEditingController();
   final _notes = TextEditingController();
+  final _place = TextEditingController();
+  final _patokan = TextEditingController();
+  final _eventOther = TextEditingController();
 
   VendorDetail? _vendor;
   VendorPackage? _package;
@@ -113,6 +121,11 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
   String? _selectedSession;
   bool _titleEdited = false;
   bool _settingTitle = false;
+
+  _LocationMode _locationMode = _LocationMode.typed;
+  GeoReading? _pin;
+  bool _locating = false;
+  String? _locationError;
 
   bool _loading = true;
   String? _loadError;
@@ -139,6 +152,9 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
     _guests.dispose();
     _address.dispose();
     _notes.dispose();
+    _place.dispose();
+    _patokan.dispose();
+    _eventOther.dispose();
     super.dispose();
   }
 
@@ -230,6 +246,67 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
   int get _serviceFee => _packagePrice * _serviceFeeBp ~/ 10000;
   int get _dpAmount => _packagePrice * _dpRatePercent ~/ 100;
 
+  /// `event_type` is free text in the API. "Lainnya" stores what the customer
+  /// typed so the vendor sees a real occasion, not the word "Lainnya".
+  String? _resolvedEventType() {
+    final selected = _eventType;
+    if (selected == null) return null;
+    if (selected == 'Lainnya') {
+      final custom = _eventOther.text.trim();
+      return custom.isEmpty ? null : custom;
+    }
+    return selected;
+  }
+
+  /// GPS mode sends the pin plus an optional landmark because the API still
+  /// requires a human-readable `venue_address` for the vendor.
+  String _effectiveAddress() {
+    if (_locationMode != _LocationMode.gps) return _address.text.trim();
+    final pin = _pin;
+    if (pin == null) return '';
+    final patokan = _patokan.text.trim();
+    return patokan.isEmpty
+        ? pin.coordinateText
+        : '$patokan · ${pin.coordinateText}';
+  }
+
+  Future<void> _useCurrentLocation() async {
+    if (_locating) return;
+    setState(() {
+      _locating = true;
+      _locationError = null;
+    });
+    try {
+      final reading = await readCurrentLocation();
+      if (!mounted) return;
+      setState(() {
+        _pin = reading;
+        _locating = false;
+      });
+    } on GeoException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _locating = false;
+        _locationError = switch (error.failure) {
+          GeoFailure.denied =>
+            'Izin lokasi ditolak. Aktifkan izin lokasi di browser, lalu coba lagi.',
+          GeoFailure.timeout =>
+            'Pencarian lokasi terlalu lama. Coba lagi di area terbuka.',
+          GeoFailure.unavailable =>
+            'Titik lokasi tidak ditemukan. Pastikan GPS aktif, lalu coba lagi.',
+          GeoFailure.unsupported =>
+            'Perangkat ini belum mendukung GPS. Ketik alamat manual.',
+        };
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _locating = false;
+        _locationError = 'Titik lokasi belum bisa diambil. Coba lagi.';
+      });
+    }
+  }
+
   int _qtyOf(Addon addon) => _addonQty[addon.id] ?? 0;
 
   int get _addonTotal {
@@ -306,6 +383,17 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
     final note = _notes.text.trim();
     final guestText = _guests.text.trim();
     final guest = guestText.isEmpty ? null : int.tryParse(guestText);
+    final eventType = _resolvedEventType();
+    final place = _place.text.trim();
+
+    if (_locationMode == _LocationMode.gps && _pin == null) {
+      setState(() {
+        _locationError =
+            'Ambil titik lokasi dulu, atau pilih "Ketik alamat" dan isi alamat.';
+      });
+      return;
+    }
+    final address = _effectiveAddress();
 
     setState(() {
       _submitting = true;
@@ -326,12 +414,15 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
           'client_generated_id': _clientGeneratedId,
           'event': {
             'title': _title.text.trim(),
-            if (_eventType != null) 'event_type': _eventType!,
+            if (eventType != null) 'event_type': eventType,
             'region_code': vendor.regionCode,
-            'venue_address': _address.text.trim(),
+            if (place.isNotEmpty) 'venue_name': place,
+            'venue_address': address,
             // `venue_location` adalah koordinat ACARA, bukan lokasi vendor.
-            // Belum ada picker peta, jadi field dibiarkan kosong (null) sampai
-            // pelanggan benar-benar bisa memilih titik acara.
+            // Hanya dikirim saat pelanggan memilih mode GPS; mode ketik manual
+            // tidak membawa titik lama yang mungkin sudah tidak relevan.
+            if (_locationMode == _LocationMode.gps && _pin != null)
+              'venue_location': {'lat': _pin!.latitude, 'lng': _pin!.longitude},
             'start_date': date,
             'end_date': date,
             if (guest != null) 'guest_estimate': guest,
@@ -423,6 +514,8 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
                             const SizedBox(height: Sp.md),
                             _eventBlock(text),
                             const SizedBox(height: Sp.md),
+                            _locationBlock(text),
+                            const SizedBox(height: Sp.md),
                             _packageBlock(text),
                             const SizedBox(height: Sp.md),
                             _moneyBlock(),
@@ -468,20 +561,23 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
     ].join(' · ');
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: Sp.md, vertical: Sp.sm),
+      padding: const EdgeInsets.all(Sp.md),
       decoration: BoxDecoration(
-        color: AppColors.surfaceSoft,
-        borderRadius: BorderRadius.circular(Radii.sm),
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(Radii.lg),
         border: Border.all(color: AppColors.line),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x0A0B1220),
+            blurRadius: 14,
+            offset: Offset(0, 4),
+          ),
+        ],
       ),
       child: Row(
         children: [
-          const Icon(
-            Icons.inventory_2_outlined,
-            size: 18,
-            color: AppColors.primary,
-          ),
-          const SizedBox(width: Sp.sm),
+          const IconBadge(icon: Icons.inventory_2_outlined, size: 38),
+          const SizedBox(width: Sp.md),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -491,26 +587,40 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: text.labelLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.1,
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.2,
                   ),
                 ),
-                if (meta.isNotEmpty)
+                if (meta.isNotEmpty) ...[
+                  const SizedBox(height: 1),
                   Text(
                     meta,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: text.bodySmall?.copyWith(color: AppColors.inkMuted),
                   ),
+                ],
               ],
             ),
           ),
           const SizedBox(width: Sp.sm),
-          Text(
-            'DP $_dpRatePercent%',
-            style: text.labelMedium?.copyWith(
-              color: AppColors.primary,
-              fontWeight: FontWeight.w700,
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+            decoration: BoxDecoration(
+              color: AppColors.limeSoft,
+              borderRadius: BorderRadius.circular(Radii.pill),
+              border: Border.all(
+                color: AppColors.limeDark.withValues(alpha: 0.45),
+              ),
+            ),
+            child: Text(
+              'DP $_dpRatePercent%',
+              style: text.labelSmall?.copyWith(
+                color: AppColors.ink,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.1,
+              ),
             ),
           ),
         ],
@@ -544,17 +654,27 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
             },
           ),
           const SizedBox(height: Sp.md),
-          DropdownButtonFormField<String>(
-            initialValue: _eventType,
-            isExpanded: true,
-            decoration: const InputDecoration(labelText: 'Jenis acara'),
-            hint: const Text('Pilih jenis acara'),
-            items: [
-              for (final type in _eventTypes)
-                DropdownMenuItem(value: type.value, child: Text(type.label)),
-            ],
-            onChanged: (value) => setState(() => _eventType = value),
-          ),
+          _eventTypePicker(text),
+          if (_eventType == 'Lainnya') ...[
+            const SizedBox(height: Sp.md),
+            TextFormField(
+              controller: _eventOther,
+              textInputAction: TextInputAction.next,
+              maxLength: 50,
+              decoration: const InputDecoration(
+                labelText: 'Sebutkan jenis acara',
+                hintText: 'Contoh: Kenduri keluarga besar',
+                counterText: '',
+              ),
+              validator: (value) {
+                if (_eventType != 'Lainnya') return null;
+                final trimmed = value?.trim() ?? '';
+                if (trimmed.isEmpty) return 'Jenis acara wajib disebutkan.';
+                if (trimmed.length > 50) return 'Maksimal 50 karakter.';
+                return null;
+              },
+            ),
+          ],
           const SizedBox(height: Sp.md),
           if (_dates.isEmpty)
             Column(
@@ -607,27 +727,6 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
           ),
           const SizedBox(height: Sp.md),
           TextFormField(
-            controller: _address,
-            textInputAction: TextInputAction.next,
-            minLines: 2,
-            maxLines: 4,
-            maxLength: 1000,
-            decoration: const InputDecoration(
-              labelText: 'Alamat lokasi acara',
-              hintText: 'Nama kampung, jalan, patokan',
-              counterText: '',
-            ),
-            validator: (value) {
-              final trimmed = value?.trim() ?? '';
-              if (trimmed.length < 10) return 'Alamat minimal 10 karakter.';
-              if (trimmed.length > 1000) {
-                return 'Alamat maksimal 1.000 karakter.';
-              }
-              return null;
-            },
-          ),
-          const SizedBox(height: Sp.md),
-          TextFormField(
             controller: _notes,
             minLines: 2,
             maxLines: 4,
@@ -636,6 +735,296 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
               labelText: 'Catatan untuk vendor (opsional)',
               hintText: 'Contoh: listrik tersedia, panggung di halaman',
               counterText: '',
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Occasion chips instead of a dropdown: one tap, no full-screen menu, and
+  /// the six options stay visible so nobody has to guess what is available.
+  Widget _eventTypePicker(TextTheme text) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              'Jenis acara',
+              style: text.labelMedium?.copyWith(
+                color: AppColors.inkMuted,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text('opsional', style: text.bodySmall?.copyWith(fontSize: 11)),
+          ],
+        ),
+        const SizedBox(height: Sp.sm),
+        Wrap(
+          spacing: Sp.sm,
+          runSpacing: Sp.sm,
+          children: [
+            for (final label in _eventTypes)
+              SelectChip(
+                label: label,
+                selected: _eventType == label,
+                onTap: () => setState(() {
+                  _eventType = _eventType == label ? null : label;
+                }),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _locationBlock(TextTheme text) {
+    final gpsMode = locationSupported && _locationMode == _LocationMode.gps;
+
+    return SectionPanel(
+      leading: const StepBadge(step: 2, icon: Icons.place_outlined),
+      title: 'Lokasi acara',
+      caption: 'Vendor memakai alamat ini untuk menemukan panggung.',
+      padding: const EdgeInsets.all(Sp.md),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextFormField(
+            controller: _place,
+            textInputAction: TextInputAction.next,
+            maxLength: 150,
+            decoration: const InputDecoration(
+              labelText: 'Nama tempat (opsional)',
+              hintText: 'Contoh: Rumah Haji Sulaeman',
+              counterText: '',
+            ),
+          ),
+          if (locationSupported) ...[
+            const SizedBox(height: Sp.md),
+            SegmentBar(
+              items: const ['Ketik alamat', 'Pakai GPS'],
+              index: _locationMode.index,
+              onChanged: (index) => setState(() {
+                _locationMode = _LocationMode.values[index];
+                _locationError = null;
+              }),
+            ),
+          ],
+          const SizedBox(height: Sp.md),
+          if (!gpsMode)
+            TextFormField(
+              controller: _address,
+              textInputAction: TextInputAction.next,
+              minLines: 2,
+              maxLines: 4,
+              maxLength: 1000,
+              decoration: const InputDecoration(
+                labelText: 'Alamat & patokan',
+                hintText: 'Kampung, jalan, dan patokan yang mudah dicari',
+                counterText: '',
+              ),
+              validator: (value) {
+                final trimmed = value?.trim() ?? '';
+                if (trimmed.length < 10) return 'Alamat minimal 10 karakter.';
+                if (trimmed.length > 1000) {
+                  return 'Alamat maksimal 1.000 karakter.';
+                }
+                return null;
+              },
+            )
+          else ...[
+            _gpsBlock(text),
+            const SizedBox(height: Sp.md),
+            TextFormField(
+              controller: _patokan,
+              textInputAction: TextInputAction.next,
+              maxLength: 200,
+              decoration: const InputDecoration(
+                labelText: 'Patokan tambahan (opsional)',
+                hintText: 'Contoh: rumah pagar hijau setelah jembatan',
+                counterText: '',
+              ),
+            ),
+          ],
+          if (_locationError != null) ...[
+            const SizedBox(height: Sp.sm),
+            Semantics(
+              liveRegion: true,
+              child: Text(
+                _locationError!,
+                style: text.bodySmall?.copyWith(color: AppColors.danger),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _gpsBlock(TextTheme text) {
+    final pin = _pin;
+    if (pin == null) {
+      return Container(
+        padding: const EdgeInsets.all(Sp.md),
+        decoration: BoxDecoration(
+          color: AppColors.surfaceSoft,
+          borderRadius: BorderRadius.circular(Radii.lg),
+          border: Border.all(color: AppColors.line),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const IconBadge(icon: Icons.my_location, size: 38),
+                const SizedBox(width: Sp.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Ambil titik lokasi',
+                        style: text.titleMedium?.copyWith(
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.2,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Koordinat membantu vendor menemukan lokasi tepat. '
+                        'Izin lokasi diminta sekali.',
+                        style: text.bodySmall?.copyWith(height: 1.45),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: Sp.md),
+            OutlinedButton.icon(
+              onPressed: _locating ? null : _useCurrentLocation,
+              icon: _locating
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.gps_fixed, size: 18),
+              label: Text(
+                _locating ? 'Mencari lokasi…' : 'Gunakan lokasi saat ini',
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(Sp.md),
+      decoration: BoxDecoration(
+        color: AppColors.ink,
+        borderRadius: BorderRadius.circular(Radii.lg),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x240B1220),
+            blurRadius: 20,
+            offset: Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: AppColors.lime.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: AppColors.lime.withValues(alpha: 0.40),
+                  ),
+                ),
+                child: const Icon(
+                  Icons.my_location,
+                  size: 18,
+                  color: AppColors.lime,
+                ),
+              ),
+              const SizedBox(width: Sp.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Titik lokasi tersimpan',
+                      style: text.titleMedium?.copyWith(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      'Akurasi ±${pin.accuracyMeters.round()} m',
+                      style: text.bodySmall?.copyWith(
+                        fontSize: 11.5,
+                        color: Colors.white.withValues(alpha: 0.56),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              TextButton(
+                onPressed: _locating ? null : _useCurrentLocation,
+                style: TextButton.styleFrom(
+                  foregroundColor: AppColors.lime,
+                  minimumSize: const Size(0, 44),
+                  padding: const EdgeInsets.symmetric(horizontal: Sp.sm),
+                  textStyle: text.labelMedium?.copyWith(
+                    color: AppColors.lime,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                child: Text(_locating ? '…' : 'Perbarui'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.06),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.place_outlined,
+                  size: 16,
+                  color: AppColors.lime,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    pin.coordinateText,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: text.bodyMedium?.copyWith(
+                      color: Colors.white.withValues(alpha: 0.94),
+                      fontWeight: FontWeight.w700,
+                      fontFeatures: _tabularFigures,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -652,7 +1041,7 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
       color: AppColors.card,
       clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(Radii.sm),
+        borderRadius: BorderRadius.circular(Radii.lg),
         side: BorderSide(color: _dateError ? AppColors.danger : AppColors.line),
       ),
       child: InkWell(
@@ -721,7 +1110,7 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
     ].join(' · ');
 
     return SectionPanel(
-      leading: const StepBadge(step: 2, icon: Icons.inventory_2_outlined),
+      leading: const StepBadge(step: 3, icon: Icons.inventory_2_outlined),
       title: 'Paket',
       caption: 'Satu grup, satu harga untuk sehari penuh.',
       padding: const EdgeInsets.all(Sp.md),
@@ -857,7 +1246,7 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
       children: [
         Row(
           children: [
-            const StepBadge(step: 3, icon: Icons.receipt_long_outlined),
+            const StepBadge(step: 4, icon: Icons.receipt_long_outlined),
             const SizedBox(width: Sp.md),
             Expanded(
               child: Column(

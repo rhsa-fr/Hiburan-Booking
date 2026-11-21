@@ -616,7 +616,7 @@ class _CategoryShortcuts extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             for (var i = 0; i < _items.length; i++) ...[
-              if (i > 0) const SizedBox(width: Sp.xs),
+              if (i > 0) const SizedBox(width: Sp.sm),
               Expanded(child: _shortcut(context, _items[i])),
             ],
           ],
@@ -631,40 +631,56 @@ class _CategoryShortcuts extends StatelessWidget {
     item,
   ) {
     final text = Theme.of(context).textTheme;
+    final radius = BorderRadius.circular(Radii.lg);
     return Semantics(
       button: true,
       label: item.label,
-      child: InkWell(
-        onTap: () => onOpenCategory(item.category),
-        borderRadius: BorderRadius.circular(Radii.xl),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: Sp.xs + 2),
-          child: Column(
-            children: [
-              Container(
-                width: 54,
-                height: 54,
-                decoration: BoxDecoration(
-                  color: item.tint,
-                  borderRadius: BorderRadius.circular(18),
+      child: Material(
+        color: Colors.transparent,
+        child: Ink(
+          decoration: BoxDecoration(
+            color: item.tint,
+            borderRadius: radius,
+            border: Border.all(color: item.ink.withValues(alpha: 0.10)),
+          ),
+          child: InkWell(
+            onTap: () => onOpenCategory(item.category),
+            borderRadius: radius,
+            child: SizedBox(
+              height: 96,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: Sp.xs + 2,
+                  vertical: Sp.md,
                 ),
-                child: Icon(item.icon, size: 24, color: item.ink),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                item.label,
-                textAlign: TextAlign.center,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: text.labelSmall?.copyWith(
-                  fontSize: 11,
-                  height: 1.3,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0,
-                  color: AppColors.ink,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(item.icon, size: 26, color: item.ink),
+                    const SizedBox(height: Sp.sm + 1),
+                    SizedBox(
+                      height: 29,
+                      child: Align(
+                        alignment: Alignment.topCenter,
+                        child: Text(
+                          item.label,
+                          textAlign: TextAlign.center,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: text.labelSmall?.copyWith(
+                            fontSize: 11.5,
+                            height: 1.25,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -0.1,
+                            color: AppColors.ink,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ],
+            ),
           ),
         ),
       ),
