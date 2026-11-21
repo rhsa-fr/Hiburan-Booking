@@ -143,5 +143,8 @@ COPY --from=admin-build /app/apps/admin/next.config.mjs ./apps/admin/next.config
 COPY --from=admin-build /app/apps/admin/postcss.config.mjs ./apps/admin/postcss.config.mjs
 COPY --from=admin-build /app/apps/admin/tailwind.config.ts ./apps/admin/tailwind.config.ts
 COPY --from=admin-build /app/apps/admin/.next ./apps/admin/.next
+# Role dispatcher: api/worker/admin/migrate lewat TARLINK_SERVICE.
+COPY --from=build /app/scripts/railway-start.mjs ./scripts/railway-start.mjs
 RUN chown -R node:node /app/apps/admin/.next /app/dist/worker /app/db
 USER node
+CMD ["node", "./scripts/railway-start.mjs"]

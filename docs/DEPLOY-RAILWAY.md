@@ -15,7 +15,8 @@ worker   (poller PostgreSQL, tanpa port)
 
 Railway **tidak memilih target stage Docker**. Karena itu `Dockerfile` punya
 stage terakhir `railway`: satu image berisi API, worker, panel, dan runner
-migrasi. Tiap service memakai start command berbeda dari image yang sama.
+migrasi. Tiap service memilih peran lewat env `TARLINK_SERVICE`
+(`api`/`worker`/`admin`), jadi tidak perlu mengatur start command per service.
 
 ---
 
@@ -145,22 +146,37 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 
 | Variabel | Nilai |
 |---|---|
+| `TARLINK_SERVICE` | `api` |
 | `PORT` | `3001` |
 | `RAILWAY_RUN_UID` | `0` (lihat volume di §6) |
 
-**worker** — tidak ada tambahan. Worker hanya butuh `DATABASE_URL` + email.
+**worker**
 
-**admin** — tidak ada tambahan; memakai shared `NEXT_PUBLIC_*` dan
-`MEDIA_PUBLIC_BASE_URL` sebagai build arg.
+| Variabel | Nilai |
+|---|---|
+| `TARLINK_SERVICE` | `worker` |
+
+**admin**
+
+| Variabel | Nilai |
+|---|---|
+| `TARLINK_SERVICE` | `admin` |
+| `PORT` | `3002` |
+
+Admin memakai shared `NEXT_PUBLIC_*` dan `MEDIA_PUBLIC_BASE_URL` sebagai build
+arg. `PORT=3002` wajib karena image membawa `ENV PORT=3001` dari stage API.
 
 ---
 
-## 5. Start command, healthcheck, dan domain
+## 5. Peran, healthcheck, dan domain
+
+Image menjalankan `scripts/railway-start.mjs`. Script itu membaca
+`TARLINK_SERVICE` dan mengeksekusi proses yang sesuai, jadi **start command
+dibiarkan kosong** di ketiga service.
 
 ### api
 
-- **Start command**: kosongkan. Image sudah punya
-  `node -r ./scripts/alias-hook.js dist/api/apps/api/src/main.js`.
+- Env: `TARLINK_SERVICE=api`.
 - **Pre-deploy command**: `node dist/api/scripts/migrate-cli.js`
   (timeout 600 detik).
 - **Healthcheck path**: `/v1/health/ready`, timeout `300`.
@@ -172,7 +188,7 @@ bila ada lebih dari satu container yang menjalankannya.
 
 ### worker
 
-- **Start command**: `node dist/worker/apps/worker/src/main.js`
+- Env: `TARLINK_SERVICE=worker`.
 - Tanpa domain, tanpa healthcheck (service ini tidak membuka port).
 - Restart policy: `ALWAYS` (kalau worker mati, job berhenti).
 - Tambahkan variabel `RAILWAY_DEPLOYMENT_DRAINING_SECONDS=60` supaya tick yang
@@ -182,10 +198,7 @@ bila ada lebih dari satu container yang menjalankannya.
 
 ### admin
 
-- **Start command**:
-  ```text
-  node /app/node_modules/next/dist/bin/next start /app/apps/admin -p 3002 -H 0.0.0.0
-  ```
+- Env: `TARLINK_SERVICE=admin` dan `PORT=3002`.
 - **Healthcheck path**: `/login`, timeout `300`.
 - **Networking → Generate Domain**: target port **3002**.
 - Variabel `NEXT_PUBLIC_API_BASE_URL`, `MEDIA_PUBLIC_BASE_URL`,
