@@ -682,6 +682,10 @@ Future<void> finishGoogleSignIn(BuildContext context, String idToken) async {
 String googleAuthErrorMessage(Object error) {
   if (error is GoogleSignInException) {
     final detail = error.description?.trim();
+    if ((detail?.toLowerCase().contains('reauth') ?? false)) {
+      return 'Akun Google perlu verifikasi ulang. Buka akun Google di HP, '
+          'selesaikan verifikasi, lalu coba lagi.';
+    }
     return 'Google gagal (${error.code.name})'
         '${detail == null || detail.isEmpty ? '' : ': $detail'}';
   }

@@ -17,10 +17,16 @@ stitch_tarlink_live_entertainment_app/
 *.log
 storage/
 apps/mobile/e2e_shots/
+apps/mobile/android/.kotlin/
 .dart_tool/
 build/
 .flutter-plugins
 .flutter-plugins-dependencies
+
+# Signing Android: key dan password tidak boleh masuk repo
+apps/mobile/android/key.properties
+apps/mobile/android/app/*.keystore
+apps/mobile/android/app/*.jks
 
 # Konfigurasi & artefak agen lokal (bukan bagian produk)
 .commandcode/

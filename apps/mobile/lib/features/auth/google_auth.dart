@@ -37,8 +37,22 @@ class GoogleAuth {
   /// Melempar [GoogleSignInException] saat pengguna membatalkan.
   static Future<String?> idToken() async {
     await ensureInitialized();
-    final account = await GoogleSignIn.instance.authenticate();
-    return account.authentication.idToken;
+    try {
+      final account = await GoogleSignIn.instance.authenticate();
+      return account.authentication.idToken;
+    } on GoogleSignInException catch (error) {
+      final detail = error.description?.toLowerCase() ?? '';
+      // Status 16 ("Account reauth failed") arrives as `canceled` when a stale
+      // credential needs re-authentication. Drop the cached session and let
+      // the user pick the account once more before surfacing the failure.
+      if (error.code != GoogleSignInExceptionCode.canceled ||
+          !detail.contains('reauth')) {
+        rethrow;
+      }
+      await GoogleSignIn.instance.signOut();
+      final account = await GoogleSignIn.instance.authenticate();
+      return account.authentication.idToken;
+    }
   }
 
   /// Lupakan sesi Google supaya pemilihan akun muncul lagi.
