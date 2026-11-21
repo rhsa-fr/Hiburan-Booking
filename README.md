@@ -30,7 +30,7 @@ Repositori ini berisi **API**, **panel admin**, **worker**, **library domain**, 
 | Skema DB | migrasi `001`-`035` diterapkan; berikutnya `036` | `npm run migrate` |
 | Operasional | Liveness `/v1/health`, readiness `/v1/health/ready` (503 saat DB mati, dipakai HEALTHCHECK), rate limit 10 laporan/jam/user, cleanup challenge 2FA di worker | `GET /v1/health/ready`; job `cleanup_auth` |
 | Kesiapan operasional | Panel `/ops` + banner dashboard merangkum delapan antrean yang lewat SLA, gagal kirim, atau macet; read-only, agregat, semua peran admin | `GET /v1/admin/ops/alerts` |
-| Deploy produksi | `Dockerfile` 4 target, `docker-compose.prod.yml`, preflight, backup/restore, CI GitHub Actions | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) |
+| Deploy produksi | `Dockerfile` 5 target, `docker-compose.prod.yml`, preflight, backup/restore, CI GitHub Actions | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) · [Railway](docs/DEPLOY-RAILWAY.md) |
 
 ## Stack
 
@@ -117,8 +117,9 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
 
 Yang sudah disiapkan repo ini:
 
-- `Dockerfile` dengan target `api`, `worker`, `admin`, dan `migrate` (satu artefak
-  untuk migrasi, tanpa devDependencies).
+- `Dockerfile` dengan target `api`, `worker`, `admin`, `migrate`, dan `railway`
+  (image gabungan untuk tiga service Railway; satu artefak migrasi, tanpa
+  devDependencies). Runbook Railway: [docs/DEPLOY-RAILWAY.md](docs/DEPLOY-RAILWAY.md).
 - `docker-compose.prod.yml`: postgis + one-shot `migrate` + api + worker + panel,
   volume media/privat, healthcheck, batas ukuran log, port hanya di loopback.
 - `npm run verify:prod`: memeriksa env produksi (kunci enkripsi, provider email,
@@ -242,6 +243,7 @@ lalu membandingkan riwayat REST kedua instance.
 | [AGENTS.md](AGENTS.md) | Aturan kerja untuk kolaborator manusia **dan** agen AI |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Arsitektur, ledger, auth, worker, mobile |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Runbook deploy produksi: compose, migrasi, backup/restore, rollback |
+| [docs/DEPLOY-RAILWAY.md](docs/DEPLOY-RAILWAY.md) | Deploy API + worker + panel ke Railway (satu image, tiga start command) |
 | [docs/API.md](docs/API.md) | Referensi endpoint, error, webhook |
 | [apps/mobile/DESIGN.md](apps/mobile/DESIGN.md) | Kontrak desain UI pelanggan |
 | [docs/DESIGN-REFERENCES.md](docs/DESIGN-REFERENCES.md) | Peta ekspor HTML di `opendesain/` dan aturan pemakaiannya |

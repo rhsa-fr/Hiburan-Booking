@@ -1,7 +1,8 @@
 # Deploy Tarlink ke produksi
 
-Runbook untuk satu host Linux dengan Docker Compose. Untuk pengembangan lokal,
-lihat `README.md`.
+Runbook untuk satu host Linux dengan Docker Compose. Untuk deploy tanpa server
+sendiri (API + worker + panel di Railway), lihat `docs/DEPLOY-RAILWAY.md`.
+
 
 Isi: prasyarat → konfigurasi → deploy pertama → operasi harian → backup/restore →
 rollback → batasan yang harus diketahui.

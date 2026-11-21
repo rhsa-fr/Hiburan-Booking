@@ -1,10 +1,11 @@
 # syntax=docker/dockerfile:1.7
 #
-# Satu Dockerfile, empat target:
+# Satu Dockerfile, lima target:
 #   api     — NestJS /v1 (port 3001)
 #   worker  — poller PostgreSQL (tanpa port)
 #   admin   — panel Next.js (port 3002)
 #   migrate — one-shot runner migrasi (dipakai `docker compose run --rm migrate`)
+#   railway — image gabungan untuk Railway (api + worker + admin, lihat docs)
 #
 # Alasan memisahkan target, bukan satu image besar: panel butuh `.next` + Next,
 # API butuh `dist/api`, worker hanya butuh `dist/worker`. Dependency produksi
@@ -127,3 +128,20 @@ EXPOSE 3002
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:3002/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 CMD ["node", "/app/node_modules/next/dist/bin/next", "start", "-p", "3002", "-H", "0.0.0.0"]
+
+# ------------------------------------------------- runtime gabungan (Railway)
+# Railway memilih Dockerfile, bukan target stage. Satu image dipakai untuk tiga
+# service (api, worker, admin) dengan start command berbeda; lihat
+# docs/DEPLOY-RAILWAY.md. Migrasi berjalan sebagai pre-deploy command, karena
+# itu `db/` ikut disalin. Stage ini tidak dipakai docker-compose.prod.yml.
+FROM api AS railway
+USER root
+COPY --from=build /app/dist/worker ./dist/worker
+COPY --from=build /app/db ./db
+COPY --from=admin-build /app/apps/admin/package.json ./apps/admin/package.json
+COPY --from=admin-build /app/apps/admin/next.config.mjs ./apps/admin/next.config.mjs
+COPY --from=admin-build /app/apps/admin/postcss.config.mjs ./apps/admin/postcss.config.mjs
+COPY --from=admin-build /app/apps/admin/tailwind.config.ts ./apps/admin/tailwind.config.ts
+COPY --from=admin-build /app/apps/admin/.next ./apps/admin/.next
+RUN chown -R node:node /app/apps/admin/.next /app/dist/worker /app/db
+USER node
