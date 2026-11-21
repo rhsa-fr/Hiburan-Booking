@@ -19,6 +19,31 @@ export interface NotificationListOptions {
 const COLUMNS = 'id, type, title, body, payload, read_at, created_at';
 
 /**
+ * Upsert on the token, not on (user, token): a device that signs into another
+ * account must move to that account, otherwise the previous owner would keep
+ * receiving pushes for hardware they no longer control. `updated_at` records
+ * the last time the client proved it is still using this token.
+ */
+const UPSERT_DEVICE_SQL = `
+INSERT INTO device_tokens (user_id, token, platform)
+VALUES ($1::uuid, $2, $3)
+ON CONFLICT (token) DO UPDATE
+   SET user_id = EXCLUDED.user_id,
+       platform = EXCLUDED.platform,
+       updated_at = now()
+`;
+
+/**
+ * `user_id` is part of the predicate, not a post-check: a caller cannot delete
+ * a token owned by someone else even if the token string is known.
+ */
+const DELETE_DEVICE_SQL = `
+DELETE FROM device_tokens
+ WHERE user_id = $1::uuid
+   AND token = $2
+`;
+
+/**
  * Every query is scoped by `user_id`: a notification belongs to exactly one
  * account and there is no cross-account read path.
  */
@@ -83,6 +108,20 @@ export class NotificationsRepository {
         WHERE user_id = $1 AND read_at IS NULL`,
       [userId]
     );
+    return result.rowCount ?? 0;
+  }
+
+  /**
+   * Registers (or re-owns) a device token. Never takes the owner from the
+   * request body: `userId` always comes from the access token.
+   */
+  async upsertDeviceToken(userId: string, token: string, platform: string): Promise<void> {
+    await this.pool.query(UPSERT_DEVICE_SQL, [userId, token, platform]);
+  }
+
+  /** Returns how many rows the caller owned; another user's token yields 0. */
+  async removeDeviceToken(userId: string, token: string): Promise<number> {
+    const result = await this.pool.query(DELETE_DEVICE_SQL, [userId, token]);
     return result.rowCount ?? 0;
   }
 }

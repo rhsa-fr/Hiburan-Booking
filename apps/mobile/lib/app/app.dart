@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/api_client.dart';
 import '../core/notifications.dart';
+import '../core/push.dart';
 import '../core/session.dart';
 import 'routes.dart';
 import 'theme.dart';
@@ -13,10 +16,16 @@ class AppScope extends InheritedNotifier<Session> {
     super.key,
     required Session session,
     required this.api,
+    this.push,
     required super.child,
   }) : super(notifier: session);
 
   final ApiClient api;
+
+  /// Device-token owner: sign-out must drop the FCM row while the access token
+  /// is still valid, otherwise the old account keeps receiving pushes. Null in
+  /// widget tests that only exercise screens.
+  final PushService? push;
 
   Session get session => notifier!;
 
@@ -44,6 +53,12 @@ class _TarlinkAppState extends State<TarlinkApp> {
   final _navigatorKey = GlobalKey<NavigatorState>();
   final _messengerKey = GlobalKey<ScaffoldMessengerState>();
   late final NotificationPoller _poller;
+  late final PushService _push;
+
+  /// Last popup shown, so a push and the poller do not print the same event
+  /// twice inside one poll interval.
+  String? _lastPopupKey;
+  DateTime? _lastPopupAt;
 
   @override
   void initState() {
@@ -53,22 +68,72 @@ class _TarlinkAppState extends State<TarlinkApp> {
       api: widget.api,
       onNotification: _showPopup,
     );
-    widget.session.addListener(_syncPoller);
-    _syncPoller();
+    _push = PushService(onForeground: _showPushPopup);
+    widget.session.addListener(_syncDelivery);
+    _syncDelivery();
   }
 
-  /// Poll only while a session exists; stop the moment the user signs out.
-  void _syncPoller() {
+  /// Deliver only while a session exists: stop polling, drop the device token,
+  /// and stop routing pushes the moment the user signs out.
+  void _syncDelivery() {
     if (widget.session.authorized) {
       _poller.start();
+      unawaited(
+        _push.start(
+          session: widget.session,
+          api: widget.api,
+          onOpenBooking: _openBooking,
+        ),
+      );
     } else {
       _poller.stop();
+      unawaited(_push.stop());
     }
+  }
+
+  void _openBooking(String bookingId) {
+    final navigator = _navigatorKey.currentState;
+    final route = _isVendorOwner(widget.session)
+        ? Routes.vendorBookingDetail
+        : Routes.bookingStatus;
+    if (navigator != null) {
+      navigator.pushNamed(route, arguments: bookingId);
+      return;
+    }
+    // A tap on the launch notification can arrive before the first frame; retry
+    // once instead of dropping the deep link.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _navigatorKey.currentState?.pushNamed(route, arguments: bookingId);
+    });
+  }
+
+  /// Foreground push reuses the in-app popup, so one code path decides what a
+  /// "Lihat" tap does.
+  void _showPushPopup(String title, String body, String? bookingId) {
+    _showPopup(
+      InAppNotification(
+        id: 'push',
+        type: '',
+        title: title,
+        body: body,
+        bookingId: bookingId,
+      ),
+    );
   }
 
   void _showPopup(InAppNotification notification) {
     final messenger = _messengerKey.currentState;
     if (messenger == null) return;
+    final key = '${notification.title}|${notification.body}';
+    final now = DateTime.now();
+    final last = _lastPopupAt;
+    if (key == _lastPopupKey &&
+        last != null &&
+        now.difference(last) < const Duration(seconds: 25)) {
+      return;
+    }
+    _lastPopupKey = key;
+    _lastPopupAt = now;
     final bookingId = notification.bookingId;
     messenger.showSnackBar(
       SnackBar(
@@ -91,12 +156,7 @@ class _TarlinkAppState extends State<TarlinkApp> {
                 label: 'Lihat',
                 onPressed: () {
                   messenger.hideCurrentSnackBar();
-                  _navigatorKey.currentState?.pushNamed(
-                    _isVendorOwner(widget.session)
-                        ? Routes.vendorBookingDetail
-                        : Routes.bookingStatus,
-                    arguments: bookingId,
-                  );
+                  _openBooking(bookingId);
                 },
               ),
       ),
@@ -105,8 +165,9 @@ class _TarlinkAppState extends State<TarlinkApp> {
 
   @override
   void dispose() {
-    widget.session.removeListener(_syncPoller);
+    widget.session.removeListener(_syncDelivery);
     _poller.stop();
+    unawaited(_push.stop());
     super.dispose();
   }
 
@@ -115,6 +176,7 @@ class _TarlinkAppState extends State<TarlinkApp> {
     return AppScope(
       session: widget.session,
       api: widget.api,
+      push: _push,
       child: MaterialApp(
         title: 'Tarlink',
         debugShowCheckedModeBanner: false,

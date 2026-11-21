@@ -50,6 +50,8 @@ import type {
   NewUser,
   NewUserConsent,
   OtpChannel,
+  OtpPurpose,
+  OtpRequestRecord,
   TwoFactorState
 } from './auth.repository';
 
@@ -58,6 +60,21 @@ export const OTP_MAX_ATTEMPTS = 5;
 export const OTP_RATE_LIMIT_MAX = 3;
 export const OTP_RATE_LIMIT_WINDOW_SECONDS = 10 * 60;
 export const OTP_CHANNEL: OtpChannel = 'email';
+
+/** Password reset: the opaque token lives ten minutes and works once. */
+export const PASSWORD_RESET_TOKEN_TTL_SECONDS = 10 * 60;
+const PASSWORD_RESET_TOKEN_BYTES = 32;
+const INVALID_RESET_TOKEN_MESSAGE = 'Token reset tidak valid atau kedaluwarsa';
+const PENDING_REGISTRATION_MISSING = 'Pendaftaran tidak ditemukan atau sudah kedaluwarsa';
+const INVALID_PENDING_REGISTRATION = 'Data pendaftaran tidak valid. Ulangi pendaftaran.';
+const INVALID_OTP_MESSAGE = 'OTP is invalid or expired';
+
+/**
+ * A pending registration is only resumable while it is recent: the code itself
+ * expires in five minutes, but the metadata (hashed password, consent) must not
+ * stay usable forever.
+ */
+const PENDING_REGISTRATION_TTL_SECONDS = 24 * 60 * 60;
 
 export const LOGIN_RATE_LIMIT_MAX = 5;
 export const LOGIN_RATE_LIMIT_WINDOW_SECONDS = 10 * 60;
@@ -175,6 +192,60 @@ export interface RegisterInput {
   readonly consent: PolicyConsentInput;
   readonly ip?: string | null;
   readonly userAgent?: string | null;
+}
+
+/** `POST /auth/register`: nothing is created until the email is verified. */
+export interface RegisterPendingResult {
+  readonly verification_required: true;
+  readonly email: string;
+  readonly expires_in: number;
+  readonly dev_code?: string;
+}
+
+export interface RegisterVerifyInput {
+  readonly email: string;
+  readonly code: string;
+  readonly ip?: string | null;
+  readonly userAgent?: string | null;
+}
+
+export interface ResendRegistrationInput {
+  readonly email: string;
+  readonly ip?: string | null;
+}
+
+export interface ResendRegistrationResult {
+  readonly sent: true;
+  readonly expires_in: number;
+  readonly dev_code?: string;
+}
+
+export interface ForgotPasswordInput {
+  readonly email: string;
+  readonly ip?: string | null;
+}
+
+export interface ForgotPasswordResult {
+  readonly sent: true;
+}
+
+export interface VerifyPasswordResetInput {
+  readonly email: string;
+  readonly code: string;
+}
+
+export interface VerifyPasswordResetResult {
+  readonly reset_token: string;
+  readonly expires_in: number;
+}
+
+export interface ResetPasswordInput {
+  readonly reset_token: string;
+  readonly password: string;
+}
+
+export interface ResetPasswordResult {
+  readonly reset: true;
 }
 
 export interface GoogleLoginInput {
@@ -322,6 +393,11 @@ export function hashRefreshToken(token: string): string {
   return createHash('sha256').update(token, 'utf8').digest('hex');
 }
 
+/** `password_reset_tokens.token_hash` is CHAR(64): sha256 hex of the token. */
+export function hashResetToken(token: string): string {
+  return createHash('sha256').update(token, 'utf8').digest('hex');
+}
+
 function deriveScryptKey(
   password: string,
   salt: Buffer,
@@ -378,6 +454,63 @@ function constantTimeEquals(left: string, right: string): boolean {
   return timingSafeEqual(a, b);
 }
 
+interface PendingRegistration {
+  readonly name: string | null;
+  readonly phone: string | null;
+  readonly passwordHash: string;
+  readonly consents: NewUserConsent[];
+}
+
+/**
+ * Reads the parked registration from `otp_requests.metadata`. The row is data,
+ * not code, so every field is checked before it reaches `createUser`.
+ */
+function readPendingRegistration(metadata: Record<string, unknown>): PendingRegistration {
+  const invalid = (): AppError => new AppError('VALIDATION_ERROR', INVALID_PENDING_REGISTRATION);
+
+  const name = metadata.name;
+  const phone = metadata.phone;
+  const passwordHash = metadata.password_hash;
+  const consents = metadata.consents;
+
+  if (typeof passwordHash !== 'string' || passwordHash.length === 0) throw invalid();
+  if (name !== null && name !== undefined && typeof name !== 'string') throw invalid();
+  if (phone !== null && phone !== undefined && typeof phone !== 'string') throw invalid();
+  if (!Array.isArray(consents) || consents.length === 0) throw invalid();
+
+  const parsed: NewUserConsent[] = [];
+  for (const entry of consents) {
+    if (typeof entry !== 'object' || entry === null) throw invalid();
+    const record = entry as Record<string, unknown>;
+    const policyCode = record.policy_code;
+    const policyVersionId = record.policy_version_id;
+    const acceptedAt = record.accepted_at;
+    if (
+      typeof policyCode !== 'string' ||
+      typeof policyVersionId !== 'string' ||
+      typeof acceptedAt !== 'string'
+    ) {
+      throw invalid();
+    }
+    const when = new Date(acceptedAt);
+    if (Number.isNaN(when.getTime())) throw invalid();
+    parsed.push({
+      policyCode,
+      policyVersionId,
+      acceptedAt: when,
+      ip: typeof record.ip === 'string' ? record.ip : null,
+      userAgent: typeof record.user_agent === 'string' ? record.user_agent : null
+    });
+  }
+
+  return {
+    name: typeof name === 'string' ? name : null,
+    phone: typeof phone === 'string' ? phone : null,
+    passwordHash,
+    consents: parsed
+  };
+}
+
 @Injectable()
 export class AuthService {
   private readonly repository: AuthRepository;
@@ -423,38 +556,16 @@ export class AuthService {
   async requestOtp(input: RequestOtpInput): Promise<RequestOtpResult> {
     const email = normalizeEmail(input.email);
     const now = this.now();
-    const windowStart = new Date(now.getTime() - OTP_RATE_LIMIT_WINDOW_SECONDS * 1000);
 
-    const recent = await this.repository.countRecentOtpRequests(email, windowStart);
-    if (recent >= OTP_RATE_LIMIT_MAX) {
-      throw new AppError(
-        'RATE_LIMITED',
-        `OTP requests are limited to ${OTP_RATE_LIMIT_MAX} per ${OTP_RATE_LIMIT_WINDOW_SECONDS / 60} minutes`
-      );
-    }
+    await this.assertOtpQuota(email, input.ip ?? null, now);
 
-    if (input.ip) {
-      const ipWindowStart = new Date(
-        now.getTime() - OTP_IP_RATE_LIMIT_WINDOW_SECONDS * 1000
-      );
-      const recentFromIp = await this.repository.countRecentOtpRequestsByIp(
-        input.ip,
-        ipWindowStart
-      );
-      if (recentFromIp >= this.otpIpRateLimitMax) {
-        throw new AppError(
-          'RATE_LIMITED',
-          `OTP requests from this network are limited to ${this.otpIpRateLimitMax} per hour`
-        );
-      }
-    }
-
-    const code = randomInt(0, OTP_CODE_UPPER_BOUND).toString().padStart(6, '0');
+    const code = this.generateOtpCode();
     const requestId = this.newId();
 
     await this.repository.insertOtpRequest({
       id: requestId,
       email,
+      purpose: 'login',
       codeHash: hashOtpCode(code, email),
       channel: OTP_CHANNEL,
       maxAttempts: OTP_MAX_ATTEMPTS,
@@ -463,7 +574,12 @@ export class AuthService {
       createdAt: now
     });
 
-    await this.mailer.sendOtp({ to: email, code, ttlSeconds: OTP_TTL_SECONDS });
+    await this.mailer.sendOtp({
+      to: email,
+      code,
+      ttlSeconds: OTP_TTL_SECONDS,
+      purpose: 'login'
+    });
 
     return {
       request_id: requestId,
@@ -471,7 +587,7 @@ export class AuthService {
       channel: OTP_CHANNEL,
       // Double gate: never in production, and only when OTP_DEV_MODE is on.
       // This keeps a misconfigured staging deploy from leaking the code.
-      ...(this.nodeEnv !== 'production' && this.otpDevMode ? { dev_code: code } : {})
+      ...this.devCode(code)
     };
   }
 
@@ -479,30 +595,15 @@ export class AuthService {
     const email = normalizeEmail(input.email);
     const now = this.now();
 
-    const request = await this.repository.findActiveOtpRequest(email, now);
-    if (!request) {
-      throw new AppError('VALIDATION_ERROR', 'OTP is invalid or expired');
-    }
-
-    const attempts = await this.repository.incrementOtpAttempts(request.id);
-    if (attempts > request.maxAttempts) {
-      throw new AppError('RATE_LIMITED', 'OTP attempt limit reached, request a new code');
-    }
-
-    if (!constantTimeEquals(hashOtpCode(input.code, email), request.codeHash)) {
-      throw new AppError('VALIDATION_ERROR', 'OTP is invalid or expired');
-    }
-
-    // Atomic single-use: a concurrent verify loses here instead of minting a
-    // second session for the same code.
-    const consumed = await this.repository.consumeOtpRequest(request.id, now);
-    if (!consumed) {
-      throw new AppError('VALIDATION_ERROR', 'OTP is invalid or expired');
-    }
+    await this.consumeOtpCode(email, 'login', input.code, now);
 
     const user = await this.repository.findUserByEmail(email);
     if (!user) {
       throw new AppError('NOT_FOUND', 'User not found');
+    }
+    // Receiving the code proves the account owns the address (ADR 0011).
+    if (user.emailVerifiedAt === null) {
+      await this.repository.markEmailVerified(user.id, now);
     }
 
     const roles = await this.repository.listActiveRoles(user.id);
@@ -561,6 +662,12 @@ export class AuthService {
       return reject();
     }
 
+    // Only after the password is proven correct: answering this for any password
+    // would turn the status into an account-existence oracle.
+    if (user.emailVerifiedAt === null) {
+      throw new AppError('EMAIL_NOT_VERIFIED', 'Email belum diverifikasi');
+    }
+
     const roles = await this.repository.listActiveRoles(user.id);
     await this.repository.recordLoginAttempt({ email, ip, succeeded: true, createdAt: now });
     return this.issueSessionOrChallenge(user, roles, now, {
@@ -571,10 +678,15 @@ export class AuthService {
   }
 
   /**
-   * Public self-registration. It can only create a `customer`: the role is never
-   * read from the request, and vendor accounts are created by onboarding.
+   * Public self-registration, step 1 of 2. No user row is written here: the
+   * claim on the email is only proven by the code. The password is hashed
+   * before it is parked in `otp_requests.metadata`, so a pending registration
+   * never stores a plaintext credential.
+   *
+   * It can only ever create a `customer`: the role is never read from the
+   * request, and vendor accounts are created by onboarding.
    */
-  async register(input: RegisterInput): Promise<VerifyOtpResult> {
+  async register(input: RegisterInput): Promise<RegisterPendingResult> {
     const email = normalizeEmail(input.email);
     const phone =
       input.phone && input.phone.trim().length > 0 ? normalizePhone(input.phone) : null;
@@ -595,16 +707,55 @@ export class AuthService {
     const now = this.now();
     const consents = await this.buildConsents(input.consent, input.ip, input.userAgent, now);
     const passwordHash = await hashPassword(input.password);
+
+    await this.assertOtpQuota(email, input.ip ?? null, now);
+
+    const metadata = {
+      name: input.full_name?.trim() || null,
+      phone,
+      password_hash: passwordHash,
+      consents: consents.map((consent) => ({
+        policy_code: consent.policyCode,
+        policy_version_id: consent.policyVersionId,
+        accepted_at: consent.acceptedAt.toISOString(),
+        ip: consent.ip,
+        user_agent: consent.userAgent
+      }))
+    };
+
+    const { code, expiresIn } = await this.sendOtp(email, 'register', metadata, input.ip, now);
+
+    return {
+      verification_required: true,
+      email,
+      expires_in: expiresIn,
+      ...this.devCode(code)
+    };
+  }
+
+  /**
+   * Step 2 of 2: the code proves the address, so the user, its consents and the
+   * `customer` role are written now. The request is consumed atomically, which
+   * makes a replay of the same code fail even under concurrency.
+   */
+  async verifyRegistration(input: RegisterVerifyInput): Promise<PasswordLoginResult> {
+    const email = normalizeEmail(input.email);
+    const now = this.now();
+
+    const request = await this.consumeOtpCode(email, 'register', input.code, now);
+    const pending = readPendingRegistration(request.metadata);
+
     const newUser: NewUser = {
       id: this.newId(),
-      phone: phone ?? null,
+      phone: pending.phone,
       email,
-      name: input.full_name?.trim() || null,
-      passwordHash,
+      name: pending.name,
+      passwordHash: pending.passwordHash,
       passwordUpdatedAt: now,
       googleSub: null,
-      emailVerifiedAt: null,
-      consents
+      // The OTP was delivered to this address, so it is verified from birth.
+      emailVerifiedAt: now,
+      consents: pending.consents
     };
 
     const user = await this.repository.createUser(newUser);
@@ -614,6 +765,151 @@ export class AuthService {
       ip: input.ip ?? null,
       userAgent: input.userAgent ?? null
     });
+  }
+
+  /**
+   * Re-sends the registration code from the stored metadata instead of making
+   * the client repeat the form. The newest row wins, so the previous code stops
+   * working the moment this one is issued.
+   */
+  async resendRegistration(input: ResendRegistrationInput): Promise<ResendRegistrationResult> {
+    const email = normalizeEmail(input.email);
+    const now = this.now();
+
+    const pending = await this.repository.findLatestOtpRequest(email, 'register');
+    // A consumed row means the registration already completed; anything older
+    // than the pending window must be started from scratch.
+    if (
+      !pending ||
+      pending.consumedAt !== null ||
+      now.getTime() - pending.createdAt.getTime() > PENDING_REGISTRATION_TTL_SECONDS * 1000
+    ) {
+      throw new AppError('VALIDATION_ERROR', PENDING_REGISTRATION_MISSING);
+    }
+
+    await this.assertOtpQuota(email, input.ip ?? null, now);
+
+    const { code, expiresIn } = await this.sendOtp(
+      email,
+      'register',
+      pending.metadata,
+      input.ip,
+      now
+    );
+
+    return { sent: true, expires_in: expiresIn, ...this.devCode(code) };
+  }
+
+  /**
+   * Starts a password reset. The response is identical for every address: an
+   * unknown email, a Google-only account and an active password account all
+   * answer `{ sent: true }`, so the endpoint cannot enumerate accounts.
+   */
+  async requestPasswordReset(input: ForgotPasswordInput): Promise<ForgotPasswordResult> {
+    const email = normalizeEmail(input.email);
+    const now = this.now();
+
+    const user = await this.repository.findUserByEmail(email);
+    // Google-only accounts have no password to reset: no code, same response.
+    if (!user || user.passwordHash === null) return { sent: true };
+
+    // The quota is silent here on purpose: a 429 would reveal that the account
+    // exists. The caller simply receives no email.
+    if (!(await this.otpQuotaAvailable(email, input.ip ?? null, now))) return { sent: true };
+
+    const code = this.generateOtpCode();
+    const requestId = this.newId();
+    await this.repository.insertOtpRequest({
+      id: requestId,
+      email,
+      purpose: 'password_reset',
+      codeHash: hashOtpCode(code, email),
+      channel: OTP_CHANNEL,
+      maxAttempts: OTP_MAX_ATTEMPTS,
+      expiresAt: new Date(now.getTime() + OTP_TTL_SECONDS * 1000),
+      requesterIp: input.ip ?? null,
+      metadata: {},
+      createdAt: now
+    });
+
+    try {
+      await this.mailer.sendOtp({
+        to: email,
+        code,
+        ttlSeconds: OTP_TTL_SECONDS,
+        purpose: 'password_reset'
+      });
+    } catch {
+      // A provider outage must not turn into a different answer for an address
+      // that does exist; drop the undelivered code and keep the contract.
+      await this.repository.deleteOtpRequest(requestId);
+    }
+
+    return { sent: true };
+  }
+
+  /** Exchanges a valid `password_reset` code for one single-use reset token. */
+  async verifyPasswordResetCode(
+    input: VerifyPasswordResetInput
+  ): Promise<VerifyPasswordResetResult> {
+    const email = normalizeEmail(input.email);
+    const now = this.now();
+
+    await this.consumeOtpCode(email, 'password_reset', input.code, now);
+
+    const user = await this.repository.findUserByEmail(email);
+    if (!user || user.passwordHash === null) {
+      throw new AppError('VALIDATION_ERROR', INVALID_OTP_MESSAGE);
+    }
+
+    const token = randomBytes(PASSWORD_RESET_TOKEN_BYTES).toString('hex');
+    await this.repository.insertPasswordResetToken({
+      id: this.newId(),
+      userId: user.id,
+      tokenHash: hashResetToken(token),
+      expiresAt: new Date(now.getTime() + PASSWORD_RESET_TOKEN_TTL_SECONDS * 1000),
+      createdAt: now
+    });
+
+    return { reset_token: token, expires_in: PASSWORD_RESET_TOKEN_TTL_SECONDS };
+  }
+
+  /**
+   * Finishes the reset: the token is consumed first, then the password is
+   * replaced, every session is revoked (a stolen session must not survive a
+   * credential change) and the address counts as proven.
+   */
+  async resetPassword(input: ResetPasswordInput): Promise<ResetPasswordResult> {
+    const invalid = (): AppError => new AppError('VALIDATION_ERROR', INVALID_RESET_TOKEN_MESSAGE);
+
+    const token = typeof input.reset_token === 'string' ? input.reset_token.trim() : '';
+    if (!/^[0-9a-f]{64}$/.test(token)) throw invalid();
+    if (
+      typeof input.password !== 'string' ||
+      input.password.length < 8 ||
+      input.password.length > 200
+    ) {
+      throw new AppError('VALIDATION_ERROR', 'password must be 8-200 characters');
+    }
+
+    const now = this.now();
+    const record = await this.repository.findPasswordResetToken(hashResetToken(token));
+    if (!record || record.consumedAt !== null || record.expiresAt.getTime() <= now.getTime()) {
+      throw invalid();
+    }
+
+    // Atomic single use: a concurrent reset with the same token loses here.
+    const consumed = await this.repository.consumePasswordResetToken(record.id, now);
+    if (!consumed) throw invalid();
+
+    const passwordHash = await hashPassword(input.password);
+    const updated = await this.repository.updatePassword(record.userId, passwordHash, now);
+    if (!updated) throw invalid();
+
+    await this.repository.revokeAllSessions(record.userId, now);
+    await this.repository.markEmailVerified(record.userId, now);
+
+    return { reset: true };
   }
 
   /**
@@ -669,6 +965,129 @@ export class AuthService {
         userAgent: userAgent ?? null
       }
     ];
+  }
+
+  /** Six digits, uniform over 000000-999999. */
+  private generateOtpCode(): string {
+    return randomInt(0, OTP_CODE_UPPER_BOUND).toString().padStart(6, '0');
+  }
+
+  /**
+   * Double gate for every OTP endpoint: never in production, and only when
+   * `OTP_DEV_MODE` is on. A misconfigured staging deploy cannot leak a code.
+   */
+  private devCode(code: string): { dev_code?: string } {
+    return this.nodeEnv !== 'production' && this.otpDevMode ? { dev_code: code } : {};
+  }
+
+  /** Both OTP quotas (per email, per IP) are unspent. */
+  private async otpQuotaAvailable(
+    email: string,
+    ip: string | null,
+    now: Date
+  ): Promise<boolean> {
+    const windowStart = new Date(now.getTime() - OTP_RATE_LIMIT_WINDOW_SECONDS * 1000);
+    const recent = await this.repository.countRecentOtpRequests(email, windowStart);
+    if (recent >= OTP_RATE_LIMIT_MAX) return false;
+
+    if (!ip) return true;
+
+    const ipWindowStart = new Date(now.getTime() - OTP_IP_RATE_LIMIT_WINDOW_SECONDS * 1000);
+    const recentFromIp = await this.repository.countRecentOtpRequestsByIp(ip, ipWindowStart);
+    return recentFromIp < this.otpIpRateLimitMax;
+  }
+
+  /** Same quotas, but answered as 429 for endpoints that may reveal the email. */
+  private async assertOtpQuota(email: string, ip: string | null, now: Date): Promise<void> {
+    const windowStart = new Date(now.getTime() - OTP_RATE_LIMIT_WINDOW_SECONDS * 1000);
+    const recent = await this.repository.countRecentOtpRequests(email, windowStart);
+    if (recent >= OTP_RATE_LIMIT_MAX) {
+      throw new AppError(
+        'RATE_LIMITED',
+        `OTP requests are limited to ${OTP_RATE_LIMIT_MAX} per ${OTP_RATE_LIMIT_WINDOW_SECONDS / 60} minutes`
+      );
+    }
+
+    if (!ip) return;
+
+    const ipWindowStart = new Date(now.getTime() - OTP_IP_RATE_LIMIT_WINDOW_SECONDS * 1000);
+    const recentFromIp = await this.repository.countRecentOtpRequestsByIp(ip, ipWindowStart);
+    if (recentFromIp >= this.otpIpRateLimitMax) {
+      throw new AppError(
+        'RATE_LIMITED',
+        `OTP requests from this network are limited to ${this.otpIpRateLimitMax} per hour`
+      );
+    }
+  }
+
+  /**
+   * Inserts one code and delivers it. A delivery failure removes the row so a
+   * code nobody received can never be guessed against the record.
+   */
+  private async sendOtp(
+    email: string,
+    purpose: OtpPurpose,
+    metadata: Record<string, unknown>,
+    ip: string | null | undefined,
+    now: Date
+  ): Promise<{ code: string; expiresIn: number }> {
+    const code = this.generateOtpCode();
+    const requestId = this.newId();
+
+    await this.repository.insertOtpRequest({
+      id: requestId,
+      email,
+      purpose,
+      codeHash: hashOtpCode(code, email),
+      channel: OTP_CHANNEL,
+      maxAttempts: OTP_MAX_ATTEMPTS,
+      expiresAt: new Date(now.getTime() + OTP_TTL_SECONDS * 1000),
+      requesterIp: ip ?? null,
+      metadata,
+      createdAt: now
+    });
+
+    try {
+      await this.mailer.sendOtp({ to: email, code, ttlSeconds: OTP_TTL_SECONDS, purpose });
+    } catch (err) {
+      await this.repository.deleteOtpRequest(requestId);
+      throw err;
+    }
+
+    return { code, expiresIn: OTP_TTL_SECONDS };
+  }
+
+  /**
+   * Verifies and consumes the newest open code for `(email, purpose)`. A code
+   * issued for another purpose is invisible here, and the consume is atomic so
+   * two callers cannot both pass. Returns the consumed row for its metadata.
+   */
+  private async consumeOtpCode(
+    email: string,
+    purpose: OtpPurpose,
+    code: string,
+    now: Date
+  ): Promise<OtpRequestRecord> {
+    const request = await this.repository.findActiveOtpRequest(email, purpose, now);
+    if (!request) {
+      throw new AppError('VALIDATION_ERROR', INVALID_OTP_MESSAGE);
+    }
+
+    const attempts = await this.repository.incrementOtpAttempts(request.id);
+    if (attempts > request.maxAttempts) {
+      throw new AppError('RATE_LIMITED', 'OTP attempt limit reached, request a new code');
+    }
+
+    if (!constantTimeEquals(hashOtpCode(code, email), request.codeHash)) {
+      throw new AppError('VALIDATION_ERROR', INVALID_OTP_MESSAGE);
+    }
+
+    const consumed = await this.repository.consumeOtpRequest(request.id, now);
+    if (!consumed) {
+      throw new AppError('VALIDATION_ERROR', INVALID_OTP_MESSAGE);
+    }
+
+    return request;
   }
 
   /**

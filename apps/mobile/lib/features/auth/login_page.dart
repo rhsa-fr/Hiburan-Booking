@@ -7,13 +7,18 @@ import '../../app/theme.dart';
 import '../../core/api_exception.dart';
 import '../../core/ui.dart';
 import 'auth_support.dart';
+import 'email_otp_page.dart';
 import 'google_auth.dart';
 import 'google_button.dart';
 
 /// Login / daftar, rebuilt from the Stitch "Masuk atau Daftar" screen:
 /// lavender canvas, terracotta CTA, 52 px white fields.
 class LoginPage extends StatefulWidget {
-  const LoginPage({super.key});
+  const LoginPage({super.key, this.initialEmail});
+
+  /// Prefilled after a password reset so the customer only types the new
+  /// password. Optional: every existing caller keeps `const LoginPage()`.
+  final String? initialEmail;
 
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -29,10 +34,21 @@ class _LoginPageState extends State<LoginPage> {
   bool _loading = false;
   bool _googleLoading = false;
 
+  /// Set when the API answers `403 EMAIL_NOT_VERIFIED`, so the error carries a
+  /// second action instead of reading like a wrong password.
+  bool _emailNotVerified = false;
+
   /// Persetujuan S&K untuk jalur web: diambil sebelum popup Google supaya
   /// popup tidak terputus dialog.
   bool _webConsent = false;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    final email = widget.initialEmail?.trim();
+    if (email != null && email.isNotEmpty) _email.text = email;
+  }
 
   @override
   void dispose() {
@@ -43,7 +59,12 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   void _clearError() {
-    if (_error != null) setState(() => _error = null);
+    if (_error != null) {
+      setState(() {
+        _error = null;
+        _emailNotVerified = false;
+      });
+    }
   }
 
   Future<void> _submit() async {
@@ -73,10 +94,33 @@ class _LoginPageState extends State<LoginPage> {
       _goHome();
     } on ApiException catch (error) {
       if (!mounted) return;
-      setState(() => _error = authErrorMessage(error));
+      setState(() {
+        _error = authErrorMessage(error);
+        _emailNotVerified = error.code == 'EMAIL_NOT_VERIFIED';
+      });
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  void _openVerifyEmail() {
+    final email = _email.text.trim();
+    if (email.isEmpty || _loading) return;
+    Navigator.pushNamed(
+      context,
+      Routes.emailOtp,
+      arguments: EmailOtpArgs(email: email, mode: EmailOtpMode.register),
+    );
+  }
+
+  void _openForgotPassword() {
+    if (_loading) return;
+    final email = _email.text.trim();
+    Navigator.pushNamed(
+      context,
+      Routes.forgotPassword,
+      arguments: email.isEmpty ? null : email,
+    );
   }
 
   void _goHome() {
@@ -443,7 +487,40 @@ class _LoginPageState extends State<LoginPage> {
                 ),
               ],
             ),
-            if (_error != null) AuthInlineError(_error!),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: _loading ? null : _openForgotPassword,
+                style: TextButton.styleFrom(
+                  minimumSize: const Size(0, 48),
+                  padding: const EdgeInsets.symmetric(horizontal: Sp.xs),
+                  foregroundColor: AppColors.ink,
+                  disabledForegroundColor: AppColors.muted2,
+                  textStyle: text.labelMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    decoration: TextDecoration.underline,
+                  ),
+                ),
+                child: const Text('Lupa kata sandi?'),
+              ),
+            ),
+            if (_error != null) ...[
+              AuthInlineError(_error!),
+              if (_emailNotVerified)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: _openVerifyEmail,
+                    style: TextButton.styleFrom(
+                      minimumSize: const Size(0, 48),
+                      padding: const EdgeInsets.symmetric(horizontal: Sp.xs),
+                      foregroundColor: AppColors.ink,
+                    ),
+                    icon: const Icon(Icons.mark_email_read_outlined, size: 16),
+                    label: const Text('Kirim ulang kode verifikasi'),
+                  ),
+                ),
+            ],
             const SizedBox(height: Sp.lg),
             AuthSubmitButton(
               label: 'Masuk ke Akun',

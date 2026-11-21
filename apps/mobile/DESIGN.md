@@ -261,9 +261,11 @@ Sisa yang harus dibayar Rp3.550.000    (Display / lime) ← satu-satunya angka b
   mingguan. Chip berisi hari (9.5/700 kapital), tanggal (19/800), bulan (9.5), dan
   titik status 5 px.
 - State: `available` (`card` + titik `limeDark`), `waiting`/`unconfirmed`
-  (`warningSoft` + titik `warning`), `blocked` (`surfaceSoft`, teks `muted2`, tidak
-  bisa dipilih), `terpilih` (`ink` penuh, tanggal putih, titik lime). Tombol
-  "Kalender" di judul seksi membuka pemilih tanggal penuh.
+  (`warningSoft` + titik `warning`), `blocked` (`surfaceSoft`, teks `muted2`, tetap
+  bisa dipilih dengan peringatan "Tanggal ini sudah terisi"), `terpilih` (`ink`
+  penuh, tanggal putih, titik lime). Tombol "Kalender" di judul seksi membuka
+  pemilih tanggal penuh sampai 10 tahun ke depan; hanya tanggal lampau yang ditolak.
+  Tanggal di luar jendela kalender vendor ditandai "belum tercakup", bukan dilarang.
 - Legenda 1 baris: "Tersedia · Belum pasti · Terisi".
 - Bila `stale == true`: banner `warningSoft` di atas rail — "Jadwal terakhir diperbarui
   N hari lalu. Konfirmasi ke vendor lewat WhatsApp." dengan tautan WA.

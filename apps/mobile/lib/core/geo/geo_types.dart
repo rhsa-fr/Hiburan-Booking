@@ -15,7 +15,9 @@ class GeoReading {
       '${latitude.toStringAsFixed(5)}, ${longitude.toStringAsFixed(5)}';
 }
 
-enum GeoFailure { denied, unavailable, timeout, unsupported }
+/// `deniedForever` is separate from `denied` because only the first one can be
+/// fixed from the app settings screen, and the form offers that shortcut.
+enum GeoFailure { denied, deniedForever, unavailable, timeout, unsupported }
 
 class GeoException implements Exception {
   const GeoException(this.failure, this.message);

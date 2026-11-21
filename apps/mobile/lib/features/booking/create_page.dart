@@ -2,6 +2,7 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:geolocator/geolocator.dart';
 
 import '../../app/app.dart';
 import '../../app/routes.dart';
@@ -9,6 +10,7 @@ import '../../app/theme.dart';
 import '../../core/api_exception.dart';
 import '../../core/format.dart';
 import '../../core/geo/geo.dart';
+import '../../core/geo/geo_native_geocode.dart';
 import '../../core/models.dart';
 import '../../core/ui.dart';
 import '../../core/widgets.dart';
@@ -17,6 +19,16 @@ import 'booking_support.dart';
 const _weekdays = <String>['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'];
 const _allowedStates = {'available', 'unconfirmed', 'stale'};
 const _tabularFigures = <FontFeature>[FontFeature.tabularFigures()];
+
+/// The server decides whether a booked day can still be taken; the form only
+/// warns, it never blocks the customer.
+const _bookedDateWarning =
+    'Tanggal ini sudah terisi. Booking bisa ditolak vendor.';
+const _outsideCalendarWarning = 'Kalender vendor belum mencakup tanggal ini.';
+
+/// How far ahead a booking may be requested. The vendor calendar is loaded for
+/// 45 days, but a date outside it is unknown, not forbidden.
+const _bookingHorizonYears = 10;
 
 /// Server pricing: 30% DP of the package, 1% service fee, add-ons on top.
 const _dpRatePercent = 30;
@@ -87,12 +99,44 @@ bool _dateUncertain(
       (_allowedState(night) && night != 'available');
 }
 
+/// A date inside the loaded window carries a state; anything else is unknown,
+/// not blocked. Unknown dates stay bookable and are labelled as such.
+String? _dateWarning(
+  Map<String, Map<String, String>> availability,
+  String date,
+) {
+  if (!availability.containsKey(date)) return _outsideCalendarWarning;
+  return _dateEnabled(availability, date) ? null : _bookedDateWarning;
+}
+
+/// The calendar blocks past days; this also rejects a stale date carried over
+/// from the vendor page so the form never submits an event in the past.
+bool _isPastDay(DateTime date) {
+  final now = DateTime.now();
+  return date.isBefore(DateTime(now.year, now.month, now.day));
+}
+
 /// One scrollable screen, three numbered blocks: event, package/add-ons, money.
 /// The API still computes the final number; this page never invents a total.
 class CreateBookingPage extends StatefulWidget {
-  const CreateBookingPage({super.key, required this.args});
+  const CreateBookingPage({
+    super.key,
+    required this.args,
+    this.locationReader,
+    this.addressResolver,
+    this.settingsOpener,
+  });
 
   final BookCreateArgs args;
+
+  /// The plugin-backed helpers cannot run in widget tests; production leaves
+  /// these null and the page uses `geolocator` / `geocoding` directly.
+  @visibleForTesting
+  final Future<GeoReading> Function()? locationReader;
+  @visibleForTesting
+  final Future<String?> Function(GeoReading reading)? addressResolver;
+  @visibleForTesting
+  final Future<bool> Function()? settingsOpener;
 
   @override
   State<CreateBookingPage> createState() => _CreateBookingPageState();
@@ -124,7 +168,9 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
 
   _LocationMode _locationMode = _LocationMode.typed;
   GeoReading? _pin;
+  String? _addressSuggestion;
   bool _locating = false;
+  GeoFailure? _locationFailure;
   String? _locationError;
 
   bool _loading = true;
@@ -136,7 +182,9 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
   @override
   void initState() {
     super.initState();
-    _selectedDate = widget.args.date;
+    final carried = widget.args.date;
+    final parsed = carried == null ? null : DateTime.tryParse(carried);
+    _selectedDate = parsed == null || _isPastDay(parsed) ? null : carried;
     _selectedSession = 'full';
     _title.addListener(() {
       if (!_settingTitle) _titleEdited = true;
@@ -228,6 +276,8 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
 
   bool _dateUncertainOn(String date) => _dateUncertain(_availability, date);
 
+  String? _dateWarningFor(String date) => _dateWarning(_availability, date);
+
   void _syncTitle() {
     final vendor = _vendor;
     final date = _selectedDate;
@@ -275,21 +325,38 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
     setState(() {
       _locating = true;
       _locationError = null;
+      _locationFailure = null;
     });
     try {
-      final reading = await readCurrentLocation();
+      final reading = await (widget.locationReader ?? readCurrentLocation)();
+      String? suggestion;
+      try {
+        suggestion = await (widget.addressResolver ?? reverseGeocodeAddress)(
+          reading,
+        );
+      } catch (_) {
+        // Geocoding is only a suggestion; a failure must not lose the fix.
+        suggestion = null;
+      }
       if (!mounted) return;
       setState(() {
         _pin = reading;
+        _addressSuggestion = suggestion;
         _locating = false;
+        // A typed address always wins; only an empty field gets the coordinate.
+        if (_address.text.trim().isEmpty) _address.text = reading.coordinateText;
       });
     } on GeoException catch (error) {
       if (!mounted) return;
       setState(() {
         _locating = false;
+        _locationFailure = error.failure;
         _locationError = switch (error.failure) {
           GeoFailure.denied =>
-            'Izin lokasi ditolak. Aktifkan izin lokasi di browser, lalu coba lagi.',
+            'Izin lokasi ditolak. Aktifkan izin lokasi aplikasi, lalu coba lagi.',
+          GeoFailure.deniedForever =>
+            'Izin lokasi diblokir. Buka pengaturan aplikasi, izinkan lokasi, '
+                'lalu coba lagi.',
           GeoFailure.timeout =>
             'Pencarian lokasi terlalu lama. Coba lagi di area terbuka.',
           GeoFailure.unavailable =>
@@ -305,6 +372,32 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
         _locationError = 'Titik lokasi belum bisa diambil. Coba lagi.';
       });
     }
+  }
+
+  /// Only offered when the permission is blocked for good, because that is the
+  /// one case the in-app prompt can no longer fix.
+  Future<void> _openLocationSettings() async {
+    try {
+      await (widget.settingsOpener ?? Geolocator.openAppSettings)();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _locationError =
+            'Pengaturan aplikasi tidak bisa dibuka. Izinkan lokasi dari '
+            'pengaturan HP.';
+      });
+    }
+  }
+
+  /// Turns the reverse-geocoded suggestion into the typed address so it can be
+  /// corrected, and keeps the pin: the coordinates are still the customer's.
+  void _acceptSuggestion() {
+    final suggestion = _addressSuggestion;
+    if (suggestion == null) return;
+    setState(() {
+      _address.text = suggestion;
+      _locationMode = _LocationMode.typed;
+    });
   }
 
   int _qtyOf(Addon addon) => _addonQty[addon.id] ?? 0;
@@ -334,7 +427,6 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
   }
 
   Future<void> _pickSlot() async {
-    if (_dates.isEmpty) return;
     final result = await showModalBottomSheet<({String date, String session})>(
       context: context,
       isScrollControlled: true,
@@ -419,9 +511,9 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
             if (place.isNotEmpty) 'venue_name': place,
             'venue_address': address,
             // `venue_location` adalah koordinat ACARA, bukan lokasi vendor.
-            // Hanya dikirim saat pelanggan memilih mode GPS; mode ketik manual
-            // tidak membawa titik lama yang mungkin sudah tidak relevan.
-            if (_locationMode == _LocationMode.gps && _pin != null)
+            // Titik ini dikirim setiap kali pelanggan benar-benar mengambilnya
+            // lewat GPS, termasuk setelah alamat hasil geocoding dipakai.
+            if (_pin != null)
               'venue_location': {'lat': _pin!.latitude, 'lng': _pin!.longitude},
             'start_date': date,
             'end_date': date,
@@ -677,28 +769,31 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
           ],
           const SizedBox(height: Sp.md),
           if (_dates.isEmpty)
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const InfoStrip(
-                  message:
-                      'Jadwal vendor belum tersedia untuk 45 hari ke depan. '
-                      'Muat ulang dulu sebelum memesan.',
-                  icon: Icons.event_busy_outlined,
-                  tone: InfoTone.warning,
-                ),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: TextButton(
-                    onPressed: _load,
-                    child: const Text('Muat ulang jadwal'),
+            Padding(
+              padding: const EdgeInsets.only(bottom: Sp.sm),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const InfoStrip(
+                    message:
+                        'Jadwal vendor belum tersedia untuk 45 hari ke depan. '
+                        'Kamu tetap bisa memilih tanggal; vendor yang '
+                        'mengonfirmasi.',
+                    icon: Icons.event_busy_outlined,
+                    tone: InfoTone.warning,
                   ),
-                ),
-              ],
-            )
-          else
-            _slotSummary(text),
-          if (_dateError && _dates.isNotEmpty) ...[
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: _load,
+                      child: const Text('Muat ulang jadwal'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          _slotSummary(text),
+          if (_dateError) ...[
             const SizedBox(height: Sp.xs),
             Text(
               'Pilih tanggal acara dulu.',
@@ -809,6 +904,7 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
               onChanged: (index) => setState(() {
                 _locationMode = _LocationMode.values[index];
                 _locationError = null;
+                _locationFailure = null;
               }),
             ),
           ],
@@ -857,6 +953,23 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
                 style: text.bodySmall?.copyWith(color: AppColors.danger),
               ),
             ),
+            if (_locationFailure == GeoFailure.deniedForever)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: _openLocationSettings,
+                  icon: const Icon(Icons.settings_outlined, size: 18),
+                  label: const Text('Buka pengaturan'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppColors.ink,
+                    minimumSize: const Size(0, 44),
+                    padding: EdgeInsets.zero,
+                    textStyle: text.labelMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
           ],
         ],
       ),
@@ -865,6 +978,7 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
 
   Widget _gpsBlock(TextTheme text) {
     final pin = _pin;
+    final suggestion = _addressSuggestion;
     if (pin == null) {
       return Container(
         padding: const EdgeInsets.all(Sp.md),
@@ -1027,6 +1141,51 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
               ],
             ),
           ),
+          if (suggestion != null) ...[
+            const SizedBox(height: 12),
+            Divider(
+              height: 1,
+              thickness: 1,
+              color: Colors.white.withValues(alpha: 0.12),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'Alamat di titik ini',
+              style: text.labelSmall?.copyWith(
+                fontSize: 10,
+                letterSpacing: 0.6,
+                fontWeight: FontWeight.w700,
+                color: Colors.white.withValues(alpha: 0.56),
+              ),
+            ),
+            const SizedBox(height: 3),
+            Text(
+              suggestion,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: text.bodyMedium?.copyWith(
+                fontSize: 13,
+                height: 1.4,
+                color: Colors.white.withValues(alpha: 0.92),
+              ),
+            ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                onPressed: _acceptSuggestion,
+                style: TextButton.styleFrom(
+                  foregroundColor: AppColors.lime,
+                  minimumSize: const Size(0, 44),
+                  padding: EdgeInsets.zero,
+                  textStyle: text.labelMedium?.copyWith(
+                    color: AppColors.lime,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                child: const Text('Pakai alamat ini'),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -1036,6 +1195,7 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
     final date = _selectedDate;
     final parsed = date == null ? null : DateTime.tryParse(date);
     final uncertain = date != null && _dateUncertainOn(date);
+    final warning = date == null ? null : _dateWarningFor(date);
 
     return Material(
       color: AppColors.card,
@@ -1074,12 +1234,19 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        parsed == null
-                            ? 'Dari jadwal vendor yang masih terbuka'
-                            : 'Sehari penuh · satu panggung untuk acara ini'
-                                  '${uncertain ? ' · belum dikonfirmasi' : ''}',
+                        warning ??
+                            (parsed == null
+                                ? (_dates.isEmpty
+                                      ? 'Kalender vendor belum dimuat; pilih '
+                                            'tanggal lalu vendor mengonfirmasi'
+                                      : 'Dari jadwal vendor yang masih terbuka')
+                                : 'Sehari penuh · satu panggung untuk acara '
+                                      'ini'
+                                      '${uncertain ? ' · belum dikonfirmasi' : ''}'),
                         style: text.bodySmall?.copyWith(
-                          color: uncertain ? AppColors.warning : null,
+                          color: warning != null || uncertain
+                              ? AppColors.warning
+                              : null,
                         ),
                       ),
                     ],
@@ -1431,22 +1598,62 @@ class _SlotSheetState extends State<_SlotSheet> {
   @override
   void initState() {
     super.initState();
+    // A carried date is honoured even outside the loaded calendar or on a
+    // booked day: only the past is refused.
     final date = widget.initialDate;
-    if (date == null ||
-        !widget.dates.contains(date) ||
-        !_dateEnabled(widget.availability, date)) {
-      return;
-    }
+    final parsed = date == null ? null : DateTime.tryParse(date);
+    if (parsed == null || _isPastDay(parsed)) return;
     _date = date;
   }
 
   void _chooseDate(String date) => setState(() => _date = date);
 
+  /// The vendor calendar covers 45 days; the rest of the horizon (up to ten
+  /// years) comes from this picker, with past days disabled.
+  Future<void> _pickFromCalendar() async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final selected = _date == null ? null : DateTime.tryParse(_date!);
+    final picked = await showTarlinkDatePicker(
+      context: context,
+      initialDate: selected == null || _isPastDay(selected) ? today : selected,
+      firstDate: today,
+      lastDate: DateTime(
+        today.year + _bookingHorizonYears,
+        today.month,
+        today.day,
+      ),
+    );
+    if (picked == null || !mounted) return;
+    _chooseDate(isoDate(picked));
+  }
+
+  /// One honest line per case: booked, outside the loaded calendar, or the
+  /// vendor's calendar is merely old. Nothing is invented for unknown days.
+  ({String message, IconData icon})? _warningFor(String date) {
+    final warning = _dateWarning(widget.availability, date);
+    if (warning == _bookedDateWarning) {
+      return (message: warning!, icon: Icons.event_busy_outlined);
+    }
+    if (warning != null) {
+      return (message: warning, icon: Icons.calendar_month_outlined);
+    }
+    if (_dateUncertain(widget.availability, date)) {
+      return (
+        message:
+            'Vendor perlu mengecek tanggal ini. Kamu tetap bisa memesan, '
+            'tapi jadwal belum pasti.',
+        icon: Icons.help_outline,
+      );
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     final date = _date;
-    final uncertain = date != null && _dateUncertain(widget.availability, date);
+    final warning = date == null ? null : _warningFor(date);
 
     return SafeArea(
       child: ConstrainedBox(
@@ -1517,30 +1724,48 @@ class _SlotSheetState extends State<_SlotSheet> {
                 ],
               ),
               const SizedBox(height: Sp.lg),
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: [
-                    for (final item in widget.dates) ...[
-                      _DateButton(
-                        date: item,
-                        selected: item == date,
-                        enabled: _dateEnabled(widget.availability, item),
-                        uncertain: _dateUncertain(widget.availability, item),
-                        onTap: () => _chooseDate(item),
-                      ),
-                      const SizedBox(width: Sp.sm),
-                    ],
-                  ],
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: _pickFromCalendar,
+                  icon: const Icon(Icons.calendar_month_outlined, size: 18),
+                  label: const Text('Pilih dari kalender'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppColors.ink,
+                    backgroundColor: AppColors.primarySoft,
+                    minimumSize: const Size(0, 44),
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    textStyle: text.labelMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                 ),
               ),
-              if (uncertain) ...[
+              if (widget.dates.isNotEmpty) ...[
+                const SizedBox(height: Sp.sm),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      for (final item in widget.dates) ...[
+                        _DateButton(
+                          date: item,
+                          selected: item == date,
+                          booked: !_dateEnabled(widget.availability, item),
+                          uncertain: _dateUncertain(widget.availability, item),
+                          onTap: () => _chooseDate(item),
+                        ),
+                        const SizedBox(width: Sp.sm),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+              if (warning != null) ...[
                 const SizedBox(height: Sp.md),
-                const InfoStrip(
-                  message:
-                      'Vendor perlu mengecek tanggal ini. Kamu tetap bisa '
-                      'memesan, tapi jadwal belum pasti.',
-                  icon: Icons.help_outline,
+                InfoStrip(
+                  message: warning.message,
+                  icon: warning.icon,
                   tone: InfoTone.warning,
                 ),
               ],
@@ -1564,14 +1789,16 @@ class _DateButton extends StatelessWidget {
   const _DateButton({
     required this.date,
     required this.selected,
-    required this.enabled,
+    required this.booked,
     required this.uncertain,
     required this.onTap,
   });
 
   final String date;
   final bool selected;
-  final bool enabled;
+
+  /// Booked or blocked days stay tappable: the server decides, the form warns.
+  final bool booked;
   final bool uncertain;
   final VoidCallback onTap;
 
@@ -1583,15 +1810,19 @@ class _DateButton extends StatelessWidget {
     return Semantics(
       button: true,
       selected: selected,
-      enabled: enabled,
+      enabled: true,
       label:
           '${parsed == null ? date : formatDate(parsed)}'
-          '${uncertain ? ', belum dikonfirmasi' : ''}',
+          '${booked
+              ? ', sudah terisi'
+              : uncertain
+              ? ', belum dikonfirmasi'
+              : ''}',
       excludeSemantics: true,
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: enabled ? onTap : null,
+          onTap: onTap,
           borderRadius: BorderRadius.circular(Radii.sm),
           child: Container(
             constraints: const BoxConstraints(minHeight: 52),
@@ -1602,16 +1833,12 @@ class _DateButton extends StatelessWidget {
             decoration: BoxDecoration(
               color: selected
                   ? AppColors.primary
-                  : enabled
-                  ? AppColors.card
-                  : AppColors.neutralSoft,
+                  : booked
+                  ? AppColors.neutralSoft
+                  : AppColors.card,
               borderRadius: BorderRadius.circular(Radii.sm),
               border: Border.all(
-                color: selected
-                    ? AppColors.primary
-                    : enabled
-                    ? AppColors.line
-                    : AppColors.line,
+                color: selected ? AppColors.primary : AppColors.line,
                 width: selected ? 1.5 : 1,
               ),
             ),
@@ -1682,9 +1909,9 @@ class _DateButton extends StatelessWidget {
                         fontWeight: FontWeight.w700,
                         color: selected
                             ? AppColors.onPrimary
-                            : enabled
-                            ? AppColors.ink
-                            : AppColors.inkMuted,
+                            : booked
+                            ? AppColors.inkMuted
+                            : AppColors.ink,
                       ),
                     ),
                   ],

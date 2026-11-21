@@ -10,6 +10,7 @@ import '../../core/ui.dart';
 import '../../core/widgets.dart';
 import '../booking/booking_support.dart';
 import '../booking/list_page.dart';
+import '../notifications/notification_bell.dart';
 import '../profile/account_page.dart';
 import 'browse_page.dart';
 
@@ -441,6 +442,8 @@ class _HomeHeader extends StatelessWidget {
                   children: [
                     const BrandLockup(light: true),
                     const Spacer(),
+                    const NotificationBell(),
+                    const SizedBox(width: Sp.xs + 2),
                     _ProfileButton(onTap: onOpenProfile),
                   ],
                 ),

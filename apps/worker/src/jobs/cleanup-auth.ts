@@ -7,6 +7,7 @@ interface CleanupRow {
   otp_requests: number;
   login_attempts: number;
   admin_2fa_challenges: number;
+  password_reset_tokens: number;
 }
 
 /**
@@ -18,7 +19,9 @@ interface CleanupRow {
  *   - otp_requests: 7 days after expiry;
  *   - login_attempts: 30 days;
  *   - admin_2fa_challenges: 7 days after expiry/consumption (tickets live 10
- *     minutes; the extra window keeps recent login forensics available).
+ *     minutes; the extra window keeps recent login forensics available);
+ *   - password_reset_tokens: 7 days after expiry or consumption (tokens live
+ *     10 minutes).
  *
  * Idempotent: running it twice simply deletes nothing the second time.
  */
@@ -44,11 +47,18 @@ deleted_2fa AS (
    WHERE expires_at < now() - interval '7 days'
       OR (consumed_at IS NOT NULL AND consumed_at < now() - interval '7 days')
   RETURNING 1
+),
+deleted_reset_tokens AS (
+  DELETE FROM password_reset_tokens
+   WHERE expires_at < now() - interval '7 days'
+      OR (consumed_at IS NOT NULL AND consumed_at < now() - interval '7 days')
+  RETURNING 1
 )
 SELECT (SELECT COUNT(*) FROM deleted_sessions)::int AS sessions,
        (SELECT COUNT(*) FROM deleted_otp)::int AS otp_requests,
        (SELECT COUNT(*) FROM deleted_attempts)::int AS login_attempts,
-       (SELECT COUNT(*) FROM deleted_2fa)::int AS admin_2fa_challenges
+       (SELECT COUNT(*) FROM deleted_2fa)::int AS admin_2fa_challenges,
+       (SELECT COUNT(*) FROM deleted_reset_tokens)::int AS password_reset_tokens
 `;
 
 export async function runCleanupAuth(): Promise<JobStats> {
@@ -60,12 +70,13 @@ export async function runCleanupAuth(): Promise<JobStats> {
       (row?.sessions ?? 0) +
       (row?.otp_requests ?? 0) +
       (row?.login_attempts ?? 0) +
-      (row?.admin_2fa_challenges ?? 0);
+      (row?.admin_2fa_challenges ?? 0) +
+      (row?.password_reset_tokens ?? 0);
     stats.processed = total;
     if (total === 0) stats.skipped = 1;
     else {
       logLine(
-        `job=cleanup_auth sessions=${row?.sessions ?? 0} otp_requests=${row?.otp_requests ?? 0} login_attempts=${row?.login_attempts ?? 0} admin_2fa_challenges=${row?.admin_2fa_challenges ?? 0}`
+        `job=cleanup_auth sessions=${row?.sessions ?? 0} otp_requests=${row?.otp_requests ?? 0} login_attempts=${row?.login_attempts ?? 0} admin_2fa_challenges=${row?.admin_2fa_challenges ?? 0} password_reset_tokens=${row?.password_reset_tokens ?? 0}`
       );
     }
   } catch (err) {

@@ -22,10 +22,13 @@ import type {
   NewAdminChallenge,
   NewLoginAttempt,
   NewOtpRequest,
+  NewPasswordResetToken,
   NewSession,
   NewUser,
   NewUserConsent,
+  OtpPurpose,
   OtpRequestRecord,
+  PasswordResetTokenRecord,
   SessionRefreshRecord,
   TwoFactorResetInput,
   TwoFactorResetOutcome,
@@ -34,16 +37,19 @@ import type {
 import type { GoogleIdentity, GoogleTokenVerifier } from './google-verifier';
 import { GoogleTokenInfoVerifier } from './google-verifier';
 import { AuthController } from './auth.controller';
+import type { Mailer, OtpEmail } from './mailer';
 import { generateTotpCode } from './totp';
 import {
   AuthService,
   INVALID_CREDENTIALS_MESSAGE,
   hashOtpCode,
   hashPassword,
+  hashResetToken,
   OTP_RATE_LIMIT_WINDOW_SECONDS,
   TOTP_CHALLENGE_MAX_ATTEMPTS,
   TOTP_CHALLENGE_TTL_SECONDS,
   TOTP_FAILURE_MAX,
+  verifyPassword,
   type AuthServiceDeps,
   type PasswordLoginResult,
   type VerifyOtpResult
@@ -67,9 +73,15 @@ const CONSENT = {
   tos_version_id: TOS_VERSION_ID,
   privacy_version_id: PRIVACY_VERSION_ID
 };
+/** Backfilled `email_verified_at` for seeded accounts (migration 037). */
+const VERIFIED_AT = new Date('2026-10-01T00:00:00.000Z');
 
 interface StoredOtpRequest extends OtpRequestRecord {
   requesterIp: string | null;
+}
+
+interface StoredResetToken extends PasswordResetTokenRecord {
+  tokenHash: string;
 }
 
 interface StoredUser {
@@ -102,6 +114,7 @@ interface StoredBackupCode {
 
 class FakeAuthRepository implements AuthRepository {
   readonly otpRequests: StoredOtpRequest[] = [];
+  readonly passwordResetTokens: StoredResetToken[] = [];
   readonly users: StoredUser[] = [];
   readonly roles: Array<{ userId: string; role: Role }> = [];
   /** `id` mirrors `sessions.id`: generated here, never equal to `jti`. */
@@ -130,26 +143,50 @@ class FakeAuthRepository implements AuthRepository {
     this.otpRequests.push({
       id: input.id,
       email: input.email,
+      purpose: input.purpose,
       codeHash: input.codeHash,
       attempts: 0,
       maxAttempts: input.maxAttempts,
       expiresAt: input.expiresAt,
       consumedAt: null,
+      metadata: input.metadata ?? {},
       createdAt: input.createdAt,
       requesterIp: input.requesterIp
     });
   }
 
-  async findActiveOtpRequest(email: string, now: Date): Promise<OtpRequestRecord | null> {
+  async findActiveOtpRequest(
+    email: string,
+    purpose: OtpPurpose,
+    now: Date
+  ): Promise<OtpRequestRecord | null> {
     for (let i = this.otpRequests.length - 1; i >= 0; i -= 1) {
       const row = this.otpRequests[i];
       if (!row) continue;
       if (row.email !== email) continue;
+      if (row.purpose !== purpose) continue;
       if (row.consumedAt !== null) continue;
       if (row.expiresAt <= now) continue;
       return { ...row };
     }
     return null;
+  }
+
+  async findLatestOtpRequest(
+    email: string,
+    purpose: OtpPurpose
+  ): Promise<OtpRequestRecord | null> {
+    for (let i = this.otpRequests.length - 1; i >= 0; i -= 1) {
+      const row = this.otpRequests[i];
+      if (!row || row.email !== email || row.purpose !== purpose) continue;
+      return { ...row };
+    }
+    return null;
+  }
+
+  async deleteOtpRequest(id: string): Promise<void> {
+    const index = this.otpRequests.findIndex((row) => row.id === id);
+    if (index >= 0) this.otpRequests.splice(index, 1);
   }
 
   async incrementOtpAttempts(id: string): Promise<number> {
@@ -161,6 +198,36 @@ class FakeAuthRepository implements AuthRepository {
 
   async consumeOtpRequest(id: string, consumedAt: Date): Promise<boolean> {
     const row = this.otpRequests.find((candidate) => candidate.id === id);
+    if (!row || row.consumedAt !== null) return false;
+    row.consumedAt = consumedAt;
+    return true;
+  }
+
+  async insertPasswordResetToken(input: NewPasswordResetToken): Promise<void> {
+    this.passwordResetTokens.push({
+      id: input.id,
+      userId: input.userId,
+      tokenHash: input.tokenHash,
+      expiresAt: input.expiresAt,
+      consumedAt: null,
+      createdAt: input.createdAt
+    });
+  }
+
+  async findPasswordResetToken(tokenHash: string): Promise<PasswordResetTokenRecord | null> {
+    const row = this.passwordResetTokens.find((candidate) => candidate.tokenHash === tokenHash);
+    if (!row) return null;
+    return {
+      id: row.id,
+      userId: row.userId,
+      expiresAt: row.expiresAt,
+      consumedAt: row.consumedAt,
+      createdAt: row.createdAt
+    };
+  }
+
+  async consumePasswordResetToken(id: string, consumedAt: Date): Promise<boolean> {
+    const row = this.passwordResetTokens.find((candidate) => candidate.id === id);
     if (!row || row.consumedAt !== null) return false;
     row.consumedAt = consumedAt;
     return true;
@@ -187,6 +254,7 @@ class FakeAuthRepository implements AuthRepository {
       phone: user.phone,
       email: user.email,
       passwordHash: user.passwordHash,
+      emailVerifiedAt: user.emailVerifiedAt,
       name: user.name,
       createdAt: new Date('2026-10-01T00:00:00.000Z')
     };
@@ -300,6 +368,12 @@ class FakeAuthRepository implements AuthRepository {
     this.users[index] = { ...current, passwordHash };
     this.passwordUpdatedAt.set(userId, updatedAt);
     return true;
+  }
+
+  async markEmailVerified(userId: string, verifiedAt: Date): Promise<void> {
+    const user = this.users.find((candidate) => candidate.id === userId);
+    if (!user) return;
+    user.emailVerifiedAt ??= verifiedAt;
   }
 
   async insertSession(input: NewSession): Promise<void> {
@@ -422,6 +496,7 @@ class FakeAuthRepository implements AuthRepository {
       phone: user.phone,
       email: user.email,
       passwordHash: user.passwordHash,
+      emailVerifiedAt: user.emailVerifiedAt,
       twoFactorEnabled: user.twoFactorEnabled,
       totpSecretEncrypted: user.totpSecretEncrypted,
       totpKeyId: user.totpKeyId
@@ -579,12 +654,30 @@ class FakeAuthRepository implements AuthRepository {
 interface Harness {
   readonly repository: FakeAuthRepository;
   readonly service: AuthService;
+  readonly mailer: FakeMailer;
   advance(seconds: number): void;
   now(): Date;
 }
 
+/** Records what would have been emailed; never prints a code. */
+class FakeMailer implements Mailer {
+  readonly sent: OtpEmail[] = [];
+  fail = false;
+
+  async sendOtp(input: OtpEmail): Promise<void> {
+    if (this.fail) throw new AppError('UPSTREAM_ERROR', 'Email OTP gagal dikirim');
+    this.sent.push({ ...input });
+  }
+
+  /** Code of the newest message for one address, or undefined. */
+  lastCodeFor(email: string): string | undefined {
+    return [...this.sent].reverse().find((message) => message.to === email)?.code;
+  }
+}
+
 function makeHarness(overrides: Partial<AuthServiceDeps> = {}): Harness {
   const repository = new FakeAuthRepository();
+  const mailer = new FakeMailer();
   let current = new Date('2026-10-21T09:00:00.000Z');
   let sequence = 0;
 
@@ -600,12 +693,14 @@ function makeHarness(overrides: Partial<AuthServiceDeps> = {}): Harness {
       sequence += 1;
       return `00000000-0000-4000-8000-${String(sequence).padStart(12, '0')}`;
     },
+    mailer,
     ...overrides
   });
 
   return {
     repository,
     service,
+    mailer,
     advance(seconds: number): void {
       current = new Date(current.getTime() + seconds * 1000);
     },
@@ -682,7 +777,10 @@ function addUser(
     passwordHash: options.passwordHash ?? null,
     name: options.name ?? null,
     googleSub: options.googleSub ?? null,
-    emailVerifiedAt: options.emailVerifiedAt ?? null,
+    // Mirrors the migration-037 backfill: an existing account counts as
+    // verified unless the test says otherwise.
+    emailVerifiedAt:
+      options.emailVerifiedAt === undefined ? VERIFIED_AT : options.emailVerifiedAt,
     twoFactorEnabled: false,
     totpSecretEncrypted: null,
     totpKeyId: null,
@@ -817,6 +915,24 @@ describe('AuthService.verifyOtp', () => {
       code: 'NOT_FOUND'
     });
   });
+
+  it('marks the email verified: receiving the login code proves ownership', async () => {
+    const { repository, service } = makeHarness();
+    addUser(repository, ['customer'], { emailVerifiedAt: null });
+    const code = await requestCode(service);
+
+    await service.verifyOtp({ email: EMAIL, code });
+
+    const stored = repository.users[0];
+    expect(stored?.emailVerifiedAt).toBeInstanceOf(Date);
+
+    // …and password login works afterwards.
+    if (!stored) throw new Error('expected the seeded user');
+    stored.passwordHash = await hashPassword('kata-sandi-2026');
+    await expect(
+      service.loginWithPassword({ email: EMAIL, password: 'kata-sandi-2026' })
+    ).resolves.toMatchObject({ token_type: 'Bearer' });
+  });
 });
 
 describe('AuthService dev_code exposure', () => {
@@ -944,6 +1060,28 @@ describe('AuthService.loginWithPassword', () => {
 
     expect(repository.loginAttempts[0]?.succeeded).toBe(false);
     expect(repository.sessions).toHaveLength(0);
+  });
+
+  it('rejects a correct password on an unverified email with EMAIL_NOT_VERIFIED', async () => {
+    const { repository, service } = makeHarness();
+    addUser(repository, ['customer'], {
+      email: ADMIN_EMAIL,
+      passwordHash: await hashPassword(ADMIN_PASSWORD),
+      emailVerifiedAt: null
+    });
+
+    await expect(
+      service.loginWithPassword({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD })
+    ).rejects.toMatchObject({
+      code: 'EMAIL_NOT_VERIFIED',
+      message: 'Email belum diverifikasi'
+    });
+    expect(repository.sessions).toHaveLength(0);
+
+    // A wrong password stays generic: the status must not become an oracle.
+    await expect(
+      service.loginWithPassword({ email: ADMIN_EMAIL, password: 'kata-sandi-salah' })
+    ).rejects.toMatchObject({ code: 'UNAUTHENTICATED', message: INVALID_CREDENTIALS_MESSAGE });
   });
 
   it('blocks the 6th failure for one email within 10 minutes', async () => {
@@ -1777,13 +1915,13 @@ describe('AuthService admin 2FA (FR-128)', () => {
   });
 });
 
-describe('AuthService.register', () => {
+describe('AuthService.register (pending, email OTP)', () => {
   const NEW_EMAIL = 'new.customer@tarlink.id';
   const NEW_PHONE = '628123456789';
   const NEW_PASSWORD = 'kata-sandi-2026';
 
-  it('creates a customer with a hashed password and returns a token without secrets', async () => {
-    const { repository, service } = makeHarness();
+  it('creates no user and stores a register OTP with hashed password metadata', async () => {
+    const { repository, service, mailer } = makeHarness();
 
     const result = await service.register({
       email: 'New.Customer@Tarlink.id',
@@ -1794,12 +1932,181 @@ describe('AuthService.register', () => {
       ip: '203.0.113.1',
       userAgent: 'vitest'
     });
+
+    expect(result).toMatchObject({
+      verification_required: true,
+      email: NEW_EMAIL,
+      expires_in: 300
+    });
+    expect(result.dev_code).toMatch(/^\d{6}$/);
+    expect(repository.users).toHaveLength(0);
+    expect(repository.roles).toHaveLength(0);
+    expect(repository.sessions).toHaveLength(0);
+
+    const stored = repository.otpRequests[0];
+    expect(stored).toMatchObject({ email: NEW_EMAIL, purpose: 'register' });
+    expect(stored?.codeHash).toBe(hashOtpCode(result.dev_code ?? '', NEW_EMAIL));
+
+    const metadata = stored?.metadata as {
+      name: string;
+      phone: string;
+      password_hash: string;
+      consents: Array<Record<string, unknown>>;
+    };
+    expect(metadata.name).toBe('Budi Santoso');
+    expect(metadata.phone).toBe(NEW_PHONE);
+    expect(metadata.password_hash).toMatch(/^scrypt\$/);
+    expect(JSON.stringify(stored?.metadata)).not.toContain(NEW_PASSWORD);
+    expect(metadata.consents).toEqual([
+      {
+        policy_code: 'tos',
+        policy_version_id: TOS_VERSION_ID,
+        accepted_at: expect.any(String),
+        ip: '203.0.113.1',
+        user_agent: 'vitest'
+      },
+      {
+        policy_code: 'privacy',
+        policy_version_id: PRIVACY_VERSION_ID,
+        accepted_at: expect.any(String),
+        ip: '203.0.113.1',
+        user_agent: 'vitest'
+      }
+    ]);
+
+    expect(mailer.sent).toHaveLength(1);
+    expect(mailer.sent[0]).toMatchObject({ to: NEW_EMAIL, purpose: 'register' });
+  });
+
+  it('deletes the OTP row when the email cannot be delivered', async () => {
+    const { repository, service, mailer } = makeHarness();
+    mailer.fail = true;
+
+    await expect(
+      service.register({
+        email: NEW_EMAIL,
+        password: NEW_PASSWORD,
+        consent: CONSENT
+      })
+    ).rejects.toMatchObject({ code: 'UPSTREAM_ERROR' });
+
+    expect(repository.otpRequests).toHaveLength(0);
+    expect(repository.users).toHaveLength(0);
+  });
+
+  it('rejects a stale policy version instead of recording it', async () => {
+    const { repository, service } = makeHarness();
+
+    await expect(
+      service.register({
+        email: 'stale@tarlink.id',
+        password: NEW_PASSWORD,
+        consent: { tos_version_id: PRIVACY_VERSION_ID, privacy_version_id: PRIVACY_VERSION_ID }
+      })
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+
+    expect(repository.users).toHaveLength(0);
+    expect(repository.consents).toHaveLength(0);
+    expect(repository.otpRequests).toHaveLength(0);
+  });
+
+  it('rejects a duplicate email with CONFLICT', async () => {
+    const { repository, service } = makeHarness();
+    addUser(repository, ['customer'], { email: NEW_EMAIL, phone: '629111000111' });
+
+    await expect(
+      service.register({
+        email: 'NEW.CUSTOMER@tarlink.id',
+        password: NEW_PASSWORD,
+        phone: '081234567890',
+        consent: CONSENT
+      })
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+
+    expect(repository.users).toHaveLength(1);
+    expect(repository.otpRequests).toHaveLength(0);
+  });
+
+  it('rejects a duplicate phone with CONFLICT', async () => {
+    const { repository, service } = makeHarness();
+    addUser(repository, ['customer'], { email: 'other@tarlink.id', phone: NEW_PHONE });
+
+    await expect(
+      service.register({
+        email: NEW_EMAIL,
+        password: NEW_PASSWORD,
+        phone: '08123456789',
+        consent: CONSENT
+      })
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+
+    expect(repository.users).toHaveLength(1);
+    expect(repository.otpRequests).toHaveLength(0);
+  });
+
+  it('parks a registration without a phone number', async () => {
+    const { repository, service } = makeHarness();
+
+    await service.register({
+      email: 'no.phone@tarlink.id',
+      password: NEW_PASSWORD,
+      full_name: 'Tanpa Nomor',
+      consent: CONSENT
+    });
+
+    const stored = repository.otpRequests[0];
+    expect(stored?.purpose).toBe('register');
+    expect((stored?.metadata as { phone: string | null }).phone).toBeNull();
+    expect(repository.users).toHaveLength(0);
+  });
+
+  it('shares the OTP quota with the login OTP endpoint', async () => {
+    const { repository, service } = makeHarness();
+
+    await service.requestOtp({ email: NEW_EMAIL });
+    await service.register({ email: NEW_EMAIL, password: NEW_PASSWORD, consent: CONSENT });
+    await service.resendRegistration({ email: NEW_EMAIL });
+    await expect(
+      service.register({ email: NEW_EMAIL, password: NEW_PASSWORD, consent: CONSENT })
+    ).rejects.toMatchObject({ code: 'RATE_LIMITED' });
+
+    expect(repository.users).toHaveLength(0);
+  });
+});
+
+describe('AuthService.verifyRegistration', () => {
+  const NEW_EMAIL = 'new.customer@tarlink.id';
+  const NEW_PHONE = '628123456789';
+  const NEW_PASSWORD = 'kata-sandi-2026';
+
+  async function pendingRegistration(harness: Harness): Promise<string> {
+    const result = await harness.service.register({
+      email: NEW_EMAIL,
+      password: NEW_PASSWORD,
+      phone: '0812-3456-789',
+      full_name: 'Budi Santoso',
+      consent: CONSENT,
+      ip: '203.0.113.1',
+      userAgent: 'vitest'
+    });
+    if (!result.dev_code) throw new Error('expected dev_code');
+    return result.dev_code;
+  }
+
+  it('creates the verified customer and returns a session exactly once', async () => {
+    const harness = makeHarness();
+    const { repository, service } = harness;
+    const code = await pendingRegistration(harness);
+
+    const result = sessionOf(
+      await service.verifyRegistration({ email: NEW_EMAIL, code, ip: '203.0.113.1' })
+    );
     const claims = verifyAccessToken(result.access_token, SECRET);
 
     expect(result.user.roles).toEqual(['customer']);
-    expect(claims.roles).toEqual(['customer']);
     expect(result.user.email).toBe(NEW_EMAIL);
     expect(result.user.phone).toBe(NEW_PHONE);
+    expect(claims.roles).toEqual(['customer']);
     expect(claims.sub).toBe(repository.users[0]?.id);
 
     const stored = repository.users[0];
@@ -1807,13 +2114,12 @@ describe('AuthService.register', () => {
       phone: NEW_PHONE,
       email: NEW_EMAIL,
       name: 'Budi Santoso',
-      googleSub: null,
-      emailVerifiedAt: null
+      googleSub: null
     });
+    expect(stored?.emailVerifiedAt).not.toBeNull();
     expect(stored?.passwordHash).toMatch(/^scrypt\$/);
     expect(stored?.passwordHash).not.toContain(NEW_PASSWORD);
     expect(JSON.stringify(result)).not.toContain(NEW_PASSWORD);
-    expect(result.user).not.toHaveProperty('password');
     expect(repository.roles).toEqual([{ userId: stored?.id, role: 'customer' }]);
     expect(repository.consents).toEqual([
       {
@@ -1831,83 +2137,247 @@ describe('AuthService.register', () => {
         userAgent: 'vitest'
       }
     ]);
+    expect(repository.otpRequests[0]?.consumedAt).not.toBeNull();
+    expect(repository.sessions).toHaveLength(1);
+
+    // Replaying the same code cannot create a second account or session.
+    await expect(
+      service.verifyRegistration({ email: NEW_EMAIL, code })
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    expect(repository.users).toHaveLength(1);
+    expect(repository.sessions).toHaveLength(1);
   });
 
-  it('rejects a stale policy version instead of recording it', async () => {
-    const { repository, service } = makeHarness();
+  it('rejects a login OTP at register/verify and a register OTP at login', async () => {
+    const harness = makeHarness();
+    const { repository, service } = harness;
+    const registerCode = await pendingRegistration(harness);
+    const loginCode = await requestCode(service, NEW_EMAIL);
 
     await expect(
-      service.register({
-        email: 'stale@tarlink.id',
-        password: NEW_PASSWORD,
-        consent: { tos_version_id: PRIVACY_VERSION_ID, privacy_version_id: PRIVACY_VERSION_ID }
-      })
+      service.verifyRegistration({ email: NEW_EMAIL, code: loginCode })
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    await expect(service.verifyOtp({ email: NEW_EMAIL, code: registerCode })).rejects.toMatchObject(
+      { code: 'VALIDATION_ERROR' }
+    );
 
     expect(repository.users).toHaveLength(0);
-    expect(repository.consents).toHaveLength(0);
-  });
-
-  it('rejects a duplicate email with CONFLICT', async () => {
-    const { repository, service } = makeHarness();
-    addUser(repository, ['customer'], { email: NEW_EMAIL, phone: '629111000111' });
-
-    await expect(
-      service.register({
-        email: 'NEW.CUSTOMER@tarlink.id',
-        password: NEW_PASSWORD,
-        phone: '081234567890',
-        consent: CONSENT
-      })
-    ).rejects.toMatchObject({ code: 'CONFLICT' });
-
-    expect(repository.users).toHaveLength(1);
     expect(repository.sessions).toHaveLength(0);
+
+    // The register code still completes the registration: wrong-purpose guesses
+    // were counted against their own rows only.
+    const result = sessionOf(await service.verifyRegistration({ email: NEW_EMAIL, code: registerCode }));
+    expect(result.user.roles).toEqual(['customer']);
   });
 
-  it('rejects a duplicate phone with CONFLICT', async () => {
-    const { repository, service } = makeHarness();
-    addUser(repository, ['customer'], { email: 'other@tarlink.id', phone: NEW_PHONE });
+  it('refuses a code whose pending metadata is malformed', async () => {
+    const harness = makeHarness();
+    const { repository, service } = harness;
+    const code = await pendingRegistration(harness);
+    const row = repository.otpRequests[0];
+    if (!row) throw new Error('expected the pending registration row');
+    // Simulates a row written by an older/broken writer.
+    (row as { metadata: Record<string, unknown> }).metadata = { password_hash: 42 };
 
     await expect(
-      service.register({
-        email: NEW_EMAIL,
-        password: NEW_PASSWORD,
-        phone: '08123456789',
-        consent: CONSENT
-      })
-    ).rejects.toMatchObject({ code: 'CONFLICT' });
-
-    expect(repository.users).toHaveLength(1);
+      service.verifyRegistration({ email: NEW_EMAIL, code })
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    expect(repository.users).toHaveLength(0);
   });
+});
 
-  it('registers a customer without a phone number', async () => {
+describe('AuthService.resendRegistration', () => {
+  const NEW_EMAIL = 'new.customer@tarlink.id';
+
+  it('answers VALIDATION_ERROR when no pending registration exists', async () => {
     const { repository, service } = makeHarness();
 
-    const result = await service.register({
-      email: 'no.phone@tarlink.id',
-      password: NEW_PASSWORD,
-      full_name: 'Tanpa Nomor',
+    await expect(service.resendRegistration({ email: NEW_EMAIL })).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: 'Pendaftaran tidak ditemukan atau sudah kedaluwarsa'
+    });
+    expect(repository.otpRequests).toHaveLength(0);
+  });
+
+  it('issues a fresh code that replaces the previous one', async () => {
+    const harness = makeHarness();
+    const { repository, service } = harness;
+    const first = await harness.service.register({
+      email: NEW_EMAIL,
+      password: 'kata-sandi-2026',
       consent: CONSENT
     });
-    const claims = verifyAccessToken(result.access_token, SECRET);
+    harness.advance(30);
 
+    const resent = await service.resendRegistration({ email: NEW_EMAIL });
+
+    expect(resent).toMatchObject({ sent: true, expires_in: 300 });
+    expect(repository.otpRequests).toHaveLength(2);
+    expect(repository.otpRequests[1]?.purpose).toBe('register');
+    // Reused metadata: the form does not have to be submitted again.
+    expect(repository.otpRequests[1]?.metadata).toEqual(repository.otpRequests[0]?.metadata);
+
+    await expect(
+      service.verifyRegistration({ email: NEW_EMAIL, code: first.dev_code ?? '' })
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+
+    const result = sessionOf(
+      await service.verifyRegistration({ email: NEW_EMAIL, code: resent.dev_code ?? '' })
+    );
     expect(result.user.roles).toEqual(['customer']);
-    expect(claims.roles).toEqual(['customer']);
-    expect(result.user.email).toBe('no.phone@tarlink.id');
-    expect(result.user.phone).toBeNull();
-    expect(claims.sub).toBe(repository.users[0]?.id);
+  });
 
-    const stored = repository.users[0];
-    expect(stored).toMatchObject({
-      phone: null,
-      email: 'no.phone@tarlink.id',
-      name: 'Tanpa Nomor',
-      googleSub: null,
-      emailVerifiedAt: null
+  it('drops the row and rethrows when the email fails', async () => {
+    const harness = makeHarness();
+    const { repository, service, mailer } = harness;
+    await service.register({ email: NEW_EMAIL, password: 'kata-sandi-2026', consent: CONSENT });
+    mailer.fail = true;
+
+    await expect(service.resendRegistration({ email: NEW_EMAIL })).rejects.toMatchObject({
+      code: 'UPSTREAM_ERROR'
     });
+    expect(repository.otpRequests).toHaveLength(1);
+  });
+});
+
+describe('AuthService password reset', () => {
+  const EMAIL = 'reset@tarlink.id';
+  const OLD_PASSWORD = 'kata-sandi-lama';
+  const NEW_PASSWORD = 'kata-sandi-baru';
+
+  async function account(overrides: Partial<AuthServiceDeps> = {}) {
+    const harness = makeHarness(overrides);
+    addUser(harness.repository, ['customer'], {
+      email: EMAIL,
+      passwordHash: await hashPassword(OLD_PASSWORD)
+    });
+    return harness;
+  }
+
+  it('answers sent:true and sends nothing for an unknown email or a Google-only account', async () => {
+    const harness = makeHarness();
+    addUser(harness.repository, ['customer'], {
+      email: 'google-only@tarlink.id',
+      googleSub: 'google-sub-only',
+      passwordHash: null
+    });
+
+    await expect(harness.service.requestPasswordReset({ email: EMAIL })).resolves.toEqual({
+      sent: true
+    });
+    await expect(
+      harness.service.requestPasswordReset({ email: 'google-only@tarlink.id' })
+    ).resolves.toEqual({ sent: true });
+
+    expect(harness.repository.otpRequests).toHaveLength(0);
+    expect(harness.mailer.sent).toHaveLength(0);
+  });
+
+  it('emails a password_reset code only to a password account', async () => {
+    const harness = await account();
+
+    const result = await harness.service.requestPasswordReset({ email: EMAIL, ip: '203.0.113.7' });
+
+    expect(result).toEqual({ sent: true });
+    expect(harness.repository.otpRequests).toHaveLength(1);
+    expect(harness.repository.otpRequests[0]).toMatchObject({
+      email: EMAIL,
+      purpose: 'password_reset',
+      requesterIp: '203.0.113.7'
+    });
+    expect(harness.mailer.sent[0]).toMatchObject({ to: EMAIL, purpose: 'password_reset' });
+  });
+
+  it('stays sent:true when the quota is spent instead of answering 429', async () => {
+    const harness = await account();
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await harness.service.requestPasswordReset({ email: EMAIL });
+    }
+    const before = harness.mailer.sent.length;
+
+    await expect(harness.service.requestPasswordReset({ email: EMAIL })).resolves.toEqual({
+      sent: true
+    });
+    expect(harness.mailer.sent).toHaveLength(before);
+  });
+
+  it('rotates the password, revokes sessions, verifies the email and burns the token', async () => {
+    const harness = await account();
+    const { repository, service, mailer } = harness;
+    const login = sessionOf(
+      await service.loginWithPassword({ email: EMAIL, password: OLD_PASSWORD })
+    );
+    expect(repository.sessions.filter((session) => session.revokedAt === null)).toHaveLength(1);
+
+    await service.requestPasswordReset({ email: EMAIL });
+    const code = mailer.lastCodeFor(EMAIL);
+    if (!code) throw new Error('expected a reset code');
+
+    const verified = await service.verifyPasswordResetCode({ email: EMAIL, code });
+    expect(verified.reset_token).toMatch(/^[0-9a-f]{64}$/);
+    expect(verified.expires_in).toBe(600);
+
+    // Only the sha256 hex is stored; the plaintext exists in the response only.
+    expect(repository.passwordResetTokens).toHaveLength(1);
+    expect(repository.passwordResetTokens[0]?.tokenHash).toBe(hashResetToken(verified.reset_token));
+    expect(repository.passwordResetTokens[0]?.tokenHash).not.toBe(verified.reset_token);
+
+    await expect(
+      service.resetPassword({ reset_token: verified.reset_token, password: NEW_PASSWORD })
+    ).resolves.toEqual({ reset: true });
+
+    const stored = repository.users.find((user) => user.email === EMAIL);
     expect(stored?.passwordHash).toMatch(/^scrypt\$/);
-    expect(repository.roles).toEqual([{ userId: stored?.id, role: 'customer' }]);
+    expect(await verifyPassword(NEW_PASSWORD, stored?.passwordHash ?? '')).toBe(true);
+    expect(await verifyPassword(OLD_PASSWORD, stored?.passwordHash ?? '')).toBe(false);
+    expect(stored?.emailVerifiedAt).not.toBeNull();
+    expect(repository.sessions.every((session) => session.revokedAt !== null)).toBe(true);
+    expect(repository.passwordResetTokens[0]?.consumedAt).not.toBeNull();
+    // The session minted before the reset is gone, the login token included.
+    await expect(service.refreshWithToken(login.refresh_token)).rejects.toMatchObject({
+      code: 'UNAUTHENTICATED'
+    });
+
+    // Single use: the same token cannot reset twice.
+    await expect(
+      service.resetPassword({ reset_token: verified.reset_token, password: 'kata-sandi-ketiga' })
+    ).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: 'Token reset tidak valid atau kedaluwarsa'
+    });
+  });
+
+  it('rejects an expired or unknown reset token with one message', async () => {
+    const harness = await account();
+    const { service, mailer, advance } = harness;
+    await service.requestPasswordReset({ email: EMAIL });
+    const code = mailer.lastCodeFor(EMAIL) ?? '';
+    const verified = await service.verifyPasswordResetCode({ email: EMAIL, code });
+
+    advance(601);
+    await expect(
+      service.resetPassword({ reset_token: verified.reset_token, password: NEW_PASSWORD })
+    ).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: 'Token reset tidak valid atau kedaluwarsa'
+    });
+    await expect(
+      service.resetPassword({ reset_token: 'f'.repeat(64), password: NEW_PASSWORD })
+    ).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: 'Token reset tidak valid atau kedaluwarsa'
+    });
+  });
+
+  it('refuses a login OTP as a password reset code', async () => {
+    const harness = await account();
+    const { service } = harness;
+    const loginCode = await requestCode(service, EMAIL);
+
+    await expect(
+      service.verifyPasswordResetCode({ email: EMAIL, code: loginCode })
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    expect(harness.repository.passwordResetTokens).toHaveLength(0);
   });
 });
 
@@ -2221,6 +2691,94 @@ describe('AuthController.register', () => {
 
     await expect(
       controller.register({ email: 'user@tarlink.id', password: 'kata-sandi-2026' }, '203.0.113.1')
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+  });
+});
+
+describe('AuthController registration + password reset routes', () => {
+  it('wraps the pending registration in the data envelope without creating a session', async () => {
+    let capturedInput: unknown;
+    const service = {
+      register: async (input: unknown) => {
+        capturedInput = input;
+        return {
+          verification_required: true as const,
+          email: 'user@tarlink.id',
+          expires_in: 300
+        };
+      }
+    } as unknown as AuthService;
+    const controller = new AuthController(service);
+
+    const response = await controller.register(
+      { email: 'user@tarlink.id', password: 'kata-sandi-2026', consent: CONSENT },
+      '203.0.113.1',
+      'vitest'
+    );
+
+    expect(response).toEqual({
+      data: { verification_required: true, email: 'user@tarlink.id', expires_in: 300 }
+    });
+    expect(capturedInput).toMatchObject({ ip: '203.0.113.1', userAgent: 'vitest' });
+  });
+
+  it('rejects a registration code that is not six digits before calling the service', async () => {
+    const service = {
+      verifyRegistration: async () => {
+        throw new Error('service must not be called');
+      }
+    } as unknown as AuthService;
+    const controller = new AuthController(service);
+
+    await expect(
+      controller.verifyRegistration({ email: 'user@tarlink.id', code: 'abcdef' }, '203.0.113.1')
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+  });
+
+  it('forwards resend/forgot/verify and keeps the reset token opaque to zod', async () => {
+    const calls: string[] = [];
+    const service = {
+      resendRegistration: async () => {
+        calls.push('resend');
+        return { sent: true as const, expires_in: 300 };
+      },
+      requestPasswordReset: async () => {
+        calls.push('forgot');
+        return { sent: true as const };
+      },
+      verifyPasswordResetCode: async () => {
+        calls.push('verify');
+        return { reset_token: 'a'.repeat(64), expires_in: 600 };
+      },
+      resetPassword: async () => {
+        calls.push('reset');
+        return { reset: true as const };
+      }
+    } as unknown as AuthService;
+    const controller = new AuthController(service);
+
+    await controller.resendRegistration({ email: 'user@tarlink.id' }, '203.0.113.1');
+    await controller.forgotPassword({ email: 'user@tarlink.id' }, '203.0.113.1');
+    await controller.verifyPasswordReset({ email: 'user@tarlink.id', code: '123456' });
+    // A malformed token reaches the service so the single reset message is kept.
+    await controller.resetPassword({
+      reset_token: 'not-a-real-token',
+      password: 'kata-sandi-2026'
+    });
+
+    expect(calls).toEqual(['resend', 'forgot', 'verify', 'reset']);
+  });
+
+  it('rejects a short password at the boundary', async () => {
+    const service = {
+      resetPassword: async () => {
+        throw new Error('service must not be called');
+      }
+    } as unknown as AuthService;
+    const controller = new AuthController(service);
+
+    await expect(
+      controller.resetPassword({ reset_token: 'a'.repeat(64), password: 'pendek' })
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
   });
 });

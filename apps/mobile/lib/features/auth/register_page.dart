@@ -1,12 +1,12 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../app/app.dart';
 import '../../app/routes.dart';
 import '../../app/theme.dart';
 import '../../core/api_exception.dart';
 import 'auth_support.dart';
+import 'email_otp_page.dart';
 import 'google_auth.dart';
 import 'google_button.dart';
 
@@ -145,19 +145,35 @@ class _RegisterPageState extends State<RegisterPage> {
         body: body,
       );
       final data = payload is Map ? payload.cast<String, dynamic>() : null;
-      if (data == null || data['access_token'] is! String) {
+      final email = data?['email'];
+      if (data == null ||
+          data['verification_required'] != true ||
+          email is! String ||
+          email.isEmpty) {
         throw const ApiException(
-          code: 'INTERNAL_ERROR',
-          message: 'Respons pendaftaran tidak lengkap.',
+          code: 'UNEXPECTED_RESPONSE',
+          message: 'Respons pendaftaran tidak meminta verifikasi email.',
         );
       }
-      await scope.session.signIn(data);
-      TextInput.finishAutofillContext();
       if (!mounted) return;
-      Navigator.pushNamedAndRemoveUntil(context, Routes.home, (_) => false);
+      final devCode = data['dev_code'];
+      // No session yet: the account only becomes usable after the email code.
+      Navigator.pushNamed(
+        context,
+        Routes.emailOtp,
+        arguments: EmailOtpArgs(
+          email: email,
+          mode: EmailOtpMode.register,
+          devCode: devCode is String && devCode.isNotEmpty ? devCode : null,
+        ),
+      );
     } on ApiException catch (error) {
       if (!mounted) return;
-      setState(() => _error = authErrorMessage(error, register: true));
+      setState(() {
+        _error = error.code == 'UNEXPECTED_RESPONSE'
+            ? 'Respons pendaftaran tidak sesuai. Coba lagi atau hubungi bantuan.'
+            : authErrorMessage(error, register: true);
+      });
     } finally {
       if (mounted) setState(() => _loading = false);
     }

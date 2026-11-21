@@ -12,9 +12,17 @@ export interface WorkerConfig {
    */
   NODE_ENV: string;
   /** Outbound email (FR-051). Unset outside production = messages are logged. */
+  EMAIL_PROVIDER?: string;
   EMAIL_API_URL?: string;
   EMAIL_API_KEY?: string;
   EMAIL_FROM?: string;
+  /**
+   * FCM push. `FCM_SERVICE_ACCOUNT_JSON` is either the raw service-account JSON
+   * or its base64 encoding. Absent = the push sink is a no-op, so in-app and
+   * email delivery still run.
+   */
+  FCM_SERVICE_ACCOUNT_JSON?: string;
+  FCM_PROJECT_ID?: string;
 }
 
 function readInt(name: string, raw: string | undefined, fallback: number, min: number): number {
@@ -47,9 +55,12 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv = process.env): WorkerCo
     WORKER_BATCH: readInt('WORKER_BATCH', env.WORKER_BATCH, 50, 1),
     WORKER_MAX_TICKS: readInt('WORKER_MAX_TICKS', env.WORKER_MAX_TICKS, 0, 0),
     NODE_ENV: env.NODE_ENV?.trim() || 'development',
+    EMAIL_PROVIDER: optional(env.EMAIL_PROVIDER),
     EMAIL_API_URL: optional(env.EMAIL_API_URL),
     EMAIL_API_KEY: optional(env.EMAIL_API_KEY),
-    EMAIL_FROM: optional(env.EMAIL_FROM)
+    EMAIL_FROM: optional(env.EMAIL_FROM),
+    FCM_SERVICE_ACCOUNT_JSON: optional(env.FCM_SERVICE_ACCOUNT_JSON),
+    FCM_PROJECT_ID: optional(env.FCM_PROJECT_ID)
   };
   return cached;
 }

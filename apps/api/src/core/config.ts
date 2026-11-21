@@ -55,6 +55,8 @@ const EnvSchema = z.object({
   ),
   EMAIL_API_KEY: z.string().optional(),
   EMAIL_FROM: z.string().default('Tarlink <no-reply@tarlink.id>'),
+  /** Payload dialect of `EMAIL_API_URL`: `resend` (default) or `brevo`. */
+  EMAIL_PROVIDER: z.string().default('resend'),
   /** Trust `X-Forwarded-For`; enable behind Railway/reverse proxies. */
   TRUST_PROXY: boolFromEnv.default(false),
   /** `local` = deterministic no-network gateway; `midtrans` = Core API (sandbox by default). */

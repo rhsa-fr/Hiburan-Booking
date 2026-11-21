@@ -9,6 +9,8 @@ stitch_tarlink_live_entertainment_app/
 .env.*
 !.env.example
 !.env.*.example
+# Nilai --dart-define untuk build lokal (FCM). Jangan pernah masuk repo.
+apps/mobile/dart_defines.json
 *.pem
 *.key
 

@@ -102,8 +102,13 @@ dan sebagai guard unik per pelanggan.
 
 | Method | Path | Body | Keterangan |
 |---|---|---|---|
-| POST | `/auth/register` | `{ full_name, email, phone, password, consent: { tos_version_id, privacy_version_id } }` | Membuat akun pelanggan + mencatat consent |
-| POST | `/auth/login` | `{ email, password }` | **Email**, bukan nomor WA; akun `admin_*` menerima challenge 2FA, bukan sesi |
+| POST | `/auth/register` | `{ full_name, email, phone, password, consent: { tos_version_id, privacy_version_id } }` | **Tidak** membuat akun. Menyimpan pendaftaran sementara (password sudah di-hash) di `otp_requests.metadata` lalu mengirim kode 6 digit ke email. Balasan `{ verification_required, email, expires_in, dev_code? }` |
+| POST | `/auth/register/verify` | `{ email, code }` | Membuat akun pelanggan + consent + role `customer`, menandai `email_verified_at`, lalu memberi sesi |
+| POST | `/auth/register/resend` | `{ email }` | Kirim ulang kode pendaftaran (pending maksimal 24 jam, kode terbaru yang berlaku) |
+| POST | `/auth/password/forgot` | `{ email }` | Selalu `{ sent: true }`. Hanya akun berpassword (bukan Google) yang dikirimi kode `password_reset` |
+| POST | `/auth/password/verify` | `{ email, code }` | Menukar kode reset dengan `reset_token` sekali pakai (10 menit, disimpan sebagai hash) |
+| POST | `/auth/password/reset` | `{ reset_token, password }` | Mengganti password, mencabut **semua** sesi, menandai email terverifikasi |
+| POST | `/auth/login` | `{ email, password }` | **Email**, bukan nomor WA; akun `admin_*` menerima challenge 2FA, bukan sesi. Akun berpassword yang belum verifikasi ditolak `403 EMAIL_NOT_VERIFIED` |
 | POST | `/auth/otp/request` | `{ email }` | Kirim OTP ke email (dev mengembalikan `dev_code` hanya bila `NODE_ENV !== production` **dan** `OTP_DEV_MODE=true`) |
 | POST | `/auth/otp/verify` | `{ email, code }` | Verifikasi OTP; akun `admin_*` juga melewati gerbang 2FA |
 | POST | `/auth/google` | `{ id_token, consent?: { tos_version_id, privacy_version_id } }` | Login Google (opsional, tidak dipakai mobile); `consent` **wajib** bila akun belum ada (FR-103), diabaikan untuk akun lama; akun `admin_*` juga melewati gerbang 2FA |
@@ -732,7 +737,7 @@ Pelanggan pemilik booking atau admin. Mengembalikan refund terbaru
 
 ## Notifikasi in-app
 
-Pengganti kanal WhatsApp/push sementara: worker `outbox` menulis satu baris
+Pengganti kanal WhatsApp: worker `outbox` menulis satu baris
 `notifications` per penerima (unik per `outbox:<message_id>:<user_id>`), lalu
 mobile mem-poll endpoint ini dan menampilkan popup saat aplikasi terbuka.
 Tidak ada endpoint kirim manual — isi dibuat dari event `booking.*`.
@@ -747,7 +752,14 @@ Sejak migrasi `032`, worker `booking_reminders` menulis event
 `booking.reminder_7d` / `booking.reminder_1d` / `booking.reminder_day` untuk booking
 `confirmed`/`in_progress` pada H-7, H-1, dan hari-H (tanggal WIB). Dedupe-nya
 `booking:<booking_id>:reminder:<offset>` di `outbox_messages`, jadi satu pengingat
-per booking per jendela; copy-nya sama untuk in-app dan email. Push FCM belum ada.
+per booking per jendela; copy-nya sama untuk in-app dan email.
+
+Sejak migrasi `038`, relay yang sama juga mengirim **push FCM** (kanal ketiga,
+`notification_deliveries.channel='push'`) ke token perangkat yang terdaftar lewat
+`POST /v1/devices`. Push bersifat best-effort: tanpa `FCM_SERVICE_ACCOUNT_JSON`
+di worker, push dilewati dan in-app + email tetap berjalan. Token yang dilaporkan
+permanen tidak valid oleh Firebase dihapus dari `device_tokens`; kegagalan
+sementara membuat pesan outbox di-retry.
 
 ### `GET /notifications`
 
@@ -769,6 +781,18 @@ Menandai satu notifikasi milik akun pemanggil. `404 NOT_FOUND` bila bukan milikn
 ### `POST /notifications/read-all`
 
 Respons: `{ data: { updated } }` — jumlah baris yang baru ditandai.
+
+### `POST /devices`
+
+Body `{ token, platform: "android" | "ios" | "web" }`. Mendaftarkan token FCM
+perangkat untuk akun pemanggil. `token` unik global: mendaftarkan ulang token yang
+sama memindahkan kepemilikannya ke akun pemanggil. Respons `{ data: { registered: true } }`.
+
+### `DELETE /devices/:token`
+
+Menghapus token hanya bila baris itu milik akun pemanggil. Token milik akun lain
+menghapus 0 baris dan dijawab `{ data: { removed: false } }` (bukan oracle
+keberadaan token).
 
 ## Chat booking (FR-050)
 

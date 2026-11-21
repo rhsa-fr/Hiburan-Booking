@@ -5,7 +5,12 @@
  *   POST /v1/auth/otp/request  — public
  *   POST /v1/auth/otp/verify   — public
  *   POST /v1/auth/login        — public (email + password, all roles)
- *   POST /v1/auth/register     — public (customer self-registration)
+ *   POST /v1/auth/register     — public (customer self-registration, step 1)
+ *   POST /v1/auth/register/verify — public (email code -> session)
+ *   POST /v1/auth/register/resend — public (fresh registration code)
+ *   POST /v1/auth/password/forgot — public (always `{ sent: true }`)
+ *   POST /v1/auth/password/verify — public (email code -> reset token)
+ *   POST /v1/auth/password/reset  — public (reset token -> new password)
  *   POST /v1/auth/google       — public (Google ID token)
  *   POST /v1/auth/2fa/verify   — public (challenge token + TOTP code)
  *   POST /v1/auth/2fa/backup-code — public (challenge token + backup code)
@@ -46,14 +51,19 @@ import {
   AuthService,
   type AccountDeletionResult,
   type CurrentUserResult,
+  type ForgotPasswordResult,
   type LogoutResult,
   type MfaChallengeResult,
   type PasswordLoginResult,
+  type RegisterPendingResult,
   type RequestOtpResult,
+  type ResendRegistrationResult,
+  type ResetPasswordResult,
   type TwoFactorEnrolledResult,
   type TwoFactorEnrollmentStartResult,
   type TwoFactorResetResult,
-  type VerifyOtpResult
+  type VerifyOtpResult,
+  type VerifyPasswordResetResult
 } from './auth.service';
 import {
   REFRESH_COOKIE_NAME,
@@ -176,6 +186,15 @@ const RegisterBody = z
     consent: ConsentBody
   })
   .strict();
+
+/**
+ * `reset_token` is deliberately not format-checked here: an unknown, expired or
+ * used token must answer the same single message the service owns.
+ */
+const PasswordResetBody = z.object({
+  reset_token: z.string().min(1).max(256),
+  password: z.string().min(8).max(200)
+});
 
 /**
  * FR-103: `consent` is optional because an existing account logging in again has
@@ -306,8 +325,9 @@ export class AuthController {
   }
 
   /**
-   * Public customer registration. A `role` field is rejected by the strict
-   * schema; the service creates the `customer` role regardless.
+   * Public customer registration, step 1. Nothing is written to `users` here:
+   * the response only says that a code is on its way. A `role` field is
+   * rejected by the strict schema; the service can only mint `customer`.
    */
   @Post('register')
   @HttpCode(201)
@@ -315,13 +335,101 @@ export class AuthController {
     @Body() body: unknown,
     @Ip() ip: string,
     @Headers('user-agent') userAgent?: string
-  ): Promise<{ data: VerifyOtpResult }> {
+  ): Promise<{ data: RegisterPendingResult }> {
     const parsed = RegisterBody.safeParse(body);
     if (!parsed.success) {
       throw new AppError('VALIDATION_ERROR', 'invalid registration request', parsed.error.issues);
     }
 
     return { data: await this.auth.register({ ...parsed.data, ip, userAgent }) };
+  }
+
+  /** Registration step 2: the email code creates the account and a session. */
+  @Post('register/verify')
+  @HttpCode(200)
+  async verifyRegistration(
+    @Body() body: unknown,
+    @Ip() ip: string,
+    @Headers('user-agent') userAgent?: string
+  ): Promise<{ data: PasswordLoginResult }> {
+    const parsed = VerifyOtpBody.safeParse(body);
+    if (!parsed.success) {
+      throw new AppError(
+        'VALIDATION_ERROR',
+        'invalid registration verification request',
+        parsed.error.issues
+      );
+    }
+
+    return { data: await this.auth.verifyRegistration({ ...parsed.data, ip, userAgent }) };
+  }
+
+  /** Issues a fresh registration code for the pending registration, if any. */
+  @Post('register/resend')
+  @HttpCode(200)
+  async resendRegistration(
+    @Body() body: unknown,
+    @Ip() ip: string
+  ): Promise<{ data: ResendRegistrationResult }> {
+    const parsed = RequestOtpBody.safeParse(body);
+    if (!parsed.success) {
+      throw new AppError(
+        'VALIDATION_ERROR',
+        'invalid registration resend request',
+        parsed.error.issues
+      );
+    }
+
+    return { data: await this.auth.resendRegistration({ email: parsed.data.email, ip }) };
+  }
+
+  /** Always `{ sent: true }`, whether or not the address belongs to an account. */
+  @Post('password/forgot')
+  @HttpCode(200)
+  async forgotPassword(
+    @Body() body: unknown,
+    @Ip() ip: string
+  ): Promise<{ data: ForgotPasswordResult }> {
+    const parsed = RequestOtpBody.safeParse(body);
+    if (!parsed.success) {
+      throw new AppError(
+        'VALIDATION_ERROR',
+        'invalid password reset request',
+        parsed.error.issues
+      );
+    }
+
+    return { data: await this.auth.requestPasswordReset({ email: parsed.data.email, ip }) };
+  }
+
+  /** Exchanges the emailed code for a single-use reset token. */
+  @Post('password/verify')
+  @HttpCode(200)
+  async verifyPasswordReset(
+    @Body() body: unknown
+  ): Promise<{ data: VerifyPasswordResetResult }> {
+    const parsed = VerifyOtpBody.safeParse(body);
+    if (!parsed.success) {
+      throw new AppError(
+        'VALIDATION_ERROR',
+        'invalid password reset verification request',
+        parsed.error.issues
+      );
+    }
+
+    return { data: await this.auth.verifyPasswordResetCode(parsed.data) };
+  }
+
+  /** Consumes the reset token, replaces the password and revokes every session. */
+  @Post('password/reset')
+  @HttpCode(200)
+  async resetPassword(@Body() body: unknown): Promise<{ data: ResetPasswordResult }> {
+    const parsed = PasswordResetBody.safeParse(body);
+    if (!parsed.success) {
+      throw new AppError('VALIDATION_ERROR', 'invalid password reset request', parsed.error.issues);
+    }
+
+    return { data: await this.auth.resetPassword(parsed.data) };
   }
 
   /** Google Sign-In: exchanges a Google ID token for our access token. */

@@ -1,8 +1,11 @@
 import { AppError } from '@tarlink/core/errors';
 import type {
+  DeviceRegistrationResult,
+  DeviceRemovalResult,
   ListNotificationsQuery,
   NotificationPage,
-  NotificationView
+  NotificationView,
+  RegisterDeviceBody
 } from './notifications.contracts';
 import {
   NotificationsRepository,
@@ -51,5 +54,23 @@ export class NotificationsService {
 
   async markAllRead(userId: string): Promise<{ updated: number }> {
     return { updated: await this.repository.markAllRead(userId) };
+  }
+
+  /**
+   * Push registration. Idempotent for the same caller and re-owning for a
+   * different one (see `UPSERT_DEVICE_SQL`), so the client can call this on
+   * every app start without bookkeeping.
+   */
+  async registerDevice(
+    userId: string,
+    input: RegisterDeviceBody
+  ): Promise<DeviceRegistrationResult> {
+    await this.repository.upsertDeviceToken(userId, input.token, input.platform);
+    return { registered: true };
+  }
+
+  async removeDevice(userId: string, token: string): Promise<DeviceRemovalResult> {
+    const removed = await this.repository.removeDeviceToken(userId, token);
+    return { removed: removed > 0 };
   }
 }

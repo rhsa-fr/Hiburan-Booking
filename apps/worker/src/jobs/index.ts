@@ -13,15 +13,18 @@ import { runExpireUnresponsive } from './expire-unresponsive';
 import { NotificationSink } from './notification-sink';
 import { CompositeMessageSink, runOutbox, type MessageSink } from './outbox';
 import { runPayoutReconcile } from './payout-reconcile';
+import { PushSink } from './push-sink';
 import { runReconcileDaily } from './reconcile-daily';
 import type { Job } from './runner';
 
 /**
- * Outbox delivery fan-out: in-app row first, then the outbound email (FR-051).
+ * Outbox delivery fan-out: in-app row first, then outbound email (FR-051), then
+ * push (FCM). Order matters — in-app is the channel that must never be lost to
+ * a provider outage.
  *
  * Built lazily because the worker config is only validated in `main()`; a static
  * sink would read `process.env` at import time and could bake in the wrong
- * email provider. Both sinks are idempotent per outbox message.
+ * email provider. Every sink is idempotent per outbox message.
  */
 let outboxSink: MessageSink | null = null;
 
@@ -33,11 +36,16 @@ function getOutboxSink(): MessageSink {
       new EmailNotificationSink(
         createEmailTransport({
           nodeEnv: cfg.NODE_ENV,
+          provider: cfg.EMAIL_PROVIDER,
           apiUrl: cfg.EMAIL_API_URL,
           apiKey: cfg.EMAIL_API_KEY,
           from: cfg.EMAIL_FROM
         })
-      )
+      ),
+      new PushSink({
+        serviceAccountJson: cfg.FCM_SERVICE_ACCOUNT_JSON,
+        projectId: cfg.FCM_PROJECT_ID
+      })
     ]);
   }
   return outboxSink;

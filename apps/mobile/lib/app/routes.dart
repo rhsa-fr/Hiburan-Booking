@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../features/auth/email_otp_page.dart';
+import '../features/auth/forgot_password_page.dart';
 import '../features/auth/login_page.dart';
 import '../features/auth/register_page.dart';
+import '../features/auth/reset_password_page.dart';
 import '../features/auth/welcome_page.dart';
 import '../features/booking/create_page.dart';
 import '../features/booking/list_page.dart';
@@ -11,6 +14,7 @@ import '../features/discovery/favorites_page.dart';
 import '../features/discovery/home_page.dart';
 import '../features/discovery/vendor_page.dart';
 import '../features/moderation/appeals_page.dart';
+import '../features/notifications/notification_center_page.dart';
 import '../features/vendor/vendor_bank_account_page.dart';
 import '../features/vendor/vendor_booking_detail_page.dart';
 import '../features/vendor/vendor_bookings_page.dart';
@@ -42,10 +46,32 @@ class ChatArgs {
   final String? subtitle;
 }
 
+/// Arguments for `emailOtp`: the address the code went to, which flow owns it,
+/// and the server's dev code when a development server returned one.
+class EmailOtpArgs {
+  const EmailOtpArgs({required this.email, required this.mode, this.devCode});
+
+  final String email;
+  final EmailOtpMode mode;
+  final String? devCode;
+}
+
+/// Arguments for `resetPassword`: carried from the code screen so the new
+/// password can be stored against the right account.
+class ResetPasswordArgs {
+  const ResetPasswordArgs({required this.email, required this.token});
+
+  final String email;
+  final String token;
+}
+
 abstract final class Routes {
   static const welcome = 'welcome';
   static const login = 'login';
   static const register = 'register';
+  static const emailOtp = 'emailOtp';
+  static const forgotPassword = 'forgotPassword';
+  static const resetPassword = 'resetPassword';
   static const home = 'home';
   static const vendor = 'vendor';
   static const bookCreate = 'bookCreate';
@@ -60,15 +86,52 @@ abstract final class Routes {
   static const vendorBankAccount = 'vendorBankAccount';
   static const favorites = 'favorites';
   static const appeals = 'appeals';
+  static const notifications = 'notifications';
 
   static Route<dynamic> onGenerateRoute(RouteSettings settings) {
     switch (settings.name) {
       case Routes.welcome:
         return _page(const WelcomePage(), settings);
       case Routes.login:
-        return _page(const LoginPage(), settings);
+        final arg = settings.arguments;
+        return _page(
+          LoginPage(
+            initialEmail: arg is String && arg.isNotEmpty ? arg : null,
+          ),
+          settings,
+        );
       case Routes.register:
         return _page(const RegisterPage(), settings);
+      case Routes.emailOtp:
+        final arg = settings.arguments;
+        if (arg is EmailOtpArgs && arg.email.isNotEmpty) {
+          return _page(
+            EmailOtpPage(
+              email: arg.email,
+              mode: arg.mode,
+              devCode: arg.devCode,
+            ),
+            settings,
+          );
+        }
+        return _page(const LoginPage(), settings);
+      case Routes.forgotPassword:
+        final arg = settings.arguments;
+        return _page(
+          ForgotPasswordPage(
+            initialEmail: arg is String && arg.isNotEmpty ? arg : null,
+          ),
+          settings,
+        );
+      case Routes.resetPassword:
+        final arg = settings.arguments;
+        if (arg is ResetPasswordArgs && arg.token.isNotEmpty) {
+          return _page(
+            ResetPasswordPage(email: arg.email, token: arg.token),
+            settings,
+          );
+        }
+        return _page(const LoginPage(), settings);
       case Routes.home:
         return _page(const HomePage(), settings);
       case Routes.vendor:
@@ -124,6 +187,8 @@ abstract final class Routes {
         return _page(const FavoritesPage(), settings);
       case Routes.appeals:
         return _page(const AppealsPage(), settings);
+      case Routes.notifications:
+        return _page(const NotificationCenterPage(), settings);
     }
     return _page(const LoginPage(), settings);
   }

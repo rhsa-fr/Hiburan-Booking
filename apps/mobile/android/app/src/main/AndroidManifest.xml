@@ -1,5 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- GPS untuk memilih alamat acara (native location). -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    <!-- Android 13+: izin notifikasi runtime untuk push FCM. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <!-- Demo/portfolio: API lokal memakai http. Di produksi wajib https. -->
     <application
         android:label="Tarlink"

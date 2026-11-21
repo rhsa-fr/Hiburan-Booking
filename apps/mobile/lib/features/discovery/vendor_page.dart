@@ -14,6 +14,13 @@ import '../moderation/report_sheet.dart';
 
 const _tabularFigures = <FontFeature>[FontFeature.tabularFigures()];
 const _weekdayShort = <String>['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'];
+
+/// The vendor calendar only covers 45 days; a date past that is unknown, and
+/// the server still decides. The copy matches the booking form.
+const _bookedDateWarning =
+    'Tanggal ini sudah terisi. Booking bisa ditolak vendor.';
+const _outsideCalendarWarning = 'Kalender vendor belum mencakup tanggal ini.';
+const _bookingHorizonYears = 10;
 const _monthShort = <String>[
   'Jan',
   'Feb',
@@ -194,16 +201,11 @@ class _VendorPageState extends State<VendorPage> {
       }
       final availability = Availability.fromJson(raw.cast<String, dynamic>());
       if (!mounted) return;
+      // The picked date survives a reload: a day outside this 45-day window is
+      // unknown, not invalid, so it must not be dropped here.
       setState(() {
         _availability = availability;
         _loadingAvail = false;
-        final dates = _dates();
-        final date = _date;
-        if (date == null ||
-            !dates.contains(date) ||
-            _dayState(date) == 'blocked') {
-          _date = null;
-        }
       });
     } on ApiException catch (error) {
       if (!mounted) return;
@@ -517,29 +519,39 @@ class _VendorPageState extends State<VendorPage> {
     _scrollTo(_scheduleKey);
   }
 
-  /// Same date picker as the Explore page, restricted to the vendor's
-  /// 45-day availability window.
+  /// Any day from today to ten years ahead may be requested. Days the vendor
+  /// calendar marks as taken are selectable too; the warning strip explains
+  /// that the vendor may still decline.
   Future<void> _pickDate() async {
     final today = DateTime.now();
     final first = DateTime(today.year, today.month, today.day);
     final selected = _date == null ? null : DateTime.tryParse(_date!);
+    final horizon = DateTime(
+      first.year + _bookingHorizonYears,
+      first.month,
+      first.day,
+    );
     final picked = await showTarlinkDatePicker(
       context: context,
-      initialDate: selected ?? first,
+      initialDate: selected == null || selected.isBefore(first)
+          ? first
+          : selected,
       firstDate: first,
-      lastDate: first.add(const Duration(days: 44)),
+      lastDate: horizon,
     );
     if (picked == null || !mounted) return;
-    final date = isoDate(picked);
-    if (_dayState(date) == 'blocked') {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Tanggal itu sudah terisi. Pilih tanggal lain.'),
-        ),
-      );
-      return;
+    setState(() => _date = isoDate(picked));
+  }
+
+  /// `blocked` is known from the calendar; a date outside the loaded window is
+  /// unknown. Both are warnings, never a reason to hide the date.
+  String? get _selectedDateWarning {
+    final date = _date;
+    if (date == null) return null;
+    if (_dates().contains(date)) {
+      return _dayState(date) == 'blocked' ? _bookedDateWarning : null;
     }
-    setState(() => _date = date);
+    return _availability == null ? null : _outsideCalendarWarning;
   }
 
   void _continue(VendorDetail vendor) {
@@ -1381,6 +1393,14 @@ class _VendorPageState extends State<VendorPage> {
           _dateRail(),
           const SizedBox(height: 9),
           const _ScheduleLegend(),
+          if (_selectedDateWarning != null) ...[
+            const SizedBox(height: Sp.sm),
+            InfoStrip(
+              message: _selectedDateWarning!,
+              icon: Icons.event_busy_outlined,
+              tone: InfoTone.warning,
+            ),
+          ],
         ] else
           Text(
             'Jadwal belum tersedia untuk 45 hari ke depan.',
@@ -1413,19 +1433,8 @@ class _VendorPageState extends State<VendorPage> {
             date: parsed,
             state: _dayState(date),
             selected: date == _date,
-            onTap: () {
-              if (_dayState(date) == 'blocked') {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text(
-                      'Tanggal itu sudah terisi. Pilih tanggal lain.',
-                    ),
-                  ),
-                );
-                return;
-              }
-              setState(() => _date = date);
-            },
+            // A blocked day is still choosable; the strip explains the risk.
+            onTap: () => setState(() => _date = date),
           );
         },
       ),
@@ -2164,7 +2173,7 @@ class _DateChip extends StatelessWidget {
     return Semantics(
       button: true,
       selected: selected,
-      enabled: !blocked,
+      enabled: true,
       label:
           '${_weekdayShort[date.weekday - 1]} ${date.day} '
           '${_monthShort[date.month - 1]}'

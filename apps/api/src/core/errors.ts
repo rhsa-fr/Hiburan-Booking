@@ -1,6 +1,7 @@
 export type ErrorCode =
   | 'VALIDATION_ERROR'
   | 'UNAUTHENTICATED'
+  | 'EMAIL_NOT_VERIFIED'
   | 'FORBIDDEN'
   | 'NOT_FOUND'
   | 'CONFLICT'
@@ -13,6 +14,7 @@ export type ErrorCode =
 const STATUS: Record<ErrorCode, number> = {
   VALIDATION_ERROR: 400,
   UNAUTHENTICATED: 401,
+  EMAIL_NOT_VERIFIED: 403,
   FORBIDDEN: 403,
   NOT_FOUND: 404,
   CONFLICT: 409,

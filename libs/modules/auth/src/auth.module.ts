@@ -54,7 +54,8 @@ import { RefreshRateLimiter } from './refresh-rate-limit';
             nodeEnv: cfg.NODE_ENV,
             apiUrl: cfg.EMAIL_API_URL,
             apiKey: cfg.EMAIL_API_KEY,
-            from: cfg.EMAIL_FROM
+            from: cfg.EMAIL_FROM,
+            provider: cfg.EMAIL_PROVIDER
           }),
           removePrivateFiles: async (keys) => {
             const root = resolve(process.cwd(), cfg.PRIVATE_UPLOAD_DIR);

@@ -31,7 +31,15 @@ export interface EmailTransportEnv {
   readonly apiUrl?: string;
   readonly apiKey?: string;
   readonly from?: string;
+  /**
+   * Payload dialect of `apiUrl`. 'brevo' speaks the Brevo SMTP API; anything
+   * else (including unset) means the Resend-shaped body this transport has
+   * always posted.
+   */
+  readonly provider?: string;
 }
+
+export type EmailProvider = 'resend' | 'brevo';
 
 const DEFAULT_FROM = 'Tarlink <no-reply@tarlink.id>';
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -39,6 +47,42 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 function nonEmpty(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
+}
+
+/** Unknown/blank providers keep the original Resend dialect (backward compatible). */
+function parseProvider(value: string | undefined): EmailProvider {
+  return nonEmpty(value)?.toLowerCase() === 'brevo' ? 'brevo' : 'resend';
+}
+
+interface BrevoSender {
+  email: string;
+  name?: string;
+}
+
+const NAMED_SENDER = /^\s*(.*?)\s*<([^<>]+)>\s*$/;
+const BARE_EMAIL = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
+
+/**
+ * Brevo wants `{ sender: { email, name? } }`; `EMAIL_FROM` stays one string for
+ * every provider, so it is parsed here. A malformed sender fails before the
+ * request instead of sending mail the provider will reject.
+ */
+function parseBrevoSender(from: string): BrevoSender {
+  const raw = from.trim();
+  const named = NAMED_SENDER.exec(raw);
+  const email = (named ? named[2] : raw)?.trim() ?? '';
+  if (!BARE_EMAIL.test(email)) {
+    throw new Error(
+      'EMAIL_FROM tidak valid; Brevo butuh "Nama <email@domain>" atau "email@domain"'
+    );
+  }
+  const name = (named?.[1] ?? '').trim();
+  return name ? { email, name } : { email };
+}
+
+interface HttpRequestParts {
+  headers: Record<string, string>;
+  body: Record<string, unknown>;
 }
 
 /** Development/test transport: records that a message would have been sent. */
@@ -51,30 +95,30 @@ export class LoggingEmailTransport implements EmailTransport {
 
 export class HttpEmailTransport implements EmailTransport {
   private readonly from: string;
+  private readonly provider: EmailProvider;
+  private readonly timeoutMs: number;
 
   constructor(
     private readonly url: string,
     private readonly apiKey: string | null,
     from: string,
-    private readonly timeoutMs: number = DEFAULT_TIMEOUT_MS
+    options: { provider?: EmailProvider; timeoutMs?: number } = {}
   ) {
     this.from = from;
+    this.provider = options.provider ?? 'resend';
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 
   async sendEmail(message: EmailMessage): Promise<void> {
+    // Built before `fetch`: a Brevo request missing its key or a usable sender
+    // must fail here, never reach the network unauthenticated.
+    const request =
+      this.provider === 'brevo' ? this.brevoRequest(message) : this.resendRequest(message);
+
     const response = await fetch(this.url, {
       method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        ...(this.apiKey ? { authorization: `Bearer ${this.apiKey}` } : {})
-      },
-      body: JSON.stringify({
-        from: this.from,
-        to: message.to,
-        subject: message.subject,
-        text: message.text,
-        ...(message.html ? { html: message.html } : {})
-      }),
+      headers: request.headers,
+      body: JSON.stringify(request.body),
       signal: AbortSignal.timeout(this.timeoutMs)
     });
 
@@ -82,6 +126,41 @@ export class HttpEmailTransport implements EmailTransport {
       // Status only: the provider response body is untrusted.
       throw new Error(`Email provider rejected the message (HTTP ${response.status})`);
     }
+  }
+
+  private resendRequest(message: EmailMessage): HttpRequestParts {
+    return {
+      headers: {
+        'content-type': 'application/json',
+        ...(this.apiKey ? { authorization: `Bearer ${this.apiKey}` } : {})
+      },
+      body: {
+        from: this.from,
+        to: message.to,
+        subject: message.subject,
+        text: message.text,
+        ...(message.html ? { html: message.html } : {})
+      }
+    };
+  }
+
+  private brevoRequest(message: EmailMessage): HttpRequestParts {
+    if (!this.apiKey) {
+      throw new Error('EMAIL_API_KEY belum dikonfigurasi; Brevo menolak email tanpa api-key');
+    }
+    return {
+      headers: {
+        'content-type': 'application/json',
+        'api-key': this.apiKey
+      },
+      body: {
+        sender: parseBrevoSender(this.from),
+        to: [{ email: message.to }],
+        subject: message.subject,
+        textContent: message.text,
+        ...(message.html ? { htmlContent: message.html } : {})
+      }
+    };
   }
 }
 
@@ -98,7 +177,8 @@ export function createEmailTransport(env: EmailTransportEnv): EmailTransport {
     return new HttpEmailTransport(
       url,
       nonEmpty(env.apiKey) ?? null,
-      nonEmpty(env.from) ?? DEFAULT_FROM
+      nonEmpty(env.from) ?? DEFAULT_FROM,
+      { provider: parseProvider(env.provider) }
     );
   }
   return env.nodeEnv === 'production'

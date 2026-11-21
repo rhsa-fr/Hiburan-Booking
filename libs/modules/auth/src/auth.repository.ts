@@ -12,25 +12,55 @@ import type { Role } from '@tarlink/platform/auth';
 /** New OTPs use `email`; legacy rows may still carry whatsapp/sms. */
 export type OtpChannel = 'email' | 'whatsapp' | 'sms';
 
+/**
+ * Why a code was issued. A code is only ever accepted by the endpoint that
+ * shares its purpose, so a login code cannot complete a registration or reset a
+ * password.
+ */
+export type OtpPurpose = 'login' | 'register' | 'password_reset';
+
 export interface OtpRequestRecord {
   readonly id: string;
   readonly email: string;
+  readonly purpose: OtpPurpose;
   readonly codeHash: string;
   readonly attempts: number;
   readonly maxAttempts: number;
   readonly expiresAt: Date;
   readonly consumedAt: Date | null;
+  /** Purpose-specific payload; `{}` for login. Never holds a plaintext secret. */
+  readonly metadata: Record<string, unknown>;
   readonly createdAt: Date;
 }
 
 export interface NewOtpRequest {
   readonly id: string;
   readonly email: string;
+  readonly purpose: OtpPurpose;
   readonly codeHash: string;
   readonly channel: OtpChannel;
   readonly maxAttempts: number;
   readonly expiresAt: Date;
   readonly requesterIp: string | null;
+  readonly metadata?: Record<string, unknown>;
+  readonly createdAt: Date;
+}
+
+/** Single-use proof that the account owner controls the email address. */
+export interface PasswordResetTokenRecord {
+  readonly id: string;
+  readonly userId: string;
+  readonly expiresAt: Date;
+  readonly consumedAt: Date | null;
+  readonly createdAt: Date;
+}
+
+export interface NewPasswordResetToken {
+  readonly id: string;
+  readonly userId: string;
+  /** sha256 hex of the opaque token; the plaintext never reaches the database. */
+  readonly tokenHash: string;
+  readonly expiresAt: Date;
   readonly createdAt: Date;
 }
 
@@ -41,6 +71,8 @@ export interface AuthUserRecord {
   readonly email: string | null;
   /** `scrypt$N$salt_hex$hash_hex`, or null when the account has no password. */
   readonly passwordHash: string | null;
+  /** Null until the address is proven; password login is refused until then. */
+  readonly emailVerifiedAt: Date | null;
 }
 
 /** Read-only profile of the authenticated user (`GET /auth/me`). */
@@ -194,12 +226,29 @@ export interface AuthRepository {
   /** Number of OTP requests from `ip` created at/after `since` (null when no IP). */
   countRecentOtpRequestsByIp(ip: string, since: Date): Promise<number>;
   insertOtpRequest(input: NewOtpRequest): Promise<void>;
-  /** Newest request for `email` that is neither consumed nor expired. */
-  findActiveOtpRequest(email: string, now: Date): Promise<OtpRequestRecord | null>;
+  /** Newest request for `email` with this purpose that is neither consumed nor expired. */
+  findActiveOtpRequest(
+    email: string,
+    purpose: OtpPurpose,
+    now: Date
+  ): Promise<OtpRequestRecord | null>;
+  /**
+   * Newest request for `email` with this purpose, ignoring expiry and
+   * consumption. Resend needs it after the previous code timed out.
+   */
+  findLatestOtpRequest(email: string, purpose: OtpPurpose): Promise<OtpRequestRecord | null>;
+  /** Removes one request; used when the code could not be delivered. */
+  deleteOtpRequest(id: string): Promise<void>;
   /** Atomically bumps `attempts` and returns the new value. */
   incrementOtpAttempts(id: string): Promise<number>;
   /** Atomically marks the request consumed; false when another caller won. */
   consumeOtpRequest(id: string, consumedAt: Date): Promise<boolean>;
+  /** Stores a hashed single-use password reset token. */
+  insertPasswordResetToken(input: NewPasswordResetToken): Promise<void>;
+  /** Token lookup by sha256 hex; consumed/expired rows are returned for the caller to reject. */
+  findPasswordResetToken(tokenHash: string): Promise<PasswordResetTokenRecord | null>;
+  /** Atomically marks a token used; false when another caller won. */
+  consumePasswordResetToken(id: string, consumedAt: Date): Promise<boolean>;
   findUserByPhone(phone: string): Promise<AuthUserRecord | null>;
   /** Case-insensitive lookup used by email+password login. */
   findUserByEmail(email: string): Promise<AuthUserRecord | null>;
@@ -240,6 +289,8 @@ export interface AuthRepository {
   recordLoginAttempt(input: NewLoginAttempt): Promise<void>;
   /** Writes a new password hash; false when the user does not exist. */
   updatePassword(userId: string, passwordHash: string, updatedAt: Date): Promise<boolean>;
+  /** Stamps `email_verified_at` when it is still null (never overwrites it). */
+  markEmailVerified(userId: string, verifiedAt: Date): Promise<void>;
   insertSession(input: NewSession): Promise<void>;
   /** Session row for `jti` that is neither revoked nor expired; null otherwise. */
   findActiveSessionByJti(jti: string, now: Date): Promise<{ userId: string } | null>;
@@ -317,9 +368,19 @@ export interface AuthRepository {
 interface OtpRow {
   id: string;
   email: string;
+  purpose: OtpPurpose;
   code_hash: string;
   attempts: number;
   max_attempts: number;
+  expires_at: Date;
+  consumed_at: Date | null;
+  metadata: Record<string, unknown>;
+  created_at: Date;
+}
+
+interface PasswordResetTokenRow {
+  id: string;
+  user_id: string;
   expires_at: Date;
   consumed_at: Date | null;
   created_at: Date;
@@ -330,11 +391,39 @@ interface UserRow {
   phone: string | null;
   email: string | null;
   password_hash: string | null;
+  email_verified_at: Date | null;
 }
 
 function toUserRecord(row: UserRow): AuthUserRecord {
-  return { id: row.id, phone: row.phone, email: row.email, passwordHash: row.password_hash };
+  return {
+    id: row.id,
+    phone: row.phone,
+    email: row.email,
+    passwordHash: row.password_hash,
+    emailVerifiedAt: row.email_verified_at
+  };
 }
+
+function toOtpRecord(row: OtpRow): OtpRequestRecord {
+  return {
+    id: row.id,
+    email: row.email,
+    purpose: row.purpose,
+    codeHash: row.code_hash,
+    attempts: row.attempts,
+    maxAttempts: row.max_attempts,
+    expiresAt: row.expires_at,
+    consumedAt: row.consumed_at,
+    metadata: row.metadata ?? {},
+    createdAt: row.created_at
+  };
+}
+
+const SELECT_OTP_SQL = `
+SELECT id, email, purpose, code_hash, attempts, max_attempts, expires_at,
+       consumed_at, metadata, created_at
+  FROM otp_requests
+`;
 
 interface UserProfileRow extends UserRow {
   name: string | null;
@@ -363,6 +452,7 @@ interface TwoFactorRow {
   id: string;
   phone: string | null;
   email: string | null;
+  email_verified_at: Date | null;
   two_factor_enabled: boolean;
   totp_secret_encrypted: Buffer | null;
   totp_key_id: string | null;
@@ -420,45 +510,61 @@ export class PgAuthRepository implements AuthRepository {
   async insertOtpRequest(input: NewOtpRequest): Promise<void> {
     await query(
       `INSERT INTO otp_requests
-         (id, email, code_hash, channel, max_attempts, expires_at, requester_ip, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::inet, $8)`,
+         (id, email, purpose, code_hash, channel, max_attempts, expires_at, requester_ip,
+          metadata, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::inet, $9::jsonb, $10)`,
       [
         input.id,
         input.email,
+        input.purpose,
         input.codeHash,
         input.channel,
         input.maxAttempts,
         input.expiresAt,
         input.requesterIp,
+        JSON.stringify(input.metadata ?? {}),
         input.createdAt
       ]
     );
   }
 
-  async findActiveOtpRequest(email: string, now: Date): Promise<OtpRequestRecord | null> {
+  async findActiveOtpRequest(
+    email: string,
+    purpose: OtpPurpose,
+    now: Date
+  ): Promise<OtpRequestRecord | null> {
     const rows = await query<OtpRow>(
-      `SELECT id, email, code_hash, attempts, max_attempts, expires_at, consumed_at, created_at
-         FROM otp_requests
+      `${SELECT_OTP_SQL}
         WHERE lower(email) = lower($1)
+          AND purpose = $2
           AND consumed_at IS NULL
-          AND expires_at > $2
+          AND expires_at > $3
         ORDER BY created_at DESC
         LIMIT 1`,
-      [email, now]
+      [email, purpose, now]
     );
     const row = rows[0];
-    if (!row) return null;
+    return row ? toOtpRecord(row) : null;
+  }
 
-    return {
-      id: row.id,
-      email: row.email,
-      codeHash: row.code_hash,
-      attempts: row.attempts,
-      maxAttempts: row.max_attempts,
-      expiresAt: row.expires_at,
-      consumedAt: row.consumed_at,
-      createdAt: row.created_at
-    };
+  async findLatestOtpRequest(
+    email: string,
+    purpose: OtpPurpose
+  ): Promise<OtpRequestRecord | null> {
+    const rows = await query<OtpRow>(
+      `${SELECT_OTP_SQL}
+        WHERE lower(email) = lower($1)
+          AND purpose = $2
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [email, purpose]
+    );
+    const row = rows[0];
+    return row ? toOtpRecord(row) : null;
+  }
+
+  async deleteOtpRequest(id: string): Promise<void> {
+    await query('DELETE FROM otp_requests WHERE id = $1', [id]);
   }
 
   async incrementOtpAttempts(id: string): Promise<number> {
@@ -481,9 +587,48 @@ export class PgAuthRepository implements AuthRepository {
     return rows.length > 0;
   }
 
+  async insertPasswordResetToken(input: NewPasswordResetToken): Promise<void> {
+    await query(
+      `INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at, created_at)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [input.id, input.userId, input.tokenHash, input.expiresAt, input.createdAt]
+    );
+  }
+
+  async findPasswordResetToken(tokenHash: string): Promise<PasswordResetTokenRecord | null> {
+    const rows = await query<PasswordResetTokenRow>(
+      `SELECT id, user_id, expires_at, consumed_at, created_at
+         FROM password_reset_tokens
+        WHERE token_hash = $1
+        LIMIT 1`,
+      [tokenHash]
+    );
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      id: row.id,
+      userId: row.user_id,
+      expiresAt: row.expires_at,
+      consumedAt: row.consumed_at,
+      createdAt: row.created_at
+    };
+  }
+
+  async consumePasswordResetToken(id: string, consumedAt: Date): Promise<boolean> {
+    // Guarded UPDATE: two concurrent resets cannot both pass on one token.
+    const rows = await query<{ id: string }>(
+      `UPDATE password_reset_tokens
+          SET consumed_at = $2
+        WHERE id = $1 AND consumed_at IS NULL
+        RETURNING id`,
+      [id, consumedAt]
+    );
+    return rows.length > 0;
+  }
+
   async findUserByPhone(phone: string): Promise<AuthUserRecord | null> {
     const rows = await query<UserRow>(
-      "SELECT id, phone, email, password_hash FROM users WHERE phone = $1 AND status = 'active'",
+      "SELECT id, phone, email, password_hash, email_verified_at FROM users WHERE phone = $1 AND status = 'active'",
       [phone]
     );
     const row = rows[0];
@@ -492,7 +637,7 @@ export class PgAuthRepository implements AuthRepository {
 
   async findUserByEmail(email: string): Promise<AuthUserRecord | null> {
     const rows = await query<UserRow>(
-      "SELECT id, phone, email, password_hash FROM users WHERE lower(email) = lower($1) AND status = 'active'",
+      "SELECT id, phone, email, password_hash, email_verified_at FROM users WHERE lower(email) = lower($1) AND status = 'active'",
       [email]
     );
     const row = rows[0];
@@ -501,7 +646,7 @@ export class PgAuthRepository implements AuthRepository {
 
   async findUserByGoogleSub(googleSub: string): Promise<AuthUserRecord | null> {
     const rows = await query<UserRow>(
-      "SELECT id, phone, email, password_hash FROM users WHERE google_sub = $1 AND status = 'active'",
+      "SELECT id, phone, email, password_hash, email_verified_at FROM users WHERE google_sub = $1 AND status = 'active'",
       [googleSub]
     );
     const row = rows[0];
@@ -510,7 +655,7 @@ export class PgAuthRepository implements AuthRepository {
 
   async findUserProfile(userId: string): Promise<AuthUserProfile | null> {
     const rows = await query<UserProfileRow>(
-      "SELECT id, phone, email, password_hash, name, created_at FROM users WHERE id = $1 AND status = 'active'",
+      "SELECT id, phone, email, password_hash, email_verified_at, name, created_at FROM users WHERE id = $1 AND status = 'active'",
       [userId]
     );
     const row = rows[0];
@@ -605,7 +750,8 @@ export class PgAuthRepository implements AuthRepository {
       id: input.id,
       phone: input.phone,
       email: input.email,
-      passwordHash: input.passwordHash
+      passwordHash: input.passwordHash,
+      emailVerifiedAt: input.emailVerifiedAt
     };
   }
 
@@ -717,6 +863,16 @@ export class PgAuthRepository implements AuthRepository {
       [userId, passwordHash, updatedAt]
     );
     return rows.length > 0;
+  }
+
+  async markEmailVerified(userId: string, verifiedAt: Date): Promise<void> {
+    // COALESCE keeps the first proof-of-ownership timestamp.
+    await query(
+      `UPDATE users
+          SET email_verified_at = COALESCE(email_verified_at, $2)
+        WHERE id = $1`,
+      [userId, verifiedAt]
+    );
   }
 
   async insertSession(input: NewSession): Promise<void> {
@@ -968,7 +1124,8 @@ export class PgAuthRepository implements AuthRepository {
 
   async findTwoFactorState(userId: string): Promise<TwoFactorState | null> {
     const rows = await query<TwoFactorRow>(
-      `SELECT id, phone, email, two_factor_enabled, totp_secret_encrypted, totp_key_id
+      `SELECT id, phone, email, email_verified_at, two_factor_enabled,
+              totp_secret_encrypted, totp_key_id
          FROM users
         WHERE id = $1 AND status = 'active'`,
       [userId]
@@ -980,6 +1137,7 @@ export class PgAuthRepository implements AuthRepository {
       phone: row.phone,
       email: row.email,
       passwordHash: null,
+      emailVerifiedAt: row.email_verified_at,
       twoFactorEnabled: row.two_factor_enabled,
       totpSecretEncrypted: row.totp_secret_encrypted,
       totpKeyId: row.totp_key_id

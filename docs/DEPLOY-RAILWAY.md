@@ -110,9 +110,12 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 | `OTP_DEV_MODE` | `false` | `true` hanya di lokal |
 | `TRUST_PROXY` | `true` | Railway = reverse proxy |
 | `CORS_ORIGINS` | `https://<admin-domain>` | isi setelah domain panel ada; tanpa spasi |
-| `EMAIL_API_URL` | URL provider | OTP + notifikasi |
-| `EMAIL_API_KEY` | kunci provider | |
-| `EMAIL_FROM` | `Tarlink <no-reply@domain>` | |
+| `EMAIL_PROVIDER` | `brevo` atau `resend` | menentukan bentuk payload + header auth |
+| `EMAIL_API_URL` | `https://api.brevo.com/v3/smtp/email` | OTP + notifikasi |
+| `EMAIL_API_KEY` | kunci provider | Brevo: `xkeysib-...` (header `api-key`) |
+| `EMAIL_FROM` | `Tarlink <email-terverifikasi>` | harus sender yang diverifikasi di dashboard provider |
+| `FCM_SERVICE_ACCOUNT_JSON` | JSON service account (atau base64) | **worker**; kosong = push dilewati, in-app/email tetap jalan |
+| `FCM_PROJECT_ID` | project id Firebase | opsional untuk worker |
 | `TOTP_ENCRYPTION_KEY` | base64 32 byte | tanpa ini enrollment 2FA admin gagal |
 | `KTP_ENCRYPTION_KEY` | base64 32 byte | wajib untuk pengajuan vendor |
 | `BANK_ACCOUNT_ENCRYPTION_KEY` | base64 32 byte | wajib untuk rekening vendor |

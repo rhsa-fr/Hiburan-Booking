@@ -124,6 +124,9 @@ class _AccountPageState extends State<AccountPage> {
 
     final scope = AppScope.of(context);
     setState(() => _signingOut = true);
+    // Delete the FCM row before revoking the session: after logout the access
+    // token is dead and the device would keep receiving the old account's push.
+    await scope.push?.stop();
     try {
       await scope.api.post('/auth/logout');
     } on ApiException {
@@ -151,6 +154,7 @@ class _AccountPageState extends State<AccountPage> {
 
     final scope = AppScope.of(context);
     setState(() => _deletingAccount = true);
+    await scope.push?.stop();
     try {
       await scope.api.delete('/auth/me', body: const {'confirm': 'HAPUS AKUN'});
       await scope.session.signOut();
@@ -222,6 +226,14 @@ class _AccountPageState extends State<AccountPage> {
                       const _ProfileSectionTitle('Aktivitas'),
                       const SizedBox(height: Sp.sm),
                       _menuCard([
+                        _MenuRow(
+                          icon: Icons.notifications_none_rounded,
+                          label: 'Notifikasi',
+                          onTap: () => Navigator.pushNamed(
+                            context,
+                            Routes.notifications,
+                          ),
+                        ),
                         _MenuRow(
                           icon: Icons.favorite_outline,
                           label: 'Vendor favorit',

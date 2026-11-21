@@ -50,6 +50,8 @@ String? phoneError(String? value) {
 String authErrorMessage(ApiException error, {bool register = false}) {
   return switch (error.code) {
     'UNAUTHENTICATED' => 'Email atau kata sandi salah.',
+    'EMAIL_NOT_VERIFIED' =>
+      'Email belum diverifikasi. Kirim ulang kode verifikasi.',
     'RATE_LIMITED' =>
       register
           ? 'Terlalu banyak percobaan. Coba lagi beberapa menit lagi.'
