@@ -6,6 +6,7 @@ name: android-release
 #   1. Isi repository variable API_BASE_URL (Settings -> Secrets and variables
 #      -> Actions -> Variables). Wajib https:// dan harus bisa dihubungi HP.
 #   2. Opsional: GOOGLE_CLIENT_ID dan GOOGLE_SERVER_CLIENT_ID.
+#      FCM_API_KEY, FCM_APP_ID, FCM_MESSAGING_SENDER_ID, FCM_PROJECT_ID untuk push.
 #   3. Isi secrets signing: ANDROID_KEYSTORE_BASE64,
 #      ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD.
 #      Key ini harus sama dengan yang SHA-1-nya didaftarkan di Android OAuth
@@ -95,11 +96,19 @@ jobs:
           API_BASE_URL: ${{ vars.API_BASE_URL }}
           GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_CLIENT_ID }}
           GOOGLE_SERVER_CLIENT_ID: ${{ vars.GOOGLE_SERVER_CLIENT_ID }}
+          FCM_API_KEY: ${{ vars.FCM_API_KEY }}
+          FCM_APP_ID: ${{ vars.FCM_APP_ID }}
+          FCM_MESSAGING_SENDER_ID: ${{ vars.FCM_MESSAGING_SENDER_ID }}
+          FCM_PROJECT_ID: ${{ vars.FCM_PROJECT_ID }}
         run: |
           flutter build apk --release --split-per-abi \
             --dart-define=API_BASE_URL="$API_BASE_URL" \
             --dart-define=GOOGLE_CLIENT_ID="$GOOGLE_CLIENT_ID" \
-            --dart-define=GOOGLE_SERVER_CLIENT_ID="$GOOGLE_SERVER_CLIENT_ID"
+            --dart-define=GOOGLE_SERVER_CLIENT_ID="$GOOGLE_SERVER_CLIENT_ID" \
+            --dart-define=FCM_API_KEY="$FCM_API_KEY" \
+            --dart-define=FCM_APP_ID="$FCM_APP_ID" \
+            --dart-define=FCM_MESSAGING_SENDER_ID="$FCM_MESSAGING_SENDER_ID" \
+            --dart-define=FCM_PROJECT_ID="$FCM_PROJECT_ID"
 
       - name: Siapkan nama berkas
         run: |
