@@ -1,0 +1,116 @@
+name: android-release
+
+# Rilis APK Android ke GitHub Releases.
+#
+# Alur:
+#   1. Isi repository variable API_BASE_URL (Settings -> Secrets and variables
+#      -> Actions -> Variables). Wajib https:// dan harus bisa dihubungi HP.
+#   2. Opsional: GOOGLE_CLIENT_ID dan GOOGLE_SERVER_CLIENT_ID bila login Google
+#      dipakai di APK.
+#   3. Naikkan `version:` di apps/mobile/pubspec.yaml, commit, lalu push tag:
+#        git tag v0.1.0 && git push origin v0.1.0
+#   4. Workflow membangun APK, mengunggah artifact, dan membuat GitHub Release
+#      dengan APK terlampir.
+#
+# APK ditandatangani dengan debug key (lihat android/app/build.gradle.kts).
+# Installable untuk uji internal, tetapi BELUM layak Play Store: update dari
+# build ber-key lain harus uninstall dulu.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  apk:
+    name: Build APK release
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          # Sama dengan CI: versi yang dipakai mengembangkan fitur.
+          flutter-version: 3.35.2
+          channel: stable
+          cache: true
+
+      - name: Validasi konfigurasi rilis
+        env:
+          API_BASE_URL: ${{ vars.API_BASE_URL }}
+        run: |
+          if [ -z "$API_BASE_URL" ]; then
+            echo "::error::Repository variable API_BASE_URL belum diisi."
+            echo "Buka Settings -> Secrets and variables -> Actions -> Variables."
+            exit 1
+          fi
+          case "$API_BASE_URL" in
+            https://*) ;;
+            *)
+              echo "::error::API_BASE_URL harus https:// (APK release tidak boleh http)."
+              exit 1
+              ;;
+          esac
+
+      - run: flutter pub get
+
+      - run: flutter analyze
+
+      - run: flutter test
+
+      - name: Build APK
+        env:
+          API_BASE_URL: ${{ vars.API_BASE_URL }}
+          GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_CLIENT_ID }}
+          GOOGLE_SERVER_CLIENT_ID: ${{ vars.GOOGLE_SERVER_CLIENT_ID }}
+        run: |
+          flutter build apk --release \
+            --dart-define=API_BASE_URL="$API_BASE_URL" \
+            --dart-define=GOOGLE_CLIENT_ID="$GOOGLE_CLIENT_ID" \
+            --dart-define=GOOGLE_SERVER_CLIENT_ID="$GOOGLE_SERVER_CLIENT_ID"
+
+      - name: Siapkan nama berkas
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            NAME="tarlink-${GITHUB_REF_NAME#v}-android.apk"
+          else
+            NAME="tarlink-${GITHUB_SHA::7}-android.apk"
+          fi
+          cp build/app/outputs/flutter-apk/app-release.apk "$NAME"
+          echo "APK_NAME=$NAME" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tarlink-android-apk
+          path: apps/mobile/${{ env.APK_NAME }}
+          if-no-files-found: error
+
+      - name: Buat GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Tarlink ${{ github.ref_name }}
+          files: apps/mobile/${{ env.APK_NAME }}
+          generate_release_notes: true
+          body: |
+            APK Android Tarlink ${{ github.ref_name }}.
+
+            - API: `${{ vars.API_BASE_URL }}`
+            - Commit: `${{ github.sha }}`
+            - Ditandatangani dengan debug key; untuk uji internal, belum untuk Play Store.
