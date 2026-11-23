@@ -144,7 +144,7 @@ jobs:
             --version "$VERSION" \
             --build "$BUILD" \
             --base-url "${{ vars.APP_UPDATE_BASE_URL }}" \
-            --notes "Tarlink ${{ github.ref_name }}" \
+            --notes "Tarlink $VERSION (build $BUILD)" \
             --out latest.json
 
       - name: Pastikan bucket Supabase ada
