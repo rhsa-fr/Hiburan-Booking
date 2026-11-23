@@ -5,6 +5,8 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <!-- Android 13+: izin notifikasi runtime untuk push FCM. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- Pembaruan APK in-app: memasang paket unduhan tanpa Play Store. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <!-- Demo/portfolio: API lokal memakai http. Di produksi wajib https. -->
     <application
         android:label="Tarlink"
@@ -33,6 +35,17 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- APK unduhan disajikan ke pemasang sistem lewat content:// URI.
+             Hanya folder cache/updates yang dibuka (res/xml/file_paths.xml). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

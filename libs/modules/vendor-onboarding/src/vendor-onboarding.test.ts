@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import type { PoolClient } from 'pg';
 import { AppError } from '@tarlink/core/errors';
 import type { SubmitVendorApplicationInput, VendorApplicationRecord } from './vendor-onboarding.contracts';
 import { VendorOnboardingRepository, maskNik } from './vendor-onboarding.repository';
@@ -297,5 +298,157 @@ describe('ktp storage key', () => {
   it('scopes the key to the owner id', () => {
     expect(INPUT.ktp_object_key.startsWith(ktpKeyPrefix(USER_ID))).toBe(true);
     expect(INPUT.ktp_object_key.startsWith(ktpKeyPrefix('other'))).toBe(false);
+  });
+});
+
+const ADMIN_ID = '44444444-4444-4444-8444-444444444444';
+const VENDOR_ID = '55555555-5555-4555-8555-555555555555';
+const CUSTOMER_SCOPE = '00000000-0000-0000-0000-000000000000';
+
+function applicationRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: APPLICATION_ID,
+    user_id: USER_ID,
+    status: 'submitted',
+    display_name: INPUT.display_name,
+    legal_name: INPUT.legal_name,
+    nik: null,
+    nik_ciphertext: Buffer.from(INPUT.nik, 'utf8'),
+    nik_key_id: 'test',
+    region_code: INPUT.region_code,
+    base_address: INPUT.base_address,
+    ktp_object_key: INPUT.ktp_object_key,
+    review_note: null,
+    reviewed_by: null,
+    reviewed_at: null,
+    vendor_id: null,
+    created_at: new Date('2026-11-04T09:00:00.000Z'),
+    ...overrides
+  };
+}
+
+/**
+ * Fake pool client that mimics the `user_roles` primary key
+ * `(user_id, role, vendor_scope)`: a plain insert for a key that already exists
+ * raises 23505, `DO NOTHING` keeps the row untouched, and
+ * `DO UPDATE SET revoked_at = NULL ... WHERE revoked_at IS NOT NULL` restores a
+ * revoked row without inserting a second one. Values: `null` = active row.
+ */
+function fakeApprovalClient(roles: Map<string, Date | null> = new Map()) {
+  const roleWrites: Array<{ sql: string; params: unknown[] | undefined }> = [];
+  const query = vi.fn(async (sql: string, params?: unknown[]) => {
+    if (sql.includes('FROM vendor_applications') && sql.includes('FOR UPDATE')) {
+      return { rows: [applicationRow({ id: String(params?.[0]) })], rowCount: 1 };
+    }
+    if (sql.includes('INSERT INTO vendors')) {
+      return { rows: [{ id: VENDOR_ID }], rowCount: 1 };
+    }
+    if (sql.includes('INSERT INTO user_roles')) {
+      roleWrites.push({ sql, params });
+      const role = sql.includes("'customer'") ? 'customer' : 'vendor_owner';
+      const key = `${String(params?.[0])}:${role}`;
+      const exists = roles.has(key);
+      if (!sql.includes('ON CONFLICT') && exists) {
+        throw Object.assign(new Error('duplicate key value violates unique constraint'), {
+          code: '23505'
+        });
+      }
+      if (!exists) {
+        roles.set(key, null);
+        return { rows: [], rowCount: 1 };
+      }
+      const revokedAt = roles.get(key) ?? null;
+      if (revokedAt !== null && sql.includes('DO UPDATE SET revoked_at = NULL')) {
+        roles.set(key, null);
+        return { rows: [], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    }
+    if (sql.includes('UPDATE vendor_applications')) {
+      return {
+        rows: [applicationRow({ id: String(params?.[0]), status: 'approved', vendor_id: VENDOR_ID })],
+        rowCount: 1
+      };
+    }
+    return { rows: [], rowCount: 1 };
+  });
+  return { client: { query } as unknown as PoolClient, roleWrites, roles };
+}
+
+function approve(repository: VendorOnboardingRepository, client: PoolClient, applicationId = APPLICATION_ID) {
+  return repository.approve(client, {
+    application: record({ id: applicationId }),
+    actorId: ADMIN_ID,
+    actorRole: 'admin_super',
+    slug: 'tarling-dian-malam-22222222',
+    now: new Date('2026-11-22T03:00:00.000Z')
+  });
+}
+
+describe('VendorOnboardingRepository.approve — customer role', () => {
+  const repository = new VendorOnboardingRepository();
+
+  it('grants both vendor_owner and customer on the caller transaction', async () => {
+    const { client, roleWrites } = fakeApprovalClient();
+
+    await approve(repository, client);
+
+    expect(roleWrites).toHaveLength(2);
+    const [ownerGrant, customerGrant] = roleWrites;
+
+    expect(ownerGrant?.sql).toContain("'vendor_owner'");
+    expect(ownerGrant?.params).toEqual([USER_ID, VENDOR_ID, ADMIN_ID]);
+
+    // Customer has no vendor: role check requires vendor_id NULL and the
+    // all-zero vendor_scope.
+    expect(customerGrant?.sql).toContain("'customer'");
+    expect(customerGrant?.sql).toContain(`NULL, '${CUSTOMER_SCOPE}'`);
+    expect(customerGrant?.sql).toContain(
+      'DO UPDATE SET revoked_at = NULL WHERE user_roles.revoked_at IS NOT NULL'
+    );
+    expect(customerGrant?.params).toEqual([USER_ID]);
+  });
+
+  it('still succeeds when the user already holds the customer role', async () => {
+    const { client, roleWrites, roles } = fakeApprovalClient(
+      new Map([[`${USER_ID}:customer`, null]])
+    );
+
+    await expect(approve(repository, client)).resolves.toMatchObject({
+      status: 'approved',
+      vendorId: VENDOR_ID
+    });
+
+    const customerWrites = roleWrites.filter((write) => write.sql.includes("'customer'"));
+    expect(customerWrites).toHaveLength(1);
+    expect(roles.get(`${USER_ID}:customer`)).toBeNull();
+  });
+
+  it('restores a revoked customer row instead of duplicating it', async () => {
+    const revokedAt = new Date('2026-10-01T00:00:00.000Z');
+    const { client, roles } = fakeApprovalClient(new Map([[`${USER_ID}:customer`, revokedAt]]));
+
+    await approve(repository, client);
+
+    expect(roles.has(`${USER_ID}:customer`)).toBe(true);
+    expect(roles.get(`${USER_ID}:customer`)).toBeNull();
+    expect(roles.size).toBe(2); // vendor_owner + customer, no third customer row
+  });
+
+  it('re-approving another application for the same user does not fail', async () => {
+    const { client, roleWrites } = fakeApprovalClient();
+    const secondApplicationId = '66666666-6666-4666-8666-666666666666';
+
+    await approve(repository, client);
+    await approve(repository, client, secondApplicationId);
+
+    const customerWrites = roleWrites.filter((write) => write.sql.includes("'customer'"));
+    expect(customerWrites).toHaveLength(2);
+    for (const write of customerWrites) {
+      expect(write.sql).toContain(
+        'DO UPDATE SET revoked_at = NULL WHERE user_roles.revoked_at IS NOT NULL'
+      );
+      expect(write.params).toEqual([USER_ID]);
+    }
   });
 });

@@ -493,6 +493,7 @@ class BookingView {
     required this.outstandingIdr,
     required this.createdAt,
     required this.updatedAt,
+    this.settlementAvailableAt,
   });
 
   factory BookingView.fromJson(Map<String, dynamic> json) => BookingView(
@@ -511,6 +512,7 @@ class BookingView {
     outstandingIdr: _int(json['outstanding_idr']),
     createdAt: _string(json['created_at']),
     updatedAt: _string(json['updated_at']),
+    settlementAvailableAt: _stringOrNull(json['settlement_available_at']),
   );
 
   final String id;
@@ -528,6 +530,9 @@ class BookingView {
   final int outstandingIdr;
   final String createdAt;
   final String updatedAt;
+
+  /// ISO-8601 UTC moment settlement opens (`null`/absent = already open).
+  final String? settlementAvailableAt;
 }
 
 /// FR-056: one dispute row as `/bookings/:id/disputes` reports it. The list

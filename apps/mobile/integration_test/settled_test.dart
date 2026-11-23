@@ -40,7 +40,7 @@ void main() {
     expect(find.text('Rp 5.050.000'), findsOneWidget);
     expect(find.text('Rp 1.500.000'), findsOneWidget);
     expect(find.text('Rp 3.550.000'), findsOneWidget);
-    expect(find.text('DP sudah dibayar'), findsOneWidget);
+    expect(find.textContaining('DP sudah dibayar'), findsOneWidget);
     expect(find.text('DP diterima'), findsOneWidget);
 
     // Payment picker must be gone for dp_paid.

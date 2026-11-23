@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../app/theme.dart';
 import '../../core/api_exception.dart';
+import '../../core/format.dart';
 import '../../core/ui.dart';
 
 export '../../core/format.dart' show moneyValue;
@@ -33,6 +34,7 @@ String lifecycleText(String status) => switch (status.toLowerCase()) {
   'countered' => 'Ditawar balik',
   'rejected' => 'Ditolak vendor',
   'expired' => 'Kedaluwarsa',
+  'no_show' => 'Vendor tidak hadir',
   _ => _humanize(status),
 };
 
@@ -41,6 +43,15 @@ bool isFullySettled(String? status) => status == 'fully_paid';
 
 bool isDpSettled(String? status) =>
     status == 'dp_paid' || isFullySettled(status);
+
+/// Asia/Jakarta is UTC+07:00 all year round (no DST since 2014). The server
+/// gates pelunasan on the WIB calendar day (the payment service formats its 409
+/// the same way), so every mobile surface must render that day too: a device in
+/// another zone would otherwise show a different date than the server.
+String formatWibDate(DateTime instant) =>
+    formatDate(instant.toUtc().add(_wibOffset));
+
+const _wibOffset = Duration(hours: 7);
 
 String paymentText(String status) => switch (status.toLowerCase()) {
   'unpaid' => 'Belum bayar',
@@ -53,6 +64,64 @@ String paymentText(String status) => switch (status.toLowerCase()) {
   'expired' => 'Kedaluwarsa',
   _ => _humanize(status),
 };
+
+/// Payment chip for every surface (home card, list, status page): one label
+/// and one tone per payment state, never a local switch per screen.
+({String label, PillTone tone}) paymentPill(String status) =>
+    (label: paymentText(status), tone: paymentPillTone(status));
+
+PillTone paymentPillTone(String status) => switch (status.toLowerCase()) {
+  'dp_paid' || 'fully_paid' => PillTone.success,
+  'unpaid' || 'pending' || 'partially_refunded' => PillTone.warning,
+  'failed' || 'expired' => PillTone.danger,
+  _ => PillTone.neutral,
+};
+
+/// Lifecycles that no longer wait on the customer: finished, closed, or
+/// expired. `completed` counts as done for lists; the status page keeps it
+/// visible because the event has already happened. `no_show` is terminal for
+/// the money even though the vendor had accepted: the event never ran, so the
+/// booking must never surface as active on home or in the list.
+bool isTerminalLifecycle(String status) => const {
+  'completed',
+  'cancelled',
+  'canceled',
+  'rejected',
+  'expired',
+  'no_show',
+}.contains(status.toLowerCase());
+
+/// The money line under a booking card. Same words on the booking list and the
+/// active-booking card; the caller only decides typography and colour.
+({String label, String detail}) bookingMoneySummary({
+  required String lifecycleStatus,
+  required String paymentStatus,
+  required int totalCustomerIdr,
+  required int dpAmountIdr,
+  required int outstandingIdr,
+}) {
+  final lifecycle = lifecycleStatus.toLowerCase();
+  final payment = paymentStatus.toLowerCase();
+  if (isFullySettled(payment)) {
+    return (
+      label: 'Lunas',
+      detail:
+          'Dibayar ${rupiah(totalCustomerIdr)} · Sisa ${rupiah(outstandingIdr)}',
+    );
+  }
+  if (payment == 'refunded') {
+    return (label: 'Dikembalikan', detail: 'Dana sudah dikembalikan');
+  }
+  if (isTerminalLifecycle(lifecycle) && lifecycle != 'completed') {
+    return (label: 'Tidak ditagih', detail: 'Tidak ada tagihan');
+  }
+  return (
+    label: 'Sisa ${rupiah(outstandingIdr)}',
+    detail: isDpSettled(payment)
+        ? 'DP ${rupiah(dpAmountIdr)}'
+        : 'Belum ada pembayaran',
+  );
+}
 
 /// Maps any booking/lifecycle/payment code onto the shared [StatusPill] tones.
 PillTone bookingPillTone(String status) => switch (status.toLowerCase()) {
@@ -117,16 +186,20 @@ class BookingPanel extends StatelessWidget {
     required this.child,
     this.color = AppColors.card,
     this.borderColor = AppColors.line,
+    this.padding = const EdgeInsets.all(Sp.lg),
   });
 
   final Widget child;
   final Color color;
   final Color borderColor;
 
+  /// Checkout panels pass a tighter `Sp.md`; every other panel keeps `Sp.lg`.
+  final EdgeInsetsGeometry padding;
+
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(Sp.lg),
+      padding: padding,
       decoration: BoxDecoration(
         color: color,
         borderRadius: BorderRadius.circular(Radii.lg),

@@ -2388,32 +2388,48 @@ describe('AuthService.loginWithGoogle', () => {
     return new FakeGoogleVerifier(identity);
   }
 
-  it('creates a phone-less customer for a new Google account', async () => {
+  it('parks a new Google account as a pending registration without a user or session', async () => {
     const verifier = verifierWith({
       sub: 'google-sub-new',
       email: 'Google.User@Tarlink.id',
       emailVerified: true
     });
-    const { repository, service } = makeHarness({ googleVerifier: verifier });
+    const { repository, service, mailer } = makeHarness({ googleVerifier: verifier });
 
-    const result = sessionOf(
-      await service.loginWithGoogle({ id_token: 'google-id-token', consent: CONSENT })
-    );
-    const claims = verifyAccessToken(result.access_token, SECRET);
+    const result = await service.loginWithGoogle({
+      id_token: 'google-id-token',
+      consent: CONSENT,
+      ip: '203.0.113.9',
+      userAgent: 'vitest'
+    });
 
     expect(verifier.calls).toEqual(['google-id-token']);
-    expect(result.user.roles).toEqual(['customer']);
-    expect(result.user.email).toBe(GOOGLE_EMAIL);
-    expect(result.user.phone).toBeNull();
-    expect(claims.roles).toEqual(['customer']);
-    expect(repository.users).toHaveLength(1);
-    expect(repository.users[0]).toMatchObject({
+    expect(result).toMatchObject({
+      verification_required: true,
       email: GOOGLE_EMAIL,
-      googleSub: 'google-sub-new',
-      passwordHash: null
+      expires_in: 300,
+      provider: 'google'
     });
-    expect(repository.users[0]?.emailVerifiedAt).not.toBeNull();
-    expect(repository.sessions).toHaveLength(1);
+    if (!('verification_required' in result)) throw new Error('expected a pending registration');
+    expect(result.dev_code).toMatch(/^\d{6}$/);
+
+    // ADR 0037: the account is a registration, not a login.
+    expect(repository.users).toHaveLength(0);
+    expect(repository.roles).toHaveLength(0);
+    expect(repository.consents).toHaveLength(0);
+    expect(repository.sessions).toHaveLength(0);
+
+    const stored = repository.otpRequests[0];
+    expect(stored).toMatchObject({ email: GOOGLE_EMAIL, purpose: 'register' });
+    expect(stored?.codeHash).toBe(hashOtpCode(result.dev_code ?? '', GOOGLE_EMAIL));
+    expect(stored?.metadata).toMatchObject({
+      provider: 'google',
+      google_sub: 'google-sub-new',
+      name: null,
+      phone: null
+    });
+    expect(stored?.metadata).not.toHaveProperty('password_hash');
+    expect(mailer.sent[0]).toMatchObject({ to: GOOGLE_EMAIL, purpose: 'register' });
   });
 
   it('links an existing email account instead of creating a duplicate', async () => {
@@ -2478,7 +2494,7 @@ describe('AuthService.loginWithGoogle', () => {
     expect(repository.consents).toHaveLength(0);
   });
 
-  it('records ToS and privacy consent for a new Google account', async () => {
+  it('stores ToS and privacy consent in the pending registration metadata', async () => {
     const verifier = verifierWith({
       sub: 'google-sub-with-consent',
       email: GOOGLE_EMAIL,
@@ -2486,19 +2502,77 @@ describe('AuthService.loginWithGoogle', () => {
     });
     const { repository, service } = makeHarness({ googleVerifier: verifier });
 
-    const result = sessionOf(
-      await service.loginWithGoogle({
-        id_token: 'google-id-token',
-        consent: CONSENT,
+    const result = await service.loginWithGoogle({
+      id_token: 'google-id-token',
+      consent: CONSENT,
+      ip: '203.0.113.9',
+      userAgent: 'vitest'
+    });
+    expect('verification_required' in result).toBe(true);
+
+    const metadata = repository.otpRequests[0]?.metadata as {
+      consents: Array<Record<string, unknown>>;
+    };
+    expect(metadata.consents).toEqual([
+      {
+        policy_code: 'tos',
+        policy_version_id: TOS_VERSION_ID,
+        accepted_at: expect.any(String),
         ip: '203.0.113.9',
-        userAgent: 'vitest'
+        user_agent: 'vitest'
+      },
+      {
+        policy_code: 'privacy',
+        policy_version_id: PRIVACY_VERSION_ID,
+        accepted_at: expect.any(String),
+        ip: '203.0.113.9',
+        user_agent: 'vitest'
+      }
+    ]);
+    // Consent rows are written with the user, i.e. after the email is proven.
+    expect(repository.consents).toHaveLength(0);
+    expect(repository.sessions).toHaveLength(0);
+  });
+
+  it('creates the verified Google customer when the email code is submitted', async () => {
+    const verifier = verifierWith({
+      sub: 'google-sub-verify',
+      email: GOOGLE_EMAIL,
+      emailVerified: true
+    });
+    const { repository, service } = makeHarness({ googleVerifier: verifier });
+
+    const pending = await service.loginWithGoogle({
+      id_token: 'google-id-token',
+      consent: CONSENT,
+      ip: '203.0.113.9',
+      userAgent: 'vitest'
+    });
+    if (!('verification_required' in pending)) {
+      throw new Error(`expected a pending registration, got ${JSON.stringify(pending)}`);
+    }
+
+    const result = sessionOf(
+      await service.verifyRegistration({
+        email: GOOGLE_EMAIL,
+        code: pending.dev_code ?? '',
+        ip: '203.0.113.9'
       })
     );
     const claims = verifyAccessToken(result.access_token, SECRET);
+    const stored = repository.users[0];
 
-    expect(result.user.roles).toEqual(['customer']);
-    expect(claims.sub).toBe(repository.users[0]?.id);
-    expect(repository.sessions).toHaveLength(1);
+    expect(stored).toMatchObject({
+      email: GOOGLE_EMAIL,
+      googleSub: 'google-sub-verify',
+      passwordHash: null,
+      name: null,
+      phone: null
+    });
+    expect(stored?.emailVerifiedAt).not.toBeNull();
+    // A Google account never gains a password through verification.
+    expect(repository.passwordUpdatedAt.has(stored?.id ?? '')).toBe(false);
+    expect(repository.roles).toEqual([{ userId: stored?.id, role: 'customer' }]);
     expect(repository.consents).toEqual([
       {
         policyCode: 'tos',
@@ -2515,6 +2589,66 @@ describe('AuthService.loginWithGoogle', () => {
         userAgent: 'vitest'
       }
     ]);
+    expect(result.user.roles).toEqual(['customer']);
+    expect(result.user.email).toBe(GOOGLE_EMAIL);
+    expect(result.user.phone).toBeNull();
+    expect(claims.roles).toEqual(['customer']);
+    expect(repository.sessions).toHaveLength(1);
+    expect(repository.otpRequests[0]?.consumedAt).not.toBeNull();
+  });
+
+  it('rejects pending Google metadata without a google_sub', async () => {
+    const verifier = verifierWith({
+      sub: 'google-sub-broken',
+      email: GOOGLE_EMAIL,
+      emailVerified: true
+    });
+    const { repository, service } = makeHarness({ googleVerifier: verifier });
+
+    const pending = await service.loginWithGoogle({ id_token: 'google-id-token', consent: CONSENT });
+    if (!('verification_required' in pending)) throw new Error('expected a pending registration');
+    const row = repository.otpRequests[0];
+    if (!row) throw new Error('expected the pending registration row');
+    const metadata = row.metadata as Record<string, unknown>;
+    (row as { metadata: Record<string, unknown> }).metadata = {
+      ...metadata,
+      google_sub: null
+    };
+
+    await expect(
+      service.verifyRegistration({ email: GOOGLE_EMAIL, code: pending.dev_code ?? '' })
+    ).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: 'Data pendaftaran tidak valid. Ulangi pendaftaran.'
+    });
+    expect(repository.users).toHaveLength(0);
+  });
+
+  it('rejects pending Google metadata that also carries a password hash', async () => {
+    const verifier = verifierWith({
+      sub: 'google-sub-with-password',
+      email: GOOGLE_EMAIL,
+      emailVerified: true
+    });
+    const { repository, service } = makeHarness({ googleVerifier: verifier });
+
+    const pending = await service.loginWithGoogle({ id_token: 'google-id-token', consent: CONSENT });
+    if (!('verification_required' in pending)) throw new Error('expected a pending registration');
+    const row = repository.otpRequests[0];
+    if (!row) throw new Error('expected the pending registration row');
+    const metadata = row.metadata as Record<string, unknown>;
+    (row as { metadata: Record<string, unknown> }).metadata = {
+      ...metadata,
+      password_hash: 'scrypt$16384$00$00'
+    };
+
+    await expect(
+      service.verifyRegistration({ email: GOOGLE_EMAIL, code: pending.dev_code ?? '' })
+    ).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: 'Data pendaftaran tidak valid. Ulangi pendaftaran.'
+    });
+    expect(repository.users).toHaveLength(0);
   });
 
   it('logs in an existing Google account without consent', async () => {

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:google_sign_in/google_sign_in.dart';
 
 /// Google Sign-In untuk aplikasi pelanggan.
@@ -18,9 +19,17 @@ class GoogleAuth {
 
   /// Tombol Google hanya ditampilkan kalau build tahu client ID-nya.
   static bool get isConfigured =>
-      _clientId.isNotEmpty || _serverClientId.isNotEmpty;
+      tokenOverride != null ||
+      _clientId.isNotEmpty ||
+      _serverClientId.isNotEmpty;
 
   static bool _initialized = false;
+
+  /// Test seam only: a fake token source lets widget tests exercise the real
+  /// Google button and its navigation without a Google Cloud client. Never set
+  /// by app code, so a shipped build keeps using the plugin.
+  @visibleForTesting
+  static Future<String?> Function()? tokenOverride;
 
   /// Inisialisasi sekali. Web membutuhkannya sebelum tombol GIS dirender.
   static Future<void> ensureInitialized() async {
@@ -36,6 +45,8 @@ class GoogleAuth {
   /// Hanya untuk platform non-web: web memakai tombol GIS resmi.
   /// Melempar [GoogleSignInException] saat pengguna membatalkan.
   static Future<String?> idToken() async {
+    final override = tokenOverride;
+    if (override != null) return override();
     await ensureInitialized();
     try {
       final account = await GoogleSignIn.instance.authenticate();

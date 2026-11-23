@@ -2,6 +2,7 @@ import { AppError } from '@tarlink/core/errors';
 import type {
   ChatMessagePage,
   ChatMessageView,
+  ChatReadReceipt,
   ChatRole,
   ListChatMessagesQuery
 } from './chat.contracts';
@@ -120,5 +121,33 @@ export class ChatService {
       body
     });
     return toChatMessageView(row);
+  }
+
+  /**
+   * Tanda baca memakai otorisasi yang sama persis dengan `list`: `resolveRole`
+   * adalah satu-satunya jalur yang memutuskan siapa boleh menyentuh thread ini.
+   *
+   * Peran `admin` tidak pernah menulis tanda baca: `read_at` tidak bisa diubah
+   * setelah terisi (trigger migrasi 039), jadi admin yang membuka thread akan
+   * memalsukan "sudah dibaca" untuk pelanggan dan vendor sekaligus. Resepnya
+   * tetap 200 dengan daftar kosong supaya klien admin tidak perlu berubah.
+   *
+   * `now` bisa diinjeksi supaya test deterministik; produksi memakai jam proses,
+   * bukan `now()` SQL, sehingga nilai yang dikembalikan sama dengan yang ditulis.
+   */
+  async markRead(
+    bookingId: string,
+    user: ChatUser,
+    now: Date = new Date()
+  ): Promise<ChatReadReceipt> {
+    const role = await this.resolveRole(bookingId, user);
+    if (role === 'admin') {
+      return { read_ids: [], read_at: now.toISOString() };
+    }
+    const result = await this.repository.markRead(bookingId, user.id, now);
+    return {
+      read_ids: result.read_ids,
+      read_at: result.read_at.toISOString()
+    };
   }
 }

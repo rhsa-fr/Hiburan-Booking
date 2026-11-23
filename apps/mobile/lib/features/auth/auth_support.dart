@@ -644,9 +644,84 @@ class _AuthBackChip extends StatelessWidget {
   }
 }
 
+/// What `POST /auth/google` answered: a usable session, or a pending Google
+/// registration waiting for the emailed code (ADR 0037). The widgets route on
+/// this instead of reading the raw map.
+sealed class GoogleAuthOutcome {
+  const GoogleAuthOutcome();
+}
+
+/// Known account (or a Google account just linked to one): the server sent the
+/// usual session payload, already unwrapped from the `{ data: … }` envelope.
+final class GoogleSession extends GoogleAuthOutcome {
+  const GoogleSession(this.payload);
+
+  final Map<String, dynamic> payload;
+}
+
+/// First-time Google sign-up: no session yet. `POST /auth/register/verify`
+/// with [email] and the emailed code creates the account and returns one.
+final class GoogleVerificationRequired extends GoogleAuthOutcome {
+  const GoogleVerificationRequired({
+    required this.email,
+    this.expiresIn,
+    this.devCode,
+  });
+
+  final String email;
+  final int? expiresIn;
+
+  /// Only present on a development server (`OTP_DEV_MODE`).
+  final String? devCode;
+}
+
+/// Parses the `/auth/google` payload. Anything that is neither a session nor a
+/// pending registration is rejected here, so a half-answer never becomes an
+/// empty session on the client.
+GoogleAuthOutcome parseGoogleAuthResponse(dynamic payload) {
+  final data = payload is Map ? payload.cast<String, dynamic>() : null;
+  if (data == null) {
+    throw const ApiException(
+      code: 'INTERNAL_ERROR',
+      message: 'Respons masuk tidak lengkap.',
+    );
+  }
+
+  if (data['verification_required'] == true) {
+    final email = data['email'];
+    if (email is! String || email.isEmpty) {
+      throw const ApiException(
+        code: 'INTERNAL_ERROR',
+        message: 'Respons pendaftaran tanpa email.',
+      );
+    }
+    final expiresIn = data['expires_in'];
+    final devCode = data['dev_code'];
+    return GoogleVerificationRequired(
+      email: email,
+      expiresIn: expiresIn is num ? expiresIn.toInt() : null,
+      devCode: devCode is String && devCode.isNotEmpty ? devCode : null,
+    );
+  }
+
+  if (data['access_token'] is! String) {
+    throw const ApiException(
+      code: 'INTERNAL_ERROR',
+      message: 'Respons masuk tidak lengkap.',
+    );
+  }
+  return GoogleSession(data);
+}
+
 /// Exchanges a Google ID token for a Tarlink session. Both auth screens use it;
 /// the caller decides where to navigate once it returns.
-Future<void> finishGoogleSignIn(BuildContext context, String idToken) async {
+///
+/// A pending registration carries no token, so nothing is persisted here: the
+/// caller must open the email code screen and let that screen sign in.
+Future<GoogleAuthOutcome> finishGoogleSignIn(
+  BuildContext context,
+  String idToken,
+) async {
   final scope = AppScope.of(context);
   final policies = await Future.wait([
     scope.api.get('/policies/tos', auth: false),
@@ -669,14 +744,11 @@ Future<void> finishGoogleSignIn(BuildContext context, String idToken) async {
       'consent': {'tos_version_id': tosId, 'privacy_version_id': privacyId},
     },
   );
-  final data = payload is Map ? payload.cast<String, dynamic>() : null;
-  if (data == null || data['access_token'] is! String) {
-    throw const ApiException(
-      code: 'INTERNAL_ERROR',
-      message: 'Respons masuk tidak lengkap.',
-    );
+  final outcome = parseGoogleAuthResponse(payload);
+  if (outcome is GoogleSession) {
+    await scope.session.signIn(outcome.payload);
   }
-  await scope.session.signIn(data);
+  return outcome;
 }
 
 /// Keeps the provider's failure code visible during QA instead of hiding every

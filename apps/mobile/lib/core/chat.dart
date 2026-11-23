@@ -7,6 +7,7 @@ class ChatMessage {
     required this.senderRole,
     required this.body,
     required this.createdAt,
+    this.readAt,
   });
 
   final String id;
@@ -17,6 +18,21 @@ class ChatMessage {
   final String senderRole;
   final String body;
   final DateTime createdAt;
+
+  /// When the other party read this message; `null` means it is still unread
+  /// (or the row predates read receipts).
+  final DateTime? readAt;
+
+  /// Same message with a read receipt attached. Only [readAt] changes.
+  ChatMessage withReadAt(DateTime readAt) => ChatMessage(
+    id: id,
+    bookingId: bookingId,
+    senderId: senderId,
+    senderRole: senderRole,
+    body: body,
+    createdAt: createdAt,
+    readAt: readAt,
+  );
 
   static ChatMessage? fromJson(Map<String, dynamic> json) {
     final id = json['id'];
@@ -33,6 +49,10 @@ class ChatMessage {
     }
     final createdAt = DateTime.tryParse('${json['created_at'] ?? ''}');
     if (createdAt == null) return null;
+    // Read receipts are cosmetic here: a missing or malformed `read_at` only
+    // means "unread", it must never drop the message itself.
+    final readAtRaw = json['read_at'];
+    final readAt = readAtRaw is String ? DateTime.tryParse(readAtRaw) : null;
     return ChatMessage(
       id: id,
       bookingId: bookingId,
@@ -40,6 +60,7 @@ class ChatMessage {
       senderRole: senderRole,
       body: body,
       createdAt: createdAt.toLocal(),
+      readAt: readAt?.toLocal(),
     );
   }
 

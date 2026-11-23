@@ -10,6 +10,8 @@ interface BookingCheckRow {
   customer_id: string;
   vendor_id: string;
   lifecycle_status: string;
+  /** Nullable only when the vendor row is missing; the guard is skipped then. */
+  vendor_owner_id: string | null;
 }
 
 interface ReviewDbRow {
@@ -39,9 +41,14 @@ export class ReviewService {
     comment?: string | null
   ): Promise<ReviewResult> {
     const bookingRows = await query<BookingCheckRow>(
-      `SELECT id, customer_id, vendor_id, lifecycle_status::text AS lifecycle_status
-         FROM bookings
-        WHERE id = $1::uuid`,
+      `SELECT b.id,
+              b.customer_id,
+              b.vendor_id,
+              b.lifecycle_status::text AS lifecycle_status,
+              v.owner_user_id AS vendor_owner_id
+         FROM bookings b
+         LEFT JOIN vendors v ON v.id = b.vendor_id
+        WHERE b.id = $1::uuid`,
       [bookingId]
     );
 
@@ -56,6 +63,16 @@ export class ReviewService {
 
     if (booking.lifecycle_status !== 'completed') {
       throw new AppError('CONFLICT', 'Hanya booking yang telah selesai yang dapat diulas');
+    }
+
+    // Migration 040 gives every vendor owner the customer role, so the booking
+    // check above no longer implies an independent reviewer. A self-review would
+    // feed `vendors.rating_sum`/`rating_count` and the public ranking.
+    if (booking.vendor_owner_id && booking.vendor_owner_id === customerId) {
+      throw new AppError(
+        'CONFLICT',
+        'Pemilik vendor tidak dapat mengulas vendornya sendiri'
+      );
     }
 
     const existingRows = await query<{ id: string }>(

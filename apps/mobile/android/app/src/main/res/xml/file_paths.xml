@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider hanya membuka cache/updates, tempat APK pembaruan ditulis
+     oleh AppUpdateService (Dart) sebelum diserahkan ke pemasang sistem. -->
+<paths>
+    <cache-path name="updates" path="updates/" />
+</paths>

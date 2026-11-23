@@ -164,6 +164,7 @@ class FakeRepository implements PaymentRepository {
       pricePackageIdr: 4_000_000n,
       serviceFeeIdr: 25_000n,
       totalCustomerIdr: 4_025_000n,
+      settlementOpensAt: null,
       ...overrides
     };
     this.bookings.set(booking.id, booking);
@@ -929,7 +930,8 @@ describe('createSettlementCharge', () => {
         dpAmountIdr: 1_200_000n,
         pricePackageIdr: 4_000_000n,
         serviceFeeIdr: 25_000n,
-        totalCustomerIdr: 4_025_000n
+        totalCustomerIdr: 4_025_000n,
+        settlementOpensAt: null
       });
 
       const result = await service.createSettlementCharge('booking-1', 'qris', { actorId: CUSTOMER });
@@ -951,7 +953,8 @@ describe('createSettlementCharge', () => {
         dpAmountIdr: 1_200_000n,
         pricePackageIdr: 4_000_000n,
         serviceFeeIdr: 25_000n,
-        totalCustomerIdr: 4_025_000n
+        totalCustomerIdr: 4_025_000n,
+        settlementOpensAt: null
       });
 
       await expect(
@@ -1039,6 +1042,97 @@ describe('createSettlementCharge', () => {
         idempotencyKey: 'idem-settle-0000000000000002'
       })
     ).rejects.toMatchObject({ code: 'IDEMPOTENCY_MISMATCH' });
+  });
+
+  describe('ADR 0038 settlement window (H-7)', () => {
+    /**
+     * Mirrors the SQL `(start_date - 7)::timestamp AT TIME ZONE 'Asia/Jakarta'`:
+     * calendar arithmetic on the DATE, then 00:00 WIB as an instant.
+     */
+    function opensAt(eventStartDate: string): Date {
+      const [year, month, day] = eventStartDate.split('-').map((part) => Number(part));
+      const wibMidnight = Date.UTC(year ?? 0, (month ?? 1) - 1, (day ?? 1) - 7);
+      return new Date(wibMidnight - 7 * 60 * 60 * 1000);
+    }
+
+    function settlementOpening(eventStartDate: string, now: Date) {
+      const context = setup({ now: () => now });
+      context.repository.seedBooking({
+        lifecycleStatus: 'confirmed',
+        paymentStatus: 'dp_paid',
+        totalCustomerIdr: 4_025_000n,
+        dpAmountIdr: 1_200_000n,
+        settlementOpensAt: opensAt(eventStartDate)
+      });
+      return context;
+    }
+
+    it('rejects 409 one minute before 00:00 WIB on H-7 with the WIB opening date', async () => {
+      // Event 2026-11-27 -> opens 2026-11-20 00:00 WIB = 2026-11-19T17:00:00Z.
+      const { service, repository } = settlementOpening(
+        '2026-11-27',
+        new Date('2026-11-19T16:59:00.000Z')
+      );
+
+      await expect(
+        service.createSettlementCharge('booking-1', 'qris', { actorId: CUSTOMER })
+      ).rejects.toMatchObject({
+        code: 'CONFLICT',
+        status: 409,
+        message: 'Pelunasan dibuka 20 Nov 2026 (7 hari sebelum acara).'
+      });
+      expect(repository.payments.size).toBe(0);
+    });
+
+    it('allows the charge at exactly 00:00 WIB on H-7', async () => {
+      const { service, repository } = settlementOpening(
+        '2026-11-27',
+        new Date('2026-11-19T17:00:00.000Z')
+      );
+
+      const result = await service.createSettlementCharge('booking-1', 'qris', {
+        actorId: CUSTOMER
+      });
+
+      expect(result.kind).toBe('settlement');
+      expect(result.status).toBe('pending');
+      expect(repository.payments.size).toBe(1);
+    });
+
+    it('rejects a booking whose event is still months away', async () => {
+      // Event 2024-03-01 -> opens 2024-02-23 00:00 WIB = 2024-02-22T17:00:00Z.
+      const { service, repository } = settlementOpening(
+        '2024-03-01',
+        new Date('2024-01-01T00:00:00.000Z')
+      );
+
+      await expect(
+        service.createSettlementCharge('booking-1', 'qris', { actorId: CUSTOMER })
+      ).rejects.toMatchObject({
+        code: 'CONFLICT',
+        message: 'Pelunasan dibuka 23 Feb 2024 (7 hari sebelum acara).'
+      });
+      expect(repository.payments.size).toBe(0);
+    });
+
+    it('stays ungated when the booking has no event row (null)', async () => {
+      const { service, repository } = setup({
+        now: () => new Date('2024-01-01T00:00:00.000Z')
+      });
+      repository.seedBooking({
+        lifecycleStatus: 'confirmed',
+        paymentStatus: 'dp_paid',
+        totalCustomerIdr: 4_025_000n,
+        dpAmountIdr: 1_200_000n,
+        settlementOpensAt: null
+      });
+
+      const result = await service.createSettlementCharge('booking-1', 'qris', {
+        actorId: CUSTOMER
+      });
+      expect(result.status).toBe('pending');
+      expect(repository.payments.size).toBe(1);
+    });
   });
 
   describe('ownership', () => {

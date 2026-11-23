@@ -104,8 +104,14 @@ SLA laporan konten (`content_reports.escalated_at` + index), 031 banding takedow
 (`content_report_appeals`), 032 index `events.start_date` untuk pengingat H-7/H-1/hari-H,
 033 bukti berkas banding privat (`content_report_appeals.evidence_file_path`),
 034 clawback pasca-pencairan (`dispute_clawbacks` + enum `dispute_resolution.clawback`),
-035 index `bookings (vendor_id, released_at)` untuk ekspor pendapatan vendor.
-Nomor berikutnya: `036`.
+035 index `bookings (vendor_id, released_at)` untuk ekspor pendapatan vendor,
+036 refund manual transfer bank (`payments.is_manual`, `transfer_ref`) untuk VA/Mandiri
+yang tidak bisa di-refund gateway, 037 OTP bertujuan + reset sandi
+(`otp_requests.purpose`/`metadata`, `password_reset_tokens`), 038 `device_tokens`
+untuk push FCM, 039 tanda baca chat (`chat_messages.read_at` + trigger
+`tarlink_chat_read_guard`), 040 backfill peran `customer` untuk seluruh pemilik/anggota
+vendor (dual role, ADR terkait "keluar mode vendor").
+Nomor berikutnya: `041`.
 
 ### 3.1 Moderasi media
 
@@ -170,12 +176,18 @@ vendor unggah → vendor_media (status=pending) → admin approve → kolom publ
 - Peserta ditentukan dari relasi booking (`customer_id`, pemilik/anggota aktif vendor),
   dengan admin sebagai jalur baca/tulis untuk sengketa. Peran di token tidak dipakai
   untuk menentukan sisi percakapan.
-- REST: `GET/POST /v1/bookings/:bookingId/chat/messages`; riwayat memakai cursor
-  `(created_at, id)`, bukan offset.
+- REST: `GET/POST /v1/bookings/:bookingId/chat/messages` plus
+  `POST .../chat/messages/read`; riwayat memakai cursor `(created_at, id)`, bukan offset.
 - Real-time: `WS /v1/chat/ws?token=…`. Trigger `AFTER INSERT` mengirim baris lengkap
   lewat `pg_notify('tarlink_chat', …)`; setiap instance API memegang satu koneksi
   `LISTEN` dan meneruskan ke socket yang berlangganan booking tersebut. Tidak ada
   Redis/broker tambahan. Pengiriman lewat REST juga memicu siaran yang sama.
+- Tanda baca (migrasi `039`): `chat_messages.read_at` diisi saat penerima membuka
+  thread, hanya untuk pesan pihak lain dan hanya sekali (trigger
+  `tarlink_chat_read_guard` menolak perubahan setelah terisi). Endpoint mengirim
+  `NOTIFY` bertipe `read` per batch **100 id** agar tetap di bawah batas payload
+  `pg_notify` 8000 byte; gateway meneruskan frame `read` sehingga pengirim dapat
+  mengubah centang satu menjadi centang dua.
 - Socket hanya boleh mengikuti maksimal 20 thread; reconnect klien diikuti muat ulang
   riwayat lewat REST.
 
@@ -319,6 +331,9 @@ ia memfinalkan jurnal dan status.
 - Tidak ada update/delete pada tabel jurnal (dijaga trigger DB).
 - Hanya satu baris `payments` berjenis `settlement` berstatus `pending`/`paid` per booking
   (migrasi 007).
+- Pelunasan hanya boleh dibuat setelah `settlement_available_at` (00:00 WIB pada
+  tanggal acara − 7 hari); sebelum itu `POST /payments/settlement` menjawab `409`
+  (ADR 0038).
 - Pelepasan hanya untuk `fully_paid`/`partially_refunded` + jendela sengketa lewat.
 
 ## 5. Komisi
@@ -340,8 +355,10 @@ untuk nilai ≥ Rp10 juta, 48 jam.
 1. `POST /auth/login` (email + password), `POST /auth/register`, atau OTP **email**
    (`POST /auth/otp/request` → `POST /auth/otp/verify`, ADR 0011). Email dikirim lewat
    port `Mailer` (`HttpMailer` bila `EMAIL_API_URL` diisi, `LoggingMailer` di dev).
-   Mobile saat ini memakai email + password; Login Google tersedia di API tetapi tidak
-   dipakai mobile.
+   Mobile memakai email + password **dan** Login Google. Akun Google **baru** tidak
+   langsung mendapat sesi: data diparkir di `otp_requests` (`purpose='register'`,
+   `provider='google'`, tanpa hash sandi) dan sesi terbit setelah
+   `POST /auth/register/verify` (ADR 0037). Akun Google lama tetap langsung login.
 2. Server membuat baris `sessions` dengan `jti` + refresh token opaque (disimpan
    sebagai `refresh_token_hash`). Respons login berisi `access_token` (15 menit) dan
    `refresh_token` (30 hari, `REFRESH_TTL_DAYS`).

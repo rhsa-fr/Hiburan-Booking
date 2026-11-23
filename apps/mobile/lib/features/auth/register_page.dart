@@ -234,10 +234,25 @@ class _RegisterPageState extends State<RegisterPage> {
     }
   }
 
+  /// Akun Google baru melewati layar kode email lebih dulu (ADR 0037): tanpa
+  /// sesi, `Routes.home` akan menampilkan akun yang belum ada.
   Future<void> _finishGoogleSignIn(String idToken) async {
-    await finishGoogleSignIn(context, idToken);
+    final outcome = await finishGoogleSignIn(context, idToken);
     if (!mounted) return;
-    Navigator.pushNamedAndRemoveUntil(context, Routes.home, (_) => false);
+    switch (outcome) {
+      case GoogleSession():
+        Navigator.pushNamedAndRemoveUntil(context, Routes.home, (_) => false);
+      case GoogleVerificationRequired(:final email, :final devCode):
+        Navigator.pushNamed(
+          context,
+          Routes.emailOtp,
+          arguments: EmailOtpArgs(
+            email: email,
+            mode: EmailOtpMode.register,
+            devCode: devCode,
+          ),
+        );
+    }
   }
 
   Widget _googleOption(TextTheme text) {
@@ -294,7 +309,15 @@ class _RegisterPageState extends State<RegisterPage> {
                     height: 18,
                   ),
                   const SizedBox(width: 10),
-                  const Text('Daftar dengan Google'),
+                  // Flexible: a fixed-height button must not clip the label when
+                  // the customer runs a large text scale.
+                  const Flexible(
+                    child: Text(
+                      'Daftar dengan Google',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
                 ],
               ),
       ),

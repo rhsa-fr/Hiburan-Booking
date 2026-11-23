@@ -11,7 +11,9 @@
  *   POST /v1/auth/password/forgot — public (always `{ sent: true }`)
  *   POST /v1/auth/password/verify — public (email code -> reset token)
  *   POST /v1/auth/password/reset  — public (reset token -> new password)
- *   POST /v1/auth/google       — public (Google ID token)
+ *   POST /v1/auth/google       — public (Google ID token; a new account is
+ *                                parked as `verification_required` pending an
+ *                                email code, ADR 0037)
  *   POST /v1/auth/2fa/verify   — public (challenge token + TOTP code)
  *   POST /v1/auth/2fa/backup-code — public (challenge token + backup code)
  *   POST /v1/auth/2fa/enroll   — public (enroll ticket -> secret)
@@ -52,6 +54,7 @@ import {
   type AccountDeletionResult,
   type CurrentUserResult,
   type ForgotPasswordResult,
+  type GoogleLoginResult,
   type LogoutResult,
   type MfaChallengeResult,
   type PasswordLoginResult,
@@ -432,7 +435,14 @@ export class AuthController {
     return { data: await this.auth.resetPassword(parsed.data) };
   }
 
-  /** Google Sign-In: exchanges a Google ID token for our access token. */
+  /**
+   * Google Sign-In: exchanges a Google ID token for our access token.
+   *
+   * A brand-new Google account has no session yet (ADR 0037): the response is
+   * `{ verification_required: true, email, expires_in, provider: 'google' }`
+   * and the client finishes at `POST /auth/register/verify`. Known accounts get
+   * the usual session or 2FA challenge.
+   */
   @Post('google')
   @HttpCode(200)
   async google(
@@ -440,7 +450,7 @@ export class AuthController {
     @Ip() ip: string,
     @Headers('user-agent') userAgent?: string,
     @Res({ passthrough: true }) res?: CookieResponse
-  ): Promise<{ data: PasswordLoginResult | LoginResponse }> {
+  ): Promise<{ data: GoogleLoginResult | LoginResponse }> {
     const parsed = GoogleBody.safeParse(body);
     if (!parsed.success) {
       throw new AppError('VALIDATION_ERROR', 'invalid Google sign-in request', parsed.error.issues);
@@ -448,6 +458,9 @@ export class AuthController {
     const { cookie, ...identity } = parsed.data;
 
     const result = await this.auth.loginWithGoogle({ ...identity, ip, userAgent });
+    // The pending registration carries no refresh token, so there is nothing to
+    // move into the cookie: it is returned exactly as the service built it.
+    if ('verification_required' in result) return { data: result };
     return { data: loginResponse(res, result, cookie === true) };
   }
 

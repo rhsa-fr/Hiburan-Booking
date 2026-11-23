@@ -96,6 +96,11 @@ export type BookingDetailRow = BookingRow & {
   event_notes: string | null;
   event_start_date: string | null;
   event_end_date: string | null;
+  /**
+   * ADR 0038: 00:00 WIB on `start_date - 7`, computed in SQL as a timestamptz.
+   * Null when the LEFT JOIN found no event row.
+   */
+  settlement_available_at: Date | null;
 };
 
 /** One page of the customer booking list; `total_count` is the unpaged count. */
@@ -605,7 +610,11 @@ export class BookingRepository {
               e.guest_estimate     AS event_guest_estimate,
               e.notes              AS event_notes,
               e.start_date::text   AS event_start_date,
-              e.end_date::text     AS event_end_date
+              e.end_date::text     AS event_end_date,
+              -- ADR 0038: subtract on the DATE itself, then pin 00:00 WIB.
+              -- timezone('Asia/Jakarta', e.start_date) would read the DATE as
+              -- UTC midnight and shift the day. NULL means "no settlement gate".
+              ((e.start_date - 7)::timestamp AT TIME ZONE 'Asia/Jakarta') AS settlement_available_at
          FROM bookings b
          LEFT JOIN vendors v  ON v.id = b.vendor_id
          LEFT JOIN users u    ON u.id = v.owner_user_id

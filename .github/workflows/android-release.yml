@@ -1,4 +1,4 @@
-name: android-release
+﻿name: android-release
 
 # Rilis APK Android ke GitHub Releases, dipecah per ABI supaya lebih ringan.
 #
@@ -100,6 +100,7 @@ jobs:
           FCM_APP_ID: ${{ vars.FCM_APP_ID }}
           FCM_MESSAGING_SENDER_ID: ${{ vars.FCM_MESSAGING_SENDER_ID }}
           FCM_PROJECT_ID: ${{ vars.FCM_PROJECT_ID }}
+          APP_UPDATE_MANIFEST_URL: ${{ vars.APP_UPDATE_MANIFEST_URL }}
         run: |
           flutter build apk --release --split-per-abi \
             --dart-define=API_BASE_URL="$API_BASE_URL" \
@@ -108,7 +109,8 @@ jobs:
             --dart-define=FCM_API_KEY="$FCM_API_KEY" \
             --dart-define=FCM_APP_ID="$FCM_APP_ID" \
             --dart-define=FCM_MESSAGING_SENDER_ID="$FCM_MESSAGING_SENDER_ID" \
-            --dart-define=FCM_PROJECT_ID="$FCM_PROJECT_ID"
+            --dart-define=FCM_PROJECT_ID="$FCM_PROJECT_ID" \
+            --dart-define=APP_UPDATE_MANIFEST_URL="$APP_UPDATE_MANIFEST_URL"
 
       - name: Siapkan nama berkas
         run: |
@@ -128,6 +130,74 @@ jobs:
           path: apps/mobile/tarlink-*.apk
           if-no-files-found: error
 
+      - name: Susun manifest pembaruan (latest.json)
+        if: (startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch') && vars.APP_UPDATE_BASE_URL != ''
+        run: |
+          VERSION_LINE=$(grep '^version:' pubspec.yaml | sed 's/version: //')
+          VERSION="${VERSION_LINE%%+*}"
+          BUILD="${VERSION_LINE#*+}"
+          if [ "$BUILD" = "$VERSION_LINE" ]; then
+            echo "::error::pubspec.yaml harus memakai format version: X.Y.Z+N"
+            exit 1
+          fi
+          node ../../scripts/publish-apk.mjs . \
+            --version "$VERSION" \
+            --build "$BUILD" \
+            --base-url "${{ vars.APP_UPDATE_BASE_URL }}" \
+            --notes "Tarlink $VERSION (build $BUILD)" \
+            --out latest.json
+
+      - name: Pastikan bucket Supabase ada
+        if: (startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch') && vars.APP_UPDATE_BASE_URL != ''
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_BUCKET: ${{ vars.APP_UPDATE_BUCKET }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "::warning::Service key belum diisi; bucket tidak diperiksa."
+            exit 0
+          fi
+          BUCKET="${SUPABASE_BUCKET:-app-releases}"
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            "$SUPABASE_URL/storage/v1/bucket/$BUCKET" \
+            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY")
+          if [ "$CODE" = "200" ]; then
+            echo "bucket $BUCKET sudah ada"
+            exit 0
+          fi
+          curl -fsS -X POST "$SUPABASE_URL/storage/v1/bucket" \
+            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"id\":\"$BUCKET\",\"name\":\"$BUCKET\",\"public\":true}" > /dev/null
+          echo "bucket $BUCKET dibuat (public)"
+
+      - name: Unggah APK + manifest ke Supabase Storage
+        if: (startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch') && vars.APP_UPDATE_BASE_URL != ''
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_BUCKET: ${{ vars.APP_UPDATE_BUCKET }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "::warning::SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY belum diisi; APK tetap tersedia di GitHub Release, manifest tidak diunggah."
+            exit 0
+          fi
+          BUCKET="${SUPABASE_BUCKET:-app-releases}"
+          for f in tarlink-*.apk latest.json; do
+            curl -fsS -X POST "$SUPABASE_URL/storage/v1/object/$BUCKET/$f" \
+              -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+              -H "x-upsert: true" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary "@$f" > /dev/null
+            echo "unggah $BUCKET/$f"
+          done
+          curl -fsS "${{ vars.APP_UPDATE_BASE_URL }}/latest.json" | head -c 400
+          echo
+
       - name: Buat GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
@@ -138,9 +208,9 @@ jobs:
           body: |
             APK Android Tarlink ${{ github.ref_name }}, dipecah per ABI.
 
-            - `arm64-v8a` — HP Android modern (pakai ini)
-            - `armeabi-v7a` — HP lama 32-bit
-            - `x86_64` — emulator
+            - `arm64-v8a` â€” HP Android modern (pakai ini)
+            - `armeabi-v7a` â€” HP lama 32-bit
+            - `x86_64` â€” emulator
 
             - API: `${{ vars.API_BASE_URL }}`
             - Commit: `${{ github.sha }}`
