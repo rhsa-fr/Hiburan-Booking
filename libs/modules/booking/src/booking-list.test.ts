@@ -110,6 +110,7 @@ function detailRow(overrides: Partial<BookingDetailRow> = {}): BookingDetailRow 
     event_notes: 'Datang sore',
     event_start_date: '2026-12-05',
     event_end_date: '2026-12-05',
+    settlement_available_at: null,
     ...overrides
   };
 }
@@ -341,5 +342,37 @@ describe('GET /bookings/:id detail', () => {
     await expect(service(repo).getById(BOOKING_ID, CUSTOMER)).rejects.toMatchObject({
       code: 'NOT_FOUND'
     });
+  });
+
+  it('exposes settlement_available_at as ISO-8601 UTC (ADR 0038)', async () => {
+    const repo = new FakeRepo();
+    repo.detail = detailRow({
+      payment_status: 'dp_paid',
+      event_start_date: '2026-11-27',
+      // Same instant the SQL expression derives for `start_date - 7` at 00:00 WIB.
+      settlement_available_at: new Date('2026-11-19T17:00:00.000Z')
+    });
+
+    const view = await service(repo).getById(BOOKING_ID, CUSTOMER);
+
+    expect(view.settlement_available_at).toBe('2026-11-19T17:00:00.000Z');
+    expect(view.event?.start_date).toBe('2026-11-27');
+  });
+
+  it('returns null settlement_available_at when the booking has no event row', async () => {
+    const repo = new FakeRepo();
+    repo.detail = detailRow({
+      event_title: null,
+      event_region_code: null,
+      event_venue_address: null,
+      event_start_date: null,
+      event_end_date: null,
+      settlement_available_at: null
+    });
+
+    const view = await service(repo).getById(BOOKING_ID, CUSTOMER);
+
+    expect(view.event).toBeNull();
+    expect(view.settlement_available_at).toBeNull();
   });
 });

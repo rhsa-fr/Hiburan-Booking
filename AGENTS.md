@@ -41,10 +41,12 @@ Sumber kebenaran adalah enum PostgreSQL di `db/migrations/001_core.sql`.
 ### Identitas & sesi
 - Token akses membawa `jti`. Refresh **merotasi** sesi: token lama harus 401.
 - Logout mencabut sesi berdasarkan `jti`, bukan sekadar menghapus token di klien.
-- Jangan menambahkan login yang tidak didukung backend. Dua jalur yang **ada**:
-  `POST /auth/login` (email + password) dan `POST /auth/otp/request` →
-  `POST /auth/otp/verify` (**kode dikirim ke email**, ADR 0011). Nomor WhatsApp hanya
-  data profil, bukan kanal OTP. Login Google **tidak** ditampilkan di mobile.
+- Jangan menambahkan login yang tidak didukung backend. Jalur yang **ada**:
+  `POST /auth/login` (email + password), `POST /auth/otp/request` →
+  `POST /auth/otp/verify` (**kode dikirim ke email**, ADR 0011), dan Login Google
+  (ADR 0022). Nomor WhatsApp hanya data profil, bukan kanal OTP. Akun Google **baru**
+  tidak langsung masuk: ia harus memverifikasi kode email lewat
+  `POST /auth/register/verify` (ADR 0037).
 
 ### Data pelanggan
 - Jangan merender data yang tidak ada di API (ulasan, jumlah respons fiktif,
@@ -326,6 +328,33 @@ Sudah diperbaiki (jangan dikembalikan tanpa keputusan tertulis):
   tidak ada PII dan tidak ada mutasi. Ambang ada di SQL (`ops.repository.ts`), label di
   `ops.alerts.ts` (unit test murni); dead letter/outbox yang menetap tetap perlu
   investigasi manual.
+
+Invarian baru (2026-11-23, jangan dikembalikan tanpa ADR):
+
+- **Timeline booking kanonik 4 langkah**: Booking dibuat → Vendor menerima →
+  Bayar DP/DP diterima → Acara. Judul "DP diterima" hanya boleh muncul saat
+  `payment_status` sudah lunas DP; jangan hardcode. Label status dipusatkan di
+  `booking_support.dart` (beranda, daftar, status memakai sumber yang sama).
+- **Setelah DP masuk**: tampilkan panel "Pembayaran DP diterima" (nominal, kode,
+  tanggal terkunci) yang harus ditutup pengguna; metode pelunasan **tidak pernah**
+  terbuka otomatis dan baru dirender setelah "Bayar pelunasan" ditekan.
+- **Pelunasan H-7** (ADR 0038): `GET /bookings/:id` mengirim
+  `settlement_available_at` (00:00 WIB, tanggal acara − 7); `POST /payments/settlement`
+  menolak `409` sebelum itu. Klien tidak menghitung H-7 sendiri; `null` = terbuka.
+  `no_show` tidak boleh menampilkan kartu pelunasan.
+- **Vendor dual role** (ADR 0039): setiap `vendor_owner`/`vendor_member` wajib punya
+  peran `customer`; onboarding approval dan `POST /admin/vendors` menulis keduanya,
+  migrasi `040` membackfill. Pemilik vendor tidak boleh mengulas vendornya sendiri.
+- **Chat read receipt** (ADR 0040): `chat_messages.read_at` hanya boleh diisi sekali
+  (trigger), endpoint `POST .../chat/messages/read`, notifikasi `read` dibatch 100 id,
+  admin tidak menandai dibaca. Mobile: centang satu = terkirim, dua = dibaca.
+- **Google sign-up** (ADR 0037): akun Google baru tidak langsung mendapat sesi; data
+  diparkir di `otp_requests` dan sesi terbit setelah `POST /auth/register/verify`.
+- **Update APK in-app** (ADR 0041): Android saja, manifest statis di Supabase Storage,
+  verifikasi SHA-256 sebelum intent install, nol dependency baru. Rilis tetap lewat CI;
+  `APP_UPDATE_MANIFEST_URL` kosong = fitur mati.
+- **Kepadatan checkout**: judul seksi `dense` 15,5; field 42–64; baris metode 46;
+  tombol aksi `dense` 46 (tap target 48). Jangan memakai skala hero di dalam form.
 
 Masih terbuka:
 

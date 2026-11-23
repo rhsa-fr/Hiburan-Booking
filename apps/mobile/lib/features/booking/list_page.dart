@@ -4,7 +4,6 @@ import '../../app/app.dart';
 import '../../app/routes.dart';
 import '../../app/theme.dart';
 import '../../core/api_exception.dart';
-import '../../core/format.dart';
 import '../../core/models.dart';
 import '../../core/ui.dart';
 import '../../core/widgets.dart';
@@ -19,14 +18,6 @@ enum _BookingFilter {
 
   final String label;
 }
-
-const _closedLifecycles = {
-  'completed',
-  'cancelled',
-  'canceled',
-  'rejected',
-  'expired',
-};
 
 /// Booking tab body, embedded by `AppShell`: no Scaffold, no bottom nav.
 /// The status segmented control filters the pages already loaded, because the
@@ -67,19 +58,11 @@ class _BookingListPageState extends State<BookingListPage> {
     _BookingFilter.all => _items,
     _BookingFilter.active =>
       _items
-          .where(
-            (booking) => !_closedLifecycles.contains(
-              booking.lifecycleStatus.toLowerCase(),
-            ),
-          )
+          .where((booking) => !isTerminalLifecycle(booking.lifecycleStatus))
           .toList(growable: false),
     _BookingFilter.done =>
       _items
-          .where(
-            (booking) => _closedLifecycles.contains(
-              booking.lifecycleStatus.toLowerCase(),
-            ),
-          )
+          .where((booking) => isTerminalLifecycle(booking.lifecycleStatus))
           .toList(growable: false),
   };
 
@@ -313,30 +296,20 @@ class _BookingCard extends StatelessWidget {
     final lifecycle = booking.lifecycleStatus.toLowerCase();
     final fullyPaid = isFullySettled(booking.paymentStatus);
     final refunded = booking.paymentStatus.toLowerCase() == 'refunded';
-    final closed =
-        _closedLifecycles.contains(lifecycle) && lifecycle != 'completed';
+    final closed = isTerminalLifecycle(lifecycle) && lifecycle != 'completed';
+    final summary = bookingMoneySummary(
+      lifecycleStatus: booking.lifecycleStatus,
+      paymentStatus: booking.paymentStatus,
+      totalCustomerIdr: booking.totalCustomerIdr,
+      dpAmountIdr: booking.dpAmountIdr,
+      outstandingIdr: booking.outstandingIdr,
+    );
 
-    final ({String label, Color color}) money = fullyPaid
-        ? (label: 'Lunas', color: AppColors.accent)
-        : refunded
-        ? (label: 'Dikembalikan', color: AppColors.inkMuted)
-        : closed
-        ? (label: 'Tidak ditagih', color: AppColors.inkMuted)
-        : (
-            label: 'Sisa ${rupiah(booking.outstandingIdr)}',
-            color: AppColors.ink,
-          );
-
-    final detail = fullyPaid
-        ? 'Dibayar ${rupiah(booking.totalCustomerIdr)} · '
-              'Sisa ${rupiah(booking.outstandingIdr)}'
-        : refunded
-        ? 'Dana sudah dikembalikan'
-        : closed
-        ? 'Tidak ada tagihan'
-        : isDpSettled(booking.paymentStatus)
-        ? 'DP ${rupiah(booking.dpAmountIdr)}'
-        : 'Belum ada pembayaran';
+    final Color moneyColor = fullyPaid
+        ? AppColors.accent
+        : refunded || closed
+        ? AppColors.inkMuted
+        : AppColors.ink;
 
     return Container(
       decoration: BoxDecoration(
@@ -441,7 +414,7 @@ class _BookingCard extends StatelessWidget {
                           children: [
                             Expanded(
                               child: Text(
-                                detail,
+                                summary.detail,
                                 style: text.bodySmall,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
@@ -449,11 +422,11 @@ class _BookingCard extends StatelessWidget {
                             ),
                             const SizedBox(width: Sp.sm),
                             Text(
-                              money.label,
+                              summary.label,
                               style: text.titleMedium?.copyWith(
                                 fontSize: 15,
                                 fontWeight: FontWeight.w800,
-                                color: money.color,
+                                color: moneyColor,
                                 fontFeatures: const [
                                   FontFeature.tabularFigures(),
                                 ],

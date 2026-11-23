@@ -166,6 +166,11 @@ export interface BookingEventView {
 /** GET /bookings/:id: additive fields on top of the existing detail shape. */
 export interface BookingDetailView extends BookingView {
   outstanding_idr: number;
+  /**
+   * ADR 0038: ISO-8601 UTC instant when the settlement charge opens (00:00 WIB
+   * on H-7). Null when the booking has no event row.
+   */
+  settlement_available_at: string | null;
   vendor: BookingVendorView | null;
   package: BookingPackageView | null;
   event: BookingEventView | null;
@@ -1564,6 +1569,7 @@ export class BookingService {
         row.total_customer_idr,
         row.dp_amount_idr
       ),
+      settlement_available_at: iso(row.settlement_available_at),
       vendor:
         row.vendor_slug === null || row.vendor_display_name === null
           ? null

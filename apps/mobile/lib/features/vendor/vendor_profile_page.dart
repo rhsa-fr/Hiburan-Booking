@@ -27,6 +27,7 @@ class _VendorProfilePageState extends State<VendorProfilePage> {
   Map<String, dynamic>? _me;
   Map<String, dynamic>? _public;
   int _completed = 0;
+  bool _signingOut = false;
 
   @override
   void initState() {
@@ -181,6 +182,75 @@ class _VendorProfilePageState extends State<VendorProfilePage> {
     );
     if (confirmed != true || !mounted) return;
     Navigator.pushNamedAndRemoveUntil(context, Routes.home, (_) => false);
+  }
+
+  /// Same sequence as the account screen: revoke best effort, always clear the
+  /// local session, then land on Login with the stack cleared.
+  Future<void> _confirmSignOut() async {
+    if (_signingOut) return;
+    final confirmed = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: VendorColors.cardWhite,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(14)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 16, 18, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Keluar dari akun?',
+                style: vendorText(
+                  size: 16,
+                  weight: FontWeight.w800,
+                  color: VendorColors.danger,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Sesi di perangkat ini akan diakhiri, jadi kamu perlu masuk lagi '
+                'untuk membuka mode vendor maupun aplikasi pelanggan. Data dan '
+                'booking tetap tersimpan di server.',
+                style: vendorText(
+                  size: 12.5,
+                  color: VendorColors.muted,
+                  height: 1.5,
+                ),
+              ),
+              const SizedBox(height: VendorSp.lg),
+              VendorButton(
+                label: 'Ya, keluar akun',
+                onPressed: () => Navigator.pop(sheetContext, true),
+              ),
+              const SizedBox(height: VendorSp.sm),
+              VendorButton(
+                label: 'Batal',
+                kind: VendorButtonKind.secondary,
+                onPressed: () => Navigator.pop(sheetContext, false),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final scope = AppScope.of(context);
+    setState(() => _signingOut = true);
+    // Delete the FCM row before revoking the session: after logout the access
+    // token is dead and the device would keep receiving the old account's push.
+    await scope.push?.stop();
+    try {
+      await scope.api.post('/auth/logout');
+    } on ApiException {
+      // Revocation is best effort; the local session must go either way.
+    }
+    await scope.session.signOut();
+    if (!mounted) return;
+    Navigator.pushNamedAndRemoveUntil(context, Routes.login, (_) => false);
   }
 
   @override
@@ -387,12 +457,25 @@ class _VendorProfilePageState extends State<VendorProfilePage> {
           const VendorSectionTitle(label: 'Sesi'),
           VendorCard(
             padding: EdgeInsets.zero,
-            child: _InfoRow(
-              title: 'Keluar mode vendor',
-              subtitle: 'Kembali ke aplikasi pelanggan',
-              trailingIcon: Icons.logout,
-              onTap: _leaveVendorMode,
-              showDivider: false,
+            child: Column(
+              children: [
+                _InfoRow(
+                  title: 'Keluar mode vendor',
+                  subtitle: 'Kembali ke aplikasi pelanggan',
+                  trailingIcon: Icons.logout,
+                  onTap: _leaveVendorMode,
+                ),
+                _InfoRow(
+                  title: 'Keluar akun',
+                  subtitle: _signingOut
+                      ? 'Mengakhiri sesi…'
+                      : 'Akhiri sesi di perangkat ini',
+                  trailingIcon: Icons.power_settings_new_rounded,
+                  onTap: _signingOut ? null : _confirmSignOut,
+                  danger: true,
+                  showDivider: false,
+                ),
+              ],
             ),
           ),
           const SizedBox(height: VendorSp.md),
@@ -643,6 +726,7 @@ class _InfoRow extends StatelessWidget {
     this.onTap,
     this.trailingIcon = Icons.chevron_right,
     this.showDivider = true,
+    this.danger = false,
   });
 
   final String title;
@@ -650,9 +734,11 @@ class _InfoRow extends StatelessWidget {
   final VoidCallback? onTap;
   final IconData trailingIcon;
   final bool showDivider;
+  final bool danger;
 
   @override
   Widget build(BuildContext context) {
+    final accent = danger ? VendorColors.danger : VendorColors.ink;
     final content = Padding(
       padding: const EdgeInsets.fromLTRB(14, 11, 14, 11),
       child: Row(
@@ -667,6 +753,7 @@ class _InfoRow extends StatelessWidget {
                     size: 12.5,
                     weight: FontWeight.w700,
                     letterSpacing: -0.1,
+                    color: accent,
                   ),
                 ),
                 const SizedBox(height: 2),
@@ -682,7 +769,11 @@ class _InfoRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: VendorSp.sm),
-          Icon(trailingIcon, size: 15, color: const Color(0xFF9AA1A9)),
+          Icon(
+            trailingIcon,
+            size: 15,
+            color: danger ? VendorColors.danger : const Color(0xFF9AA1A9),
+          ),
         ],
       ),
     );

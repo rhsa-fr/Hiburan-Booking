@@ -11,7 +11,9 @@
  *     five minutes; after `max_attempts` wrong guesses the request is locked;
  *   - password login works for every active account that has a password, and
  *     every rejection answers with one generic message;
- *   - public registration and Google sign-up create `customer` only;
+ *   - public registration and Google sign-up create `customer` only, and a
+ *     brand-new Google account is parked until its email code is verified
+ *     (ADR 0037) instead of receiving a session immediately;
  *   - the access token carries `{ sub, roles, jti }`; the `jti` is the matching
  *     `sessions` row, so logout and refresh act on exactly that session.
  *
@@ -201,6 +203,18 @@ export interface RegisterPendingResult {
   readonly expires_in: number;
   readonly dev_code?: string;
 }
+
+/**
+ * ADR 0037: `POST /auth/google` for a brand-new account answers with the same
+ * pending-registration shape as `register()`, plus the provider marker the
+ * client uses to open the email OTP screen.
+ */
+export interface GoogleRegisterPendingResult extends RegisterPendingResult {
+  readonly provider: 'google';
+}
+
+/** Google sign-in: a session for known accounts, a pending registration for new ones. */
+export type GoogleLoginResult = PasswordLoginResult | GoogleRegisterPendingResult;
 
 export interface RegisterVerifyInput {
   readonly email: string;
@@ -457,26 +471,81 @@ function constantTimeEquals(left: string, right: string): boolean {
 interface PendingRegistration {
   readonly name: string | null;
   readonly phone: string | null;
-  readonly passwordHash: string;
+  /** Null for a Google registration: that account never sets a password. */
+  readonly passwordHash: string | null;
+  /** Null for a password registration; set for a pending Google sign-up. */
+  readonly googleSub: string | null;
   readonly consents: NewUserConsent[];
+}
+
+/** `users.google_sub` is TEXT; anything longer is not an identity we produced. */
+const MAX_GOOGLE_SUB_LENGTH = 255;
+
+/** `otp_requests.metadata` copy of the consents; mirrors `readPendingRegistration`. */
+function serializeConsents(
+  consents: readonly NewUserConsent[]
+): Array<Record<string, unknown>> {
+  return consents.map((consent) => ({
+    policy_code: consent.policyCode,
+    policy_version_id: consent.policyVersionId,
+    accepted_at: consent.acceptedAt.toISOString(),
+    ip: consent.ip,
+    user_agent: consent.userAgent
+  }));
+}
+
+/** A password shape always carries a hash; the null branch is corrupt metadata. */
+function requirePendingPasswordHash(passwordHash: string | null): string {
+  if (passwordHash === null) {
+    throw new AppError('VALIDATION_ERROR', INVALID_PENDING_REGISTRATION);
+  }
+  return passwordHash;
 }
 
 /**
  * Reads the parked registration from `otp_requests.metadata`. The row is data,
  * not code, so every field is checked before it reaches `createUser`.
+ *
+ * Exactly two shapes are accepted (ADR 0036, ADR 0037):
+ *   - password registration: `password_hash` set, no `provider`/`google_sub`;
+ *   - Google registration: `provider: 'google'`, `google_sub` set, no password.
  */
 function readPendingRegistration(metadata: Record<string, unknown>): PendingRegistration {
   const invalid = (): AppError => new AppError('VALIDATION_ERROR', INVALID_PENDING_REGISTRATION);
 
   const name = metadata.name;
   const phone = metadata.phone;
+  const provider = metadata.provider;
+  const googleSub = metadata.google_sub;
   const passwordHash = metadata.password_hash;
   const consents = metadata.consents;
 
-  if (typeof passwordHash !== 'string' || passwordHash.length === 0) throw invalid();
+  if (provider !== undefined && provider !== null && provider !== 'google') throw invalid();
   if (name !== null && name !== undefined && typeof name !== 'string') throw invalid();
   if (phone !== null && phone !== undefined && typeof phone !== 'string') throw invalid();
   if (!Array.isArray(consents) || consents.length === 0) throw invalid();
+
+  let resolvedGoogleSub: string | null;
+  let resolvedPasswordHash: string | null;
+  if (provider === 'google') {
+    if (
+      typeof googleSub !== 'string' ||
+      googleSub.length === 0 ||
+      googleSub.length > MAX_GOOGLE_SUB_LENGTH
+    ) {
+      throw invalid();
+    }
+    // A Google account is password-less by construction; a hash here means the
+    // row was not written by either registration path.
+    if (passwordHash !== undefined && passwordHash !== null) throw invalid();
+    resolvedGoogleSub = googleSub;
+    resolvedPasswordHash = null;
+  } else {
+    if (googleSub !== undefined && googleSub !== null) throw invalid();
+    if (typeof passwordHash !== 'string' || passwordHash.length === 0) throw invalid();
+    resolvedGoogleSub = null;
+    resolvedPasswordHash = passwordHash;
+  }
 
   const parsed: NewUserConsent[] = [];
   for (const entry of consents) {
@@ -506,7 +575,8 @@ function readPendingRegistration(metadata: Record<string, unknown>): PendingRegi
   return {
     name: typeof name === 'string' ? name : null,
     phone: typeof phone === 'string' ? phone : null,
-    passwordHash,
+    passwordHash: resolvedPasswordHash,
+    googleSub: resolvedGoogleSub,
     consents: parsed
   };
 }
@@ -714,13 +784,7 @@ export class AuthService {
       name: input.full_name?.trim() || null,
       phone,
       password_hash: passwordHash,
-      consents: consents.map((consent) => ({
-        policy_code: consent.policyCode,
-        policy_version_id: consent.policyVersionId,
-        accepted_at: consent.acceptedAt.toISOString(),
-        ip: consent.ip,
-        user_agent: consent.userAgent
-      }))
+      consents: serializeConsents(consents)
     };
 
     const { code, expiresIn } = await this.sendOtp(email, 'register', metadata, input.ip, now);
@@ -737,6 +801,10 @@ export class AuthService {
    * Step 2 of 2: the code proves the address, so the user, its consents and the
    * `customer` role are written now. The request is consumed atomically, which
    * makes a replay of the same code fail even under concurrency.
+   *
+   * Two pending shapes land here: a password registration (ADR 0036) and a
+   * first-time Google sign-up (ADR 0037); the latter creates a password-less
+   * account bound to its Google sub.
    */
   async verifyRegistration(input: RegisterVerifyInput): Promise<PasswordLoginResult> {
     const email = normalizeEmail(input.email);
@@ -745,18 +813,31 @@ export class AuthService {
     const request = await this.consumeOtpCode(email, 'register', input.code, now);
     const pending = readPendingRegistration(request.metadata);
 
-    const newUser: NewUser = {
-      id: this.newId(),
-      phone: pending.phone,
-      email,
-      name: pending.name,
-      passwordHash: pending.passwordHash,
-      passwordUpdatedAt: now,
-      googleSub: null,
-      // The OTP was delivered to this address, so it is verified from birth.
-      emailVerifiedAt: now,
-      consents: pending.consents
-    };
+    const newUser: NewUser =
+      pending.googleSub !== null
+        ? {
+            id: this.newId(),
+            phone: pending.phone,
+            email,
+            name: pending.name,
+            passwordHash: null,
+            passwordUpdatedAt: null,
+            googleSub: pending.googleSub,
+            // The OTP was delivered to this address, so it is verified from birth.
+            emailVerifiedAt: now,
+            consents: pending.consents
+          }
+        : {
+            id: this.newId(),
+            phone: pending.phone,
+            email,
+            name: pending.name,
+            passwordHash: requirePendingPasswordHash(pending.passwordHash),
+            passwordUpdatedAt: now,
+            googleSub: null,
+            emailVerifiedAt: now,
+            consents: pending.consents
+          };
 
     const user = await this.repository.createUser(newUser);
     const roles = await this.repository.listActiveRoles(user.id);
@@ -1093,8 +1174,13 @@ export class AuthService {
   /**
    * Google Sign-In. The ID token is verified server-side by the injected
    * verifier; this module never trusts claims decoded by the client.
+   *
+   * A known `google_sub` logs in, and an existing email is linked and logged in
+   * as before. A brand-new account is a registration (ADR 0037): nothing is
+   * written to `users` until the emailed code proves the mailbox, so this
+   * returns the pending shape `register()` returns.
    */
-  async loginWithGoogle(input: GoogleLoginInput): Promise<PasswordLoginResult> {
+  async loginWithGoogle(input: GoogleLoginInput): Promise<GoogleLoginResult> {
     if (!this.googleVerifier) {
       throw new AppError('UPSTREAM_ERROR', 'Google Sign-In belum dikonfigurasi');
     }
@@ -1119,26 +1205,36 @@ export class AuthService {
           input.userAgent ?? null,
           now
         );
-        try {
-          user = await this.repository.createUser({
-            id: this.newId(),
-            phone: null,
-            email,
-            name: null,
-            passwordHash: null,
-            passwordUpdatedAt: null,
-            googleSub: identity.sub,
-            emailVerifiedAt: now,
-            consents
-          });
-        } catch (err) {
-          // Email/phone already used by an account we could not load (e.g.
-          // suspended). Do not leak that state through a different status.
-          if (err instanceof AppError && err.code === 'CONFLICT') {
-            throw new AppError('UNAUTHENTICATED', 'Google sign-in tidak valid');
-          }
-          throw err;
-        }
+
+        // ADR 0037: park the pending registration in the same `register` OTP
+        // row the email flow uses, then let `/auth/register/verify` create the
+        // user. Sharing `sendOtp` keeps the per-email/per-IP quota in force.
+        await this.assertOtpQuota(email, input.ip ?? null, now);
+
+        const metadata = {
+          provider: 'google',
+          google_sub: identity.sub,
+          name: null,
+          phone: null,
+          // No password: the account signs in with Google only.
+          consents: serializeConsents(consents)
+        };
+
+        const { code, expiresIn } = await this.sendOtp(
+          email,
+          'register',
+          metadata,
+          input.ip,
+          now
+        );
+
+        return {
+          verification_required: true,
+          email,
+          expires_in: expiresIn,
+          provider: 'google',
+          ...this.devCode(code)
+        };
       }
     }
 

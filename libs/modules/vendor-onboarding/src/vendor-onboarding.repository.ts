@@ -273,6 +273,18 @@ export class VendorOnboardingRepository {
       [current.user_id, vendor.id, input.actorId]
     );
 
+    // A vendor owner must still be able to use the customer app ("Keluar mode
+    // vendor" opens bookings/favorites/chat, which require `customer`). Granted
+    // in the same transaction so approval never leaves the account without it;
+    // an existing row is kept as-is, a revoked one is restored (migration 040).
+    await client.query(
+      `INSERT INTO user_roles (user_id, role, vendor_id, vendor_scope)
+       VALUES ($1, 'customer', NULL, '00000000-0000-0000-0000-000000000000')
+       ON CONFLICT (user_id, role, vendor_scope)
+       DO UPDATE SET revoked_at = NULL WHERE user_roles.revoked_at IS NOT NULL`,
+      [current.user_id]
+    );
+
     const updated = await client.query<ApplicationRow>(
       `UPDATE vendor_applications
           SET status = 'approved',

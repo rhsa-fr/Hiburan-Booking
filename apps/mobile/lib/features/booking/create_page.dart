@@ -344,7 +344,9 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
         _addressSuggestion = suggestion;
         _locating = false;
         // A typed address always wins; only an empty field gets the coordinate.
-        if (_address.text.trim().isEmpty) _address.text = reading.coordinateText;
+        if (_address.text.trim().isEmpty) {
+          _address.text = reading.coordinateText;
+        }
       });
     } on GeoException catch (error) {
       if (!mounted) return;
@@ -591,37 +593,41 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
                       )
                     : _loadError != null
                     ? AppError(message: _loadError!, onRetry: _load)
-                    : Form(
-                        key: _formKey,
-                        autovalidateMode: AutovalidateMode.onUserInteraction,
-                        child: ListView(
-                          padding: const EdgeInsets.fromLTRB(
-                            Sp.lg,
-                            Sp.sm,
-                            Sp.lg,
-                            160,
-                          ),
-                          children: [
-                            _summaryStrip(text),
-                            const SizedBox(height: Sp.md),
-                            _eventBlock(text),
-                            const SizedBox(height: Sp.md),
-                            _locationBlock(text),
-                            const SizedBox(height: Sp.md),
-                            _packageBlock(text),
-                            const SizedBox(height: Sp.md),
-                            _moneyBlock(),
-                            if (_submitError != null) ...[
-                              const SizedBox(height: Sp.lg),
-                              Semantics(
-                                liveRegion: true,
-                                child: AppError(
-                                  message: _submitError!,
-                                  compact: true,
+                    : _compactFieldTheme(
+                        Form(
+                          key: _formKey,
+                          autovalidateMode: AutovalidateMode.onUserInteraction,
+                          child: ListView(
+                            // 120 clears the 46px submit bar (12 + 46 + 12) plus
+                            // a small gap once the list is scrolled to the end.
+                            padding: const EdgeInsets.fromLTRB(
+                              Sp.lg,
+                              Sp.sm,
+                              Sp.lg,
+                              120,
+                            ),
+                            children: [
+                              _summaryStrip(text),
+                              const SizedBox(height: Sp.md),
+                              _eventBlock(text),
+                              const SizedBox(height: Sp.md),
+                              _locationBlock(text),
+                              const SizedBox(height: Sp.md),
+                              _packageBlock(text),
+                              const SizedBox(height: Sp.md),
+                              _moneyBlock(),
+                              if (_submitError != null) ...[
+                                const SizedBox(height: Sp.lg),
+                                Semantics(
+                                  liveRegion: true,
+                                  child: AppError(
+                                    message: _submitError!,
+                                    compact: true,
+                                  ),
                                 ),
-                              ),
+                              ],
                             ],
-                          ],
+                          ),
                         ),
                       ),
               ),
@@ -636,9 +642,95 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
                 loadingLabel: 'Mengirim…',
                 loading: _submitting,
                 onPressed: _submit,
+                dense: true,
               ),
             )
           : null,
+    );
+  }
+
+  /// Compact form chrome for this screen only: dense fields (~42px single line,
+  /// ~64px two-line) with 12px radius and 12/10 padding. Colours, borders, and
+  /// error styling are copied from the global theme so the rest of the app keeps
+  /// its 52-56px fields.
+  Widget _compactFieldTheme(Widget child) {
+    final theme = Theme.of(context);
+    final label = theme.textTheme.labelMedium;
+    final radius = BorderRadius.circular(12);
+    OutlineInputBorder outline(Color color, [double width = 1]) =>
+        OutlineInputBorder(
+          borderRadius: radius,
+          borderSide: BorderSide(color: color, width: width),
+        );
+
+    return Theme(
+      data: theme.copyWith(
+        inputDecorationTheme: theme.inputDecorationTheme.copyWith(
+          isDense: true,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: Sp.md,
+            vertical: 10,
+          ),
+          labelStyle: label?.copyWith(fontSize: 12, color: AppColors.inkMuted),
+          floatingLabelStyle: label?.copyWith(
+            fontSize: 11.5,
+            color: AppColors.ink,
+            fontWeight: FontWeight.w700,
+          ),
+          border: outline(AppColors.line),
+          enabledBorder: outline(AppColors.line),
+          focusedBorder: outline(AppColors.limeDark, 1.8),
+          errorBorder: outline(AppColors.danger, 1.5),
+          focusedErrorBorder: outline(AppColors.danger, 1.8),
+        ),
+      ),
+      child: child,
+    );
+  }
+
+  /// Label + requirement marker, rendered inside the decoration so the marker
+  /// cannot become a second line that adds height. Material's floating label
+  /// scales the pair as one unit.
+  Widget _fieldLabel(TextTheme text, String label, {bool mandatory = true}) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Flexible(
+          child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+        ),
+        const SizedBox(width: 6),
+        _requirementMark(text, mandatory: mandatory),
+      ],
+    );
+  }
+
+  InputDecoration _fieldDecoration(
+    TextTheme text,
+    String label, {
+    String? hint,
+    bool mandatory = true,
+  }) {
+    return InputDecoration(
+      label: _fieldLabel(text, label, mandatory: mandatory),
+      hintText: hint,
+      counterText: '',
+    );
+  }
+
+  /// Same marker above controls that are not text fields (the event chips).
+  Widget _pickerLabel(TextTheme text, String label, {bool mandatory = false}) {
+    return Row(
+      children: [
+        Text(
+          label,
+          style: text.labelMedium?.copyWith(
+            color: AppColors.inkMuted,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(width: 6),
+        _requirementMark(text, mandatory: mandatory),
+      ],
     );
   }
 
@@ -721,11 +813,9 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
   }
 
   Widget _eventBlock(TextTheme text) {
-    return SectionPanel(
-      leading: const StepBadge(step: 1, icon: Icons.event_outlined),
+    return _CheckoutSection(
       title: 'Acara',
-      caption: 'Detail yang dipakai vendor untuk menyiapkan acara.',
-      padding: const EdgeInsets.all(Sp.md),
+      caption: 'Dipakai vendor untuk menyiapkan acara.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -733,10 +823,10 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
             controller: _title,
             textInputAction: TextInputAction.next,
             maxLength: 150,
-            decoration: const InputDecoration(
-              labelText: 'Nama acara',
-              hintText: 'Contoh: Hajatan keluarga di rumah',
-              counterText: '',
+            decoration: _fieldDecoration(
+              text,
+              'Nama acara',
+              hint: 'Contoh: Hajatan keluarga di rumah',
             ),
             validator: (value) {
               final trimmed = value?.trim() ?? '';
@@ -745,18 +835,18 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
               return null;
             },
           ),
-          const SizedBox(height: Sp.md),
+          const SizedBox(height: Sp.sm),
           _eventTypePicker(text),
           if (_eventType == 'Lainnya') ...[
-            const SizedBox(height: Sp.md),
+            const SizedBox(height: Sp.sm),
             TextFormField(
               controller: _eventOther,
               textInputAction: TextInputAction.next,
               maxLength: 50,
-              decoration: const InputDecoration(
-                labelText: 'Sebutkan jenis acara',
-                hintText: 'Contoh: Kenduri keluarga besar',
-                counterText: '',
+              decoration: _fieldDecoration(
+                text,
+                'Sebutkan jenis acara',
+                hint: 'Contoh: Kenduri keluarga besar',
               ),
               validator: (value) {
                 if (_eventType != 'Lainnya') return null;
@@ -767,7 +857,7 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
               },
             ),
           ],
-          const SizedBox(height: Sp.md),
+          const SizedBox(height: Sp.sm),
           if (_dates.isEmpty)
             Padding(
               padding: const EdgeInsets.only(bottom: Sp.sm),
@@ -800,15 +890,17 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
               style: text.bodySmall?.copyWith(color: AppColors.danger),
             ),
           ],
-          const SizedBox(height: Sp.md),
+          const SizedBox(height: Sp.sm),
           TextFormField(
             controller: _guests,
             keyboardType: TextInputType.number,
             textInputAction: TextInputAction.next,
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-            decoration: const InputDecoration(
-              labelText: 'Perkiraan jumlah tamu (opsional)',
-              hintText: 'Contoh: 120',
+            decoration: _fieldDecoration(
+              text,
+              'Perkiraan jumlah tamu',
+              hint: 'Contoh: 120',
+              mandatory: false,
             ),
             validator: (value) {
               final trimmed = value?.trim() ?? '';
@@ -820,16 +912,17 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
               return null;
             },
           ),
-          const SizedBox(height: Sp.md),
+          const SizedBox(height: Sp.sm),
           TextFormField(
             controller: _notes,
             minLines: 2,
             maxLines: 4,
             maxLength: 2000,
-            decoration: const InputDecoration(
-              labelText: 'Catatan untuk vendor (opsional)',
-              hintText: 'Contoh: listrik tersedia, panggung di halaman',
-              counterText: '',
+            decoration: _fieldDecoration(
+              text,
+              'Catatan untuk vendor',
+              hint: 'Contoh: listrik tersedia, panggung di halaman',
+              mandatory: false,
             ),
           ),
         ],
@@ -843,19 +936,7 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Text(
-              'Jenis acara',
-              style: text.labelMedium?.copyWith(
-                color: AppColors.inkMuted,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(width: 6),
-            Text('opsional', style: text.bodySmall?.copyWith(fontSize: 11)),
-          ],
-        ),
+        _pickerLabel(text, 'Jenis acara'),
         const SizedBox(height: Sp.sm),
         Wrap(
           spacing: Sp.sm,
@@ -878,11 +959,9 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
   Widget _locationBlock(TextTheme text) {
     final gpsMode = locationSupported && _locationMode == _LocationMode.gps;
 
-    return SectionPanel(
-      leading: const StepBadge(step: 2, icon: Icons.place_outlined),
+    return _CheckoutSection(
       title: 'Lokasi acara',
-      caption: 'Vendor memakai alamat ini untuk menemukan panggung.',
-      padding: const EdgeInsets.all(Sp.md),
+      caption: 'Dipakai vendor untuk menemukan panggung.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -890,14 +969,15 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
             controller: _place,
             textInputAction: TextInputAction.next,
             maxLength: 150,
-            decoration: const InputDecoration(
-              labelText: 'Nama tempat (opsional)',
-              hintText: 'Contoh: Rumah Haji Sulaeman',
-              counterText: '',
+            decoration: _fieldDecoration(
+              text,
+              'Nama tempat',
+              hint: 'Contoh: Rumah Haji Sulaeman',
+              mandatory: false,
             ),
           ),
           if (locationSupported) ...[
-            const SizedBox(height: Sp.md),
+            const SizedBox(height: Sp.sm),
             SegmentBar(
               items: const ['Ketik alamat', 'Pakai GPS'],
               index: _locationMode.index,
@@ -908,7 +988,7 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
               }),
             ),
           ],
-          const SizedBox(height: Sp.md),
+          const SizedBox(height: Sp.sm),
           if (!gpsMode)
             TextFormField(
               controller: _address,
@@ -916,10 +996,10 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
               minLines: 2,
               maxLines: 4,
               maxLength: 1000,
-              decoration: const InputDecoration(
-                labelText: 'Alamat & patokan',
-                hintText: 'Kampung, jalan, dan patokan yang mudah dicari',
-                counterText: '',
+              decoration: _fieldDecoration(
+                text,
+                'Alamat & patokan',
+                hint: 'Kampung, jalan, dan patokan yang mudah dicari',
               ),
               validator: (value) {
                 final trimmed = value?.trim() ?? '';
@@ -932,15 +1012,16 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
             )
           else ...[
             _gpsBlock(text),
-            const SizedBox(height: Sp.md),
+            const SizedBox(height: Sp.sm),
             TextFormField(
               controller: _patokan,
               textInputAction: TextInputAction.next,
               maxLength: 200,
-              decoration: const InputDecoration(
-                labelText: 'Patokan tambahan (opsional)',
-                hintText: 'Contoh: rumah pagar hijau setelah jembatan',
-                counterText: '',
+              decoration: _fieldDecoration(
+                text,
+                'Patokan tambahan',
+                hint: 'Contoh: rumah pagar hijau setelah jembatan',
+                mandatory: false,
               ),
             ),
           ],
@@ -1207,32 +1288,51 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
       child: InkWell(
         onTap: _pickSlot,
         child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 56),
+          constraints: const BoxConstraints(minHeight: 48),
           child: Padding(
-            padding: const EdgeInsets.all(Sp.md),
+            padding: const EdgeInsets.symmetric(
+              horizontal: Sp.md,
+              vertical: 10,
+            ),
             child: Row(
               children: [
                 const Icon(
                   Icons.event_outlined,
-                  size: 20,
+                  size: 18,
                   color: AppColors.inkMuted,
                 ),
-                const SizedBox(width: Sp.md),
+                const SizedBox(width: Sp.sm),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        parsed == null
-                            ? 'Pilih tanggal acara'
-                            : formatDate(parsed),
-                        style: text.titleMedium?.copyWith(
-                          color: parsed == null
-                              ? AppColors.inkMuted
-                              : AppColors.ink,
-                        ),
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              parsed == null
+                                  ? 'Pilih tanggal acara'
+                                  : formatDate(parsed),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: text.titleMedium?.copyWith(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                                color: parsed == null
+                                    ? AppColors.inkMuted
+                                    : AppColors.ink,
+                              ),
+                            ),
+                          ),
+                          // The date is the one required picker without a text
+                          // field, so it carries the same marker until chosen.
+                          if (parsed == null) ...[
+                            const SizedBox(width: 6),
+                            _requirementMark(text),
+                          ],
+                        ],
                       ),
-                      const SizedBox(height: 2),
+                      const SizedBox(height: 1),
                       Text(
                         warning ??
                             (parsed == null
@@ -1276,11 +1376,9 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
       if (package.personnelCount > 0) '${package.personnelCount} personel',
     ].join(' · ');
 
-    return SectionPanel(
-      leading: const StepBadge(step: 3, icon: Icons.inventory_2_outlined),
+    return _CheckoutSection(
       title: 'Paket',
       caption: 'Satu grup, satu harga untuk sehari penuh.',
-      padding: const EdgeInsets.all(Sp.md),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -1293,9 +1391,13 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
                   children: [
                     Text(
                       package.name,
-                      style: text.titleLarge,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
+                      style: text.labelLarge?.copyWith(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.2,
+                      ),
                     ),
                     const SizedBox(height: Sp.xs),
                     Text(
@@ -1317,8 +1419,9 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
                 children: [
                   Text(
                     rupiah(package.basePriceIdr),
-                    style: text.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
+                    style: text.labelLarge?.copyWith(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
                       fontFeatures: _tabularFigures,
                     ),
                   ),
@@ -1335,7 +1438,7 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
             ],
           ),
           if (package.inclusions.isNotEmpty) ...[
-            const SizedBox(height: Sp.md),
+            const SizedBox(height: Sp.sm),
             for (final item in package.inclusions)
               Padding(
                 padding: const EdgeInsets.only(bottom: 4),
@@ -1364,7 +1467,7 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
             ),
           ],
           if (package.addons.isNotEmpty) ...[
-            const SizedBox(height: Sp.lg),
+            const SizedBox(height: Sp.md),
             Row(
               children: [
                 Expanded(
@@ -1387,7 +1490,7 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
             for (var i = 0; i < package.addons.length; i++) ...[
               if (i > 0)
                 const Divider(
-                  height: Sp.lg,
+                  height: Sp.md,
                   color: AppColors.line,
                   thickness: 1,
                 ),
@@ -1407,47 +1510,39 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
   Widget _moneyBlock() {
     final package = _package;
     if (package == null) return const SizedBox.shrink();
+    final theme = Theme.of(context);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Row(
-          children: [
-            const StepBadge(step: 4, icon: Icons.receipt_long_outlined),
-            const SizedBox(width: Sp.md),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Ringkasan',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    'Total, DP, dan sisa setelah DP.',
-                    style: Theme.of(
-                      context,
-                    ).textTheme.bodySmall?.copyWith(color: AppColors.inkMuted),
-                  ),
-                ],
+        const SectionHeader(
+          title: 'Ringkasan',
+          caption: 'Total, DP, dan sisa setelah DP.',
+          dense: true,
+        ),
+        const SizedBox(height: Sp.md),
+        // The dark money card is shared; this local type scale keeps its total
+        // the most prominent figure while dropping it to checkout size.
+        Theme(
+          data: theme.copyWith(
+            textTheme: theme.textTheme.copyWith(
+              displaySmall: theme.textTheme.displaySmall?.copyWith(
+                fontSize: 19,
               ),
+              bodyMedium: theme.textTheme.bodyMedium?.copyWith(fontSize: 12),
             ),
-          ],
+          ),
+          child: MoneyBlock(
+            rows: [
+              MoneyRow('Total acara', _total),
+              MoneyRow('DP sekarang ($_dpRatePercent%)', _dpAmount),
+            ],
+            totalLabel: 'Sisa yang harus dibayar',
+            totalIdr: _remaining,
+            footnote: _dpRule,
+          ),
         ),
-        const SizedBox(height: Sp.md),
-        MoneyBlock(
-          rows: [
-            MoneyRow('Total acara', _total),
-            MoneyRow('DP sekarang ($_dpRatePercent%)', _dpAmount),
-          ],
-          totalLabel: 'Sisa yang harus dibayar',
-          totalIdr: _remaining,
-          footnote: _dpRule,
-        ),
-        const SizedBox(height: Sp.md),
+        const SizedBox(height: Sp.sm),
         const InfoStrip(
           message:
               'Pembayaran DP dibuka setelah vendor menerima booking. '
@@ -1467,6 +1562,64 @@ String _duration(int minutes) {
   if (hours == 0) return '$rest menit';
   if (rest == 0) return '$hours jam';
   return '$hours jam $rest menit';
+}
+
+/// Inline requirement marker. Words instead of an asterisk, so nobody has to
+/// find a legend: required labels read darker, optional ones stay muted.
+Widget _requirementMark(TextTheme text, {bool mandatory = true}) {
+  return Text(
+    mandatory ? 'Wajib' : 'Opsional',
+    maxLines: 1,
+    style: text.labelSmall?.copyWith(
+      fontSize: 11,
+      height: 1.2,
+      fontWeight: FontWeight.w700,
+      letterSpacing: 0.1,
+      color: mandatory ? AppColors.ink : AppColors.muted2,
+    ),
+  );
+}
+
+/// Checkout section surface: one card, dense header, 12px inset. This screen
+/// replaced the heavier [SectionPanel] (icon badge + 16.5px title) so the form
+/// scans like a checkout instead of a marketing page.
+class _CheckoutSection extends StatelessWidget {
+  const _CheckoutSection({
+    required this.title,
+    required this.caption,
+    required this.child,
+  });
+
+  final String title;
+  final String caption;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(Sp.md),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(Radii.lg),
+        border: Border.all(color: AppColors.line),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x0A0B1220),
+            blurRadius: 14,
+            offset: Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SectionHeader(title: title, caption: caption, dense: true),
+          const SizedBox(height: Sp.md),
+          child,
+        ],
+      ),
+    );
+  }
 }
 
 class _AddonRow extends StatelessWidget {
@@ -1498,14 +1651,20 @@ class _AddonRow extends StatelessWidget {
             children: [
               Text(
                 addon.name,
-                style: text.titleMedium,
+                style: text.labelLarge?.copyWith(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w700,
+                ),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
               ),
               const SizedBox(height: 2),
               Text(
                 price,
-                style: text.bodySmall?.copyWith(fontFeatures: _tabularFigures),
+                style: text.bodySmall?.copyWith(
+                  fontSize: 11.5,
+                  fontFeatures: _tabularFigures,
+                ),
               ),
             ],
           ),

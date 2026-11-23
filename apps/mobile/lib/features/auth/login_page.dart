@@ -234,10 +234,26 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   /// Menukar ID token Google menjadi sesi Tarlink. Dipakai web dan mobile.
+  ///
+  /// Akun Google baru tidak mendapat sesi (ADR 0037): server hanya mengirim
+  /// kode ke email, jadi yang dibuka adalah layar kode — bukan beranda.
   Future<void> _finishGoogleSignIn(String idToken) async {
-    await finishGoogleSignIn(context, idToken);
+    final outcome = await finishGoogleSignIn(context, idToken);
     if (!mounted) return;
-    _goHome();
+    switch (outcome) {
+      case GoogleSession():
+        _goHome();
+      case GoogleVerificationRequired(:final email, :final devCode):
+        Navigator.pushNamed(
+          context,
+          Routes.emailOtp,
+          arguments: EmailOtpArgs(
+            email: email,
+            mode: EmailOtpMode.register,
+            devCode: devCode,
+          ),
+        );
+    }
   }
 
   String _googleErrorMessage(Object error) => googleAuthErrorMessage(error);
@@ -402,7 +418,15 @@ class _LoginPageState extends State<LoginPage> {
                     height: 18,
                   ),
                   const SizedBox(width: 10),
-                  const Text('Lanjutkan dengan Google'),
+                  // Flexible: a fixed-height button must not clip the label when
+                  // the customer runs a large text scale.
+                  const Flexible(
+                    child: Text(
+                      'Lanjutkan dengan Google',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
                 ],
               ),
       ),

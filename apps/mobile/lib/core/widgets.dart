@@ -301,6 +301,7 @@ class PrimaryButton extends StatelessWidget {
     this.loading = false,
     this.icon,
     this.loadingLabel = 'Memproses…',
+    this.dense = false,
   });
 
   final String label;
@@ -309,12 +310,24 @@ class PrimaryButton extends StatelessWidget {
   final IconData? icon;
   final String loadingLabel;
 
+  /// Compact variant for checkout-style screens (46px instead of the 52px theme).
+  final bool dense;
+
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme.labelLarge;
     final showIcon = icon != null && !loading;
     return FilledButton(
       onPressed: loading ? null : onPressed,
+      style: dense
+          ? FilledButton.styleFrom(
+              minimumSize: const Size.fromHeight(46),
+              padding: const EdgeInsets.symmetric(
+                horizontal: Sp.lg,
+                vertical: 10,
+              ),
+            )
+          : null,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         mainAxisAlignment: MainAxisAlignment.center,
@@ -331,13 +344,14 @@ class PrimaryButton extends StatelessWidget {
           else if (showIcon)
             Padding(
               padding: const EdgeInsets.only(right: Sp.sm),
-              child: Icon(icon, size: 20),
+              child: Icon(icon, size: dense ? 18 : 20),
             ),
           Flexible(
             child: Text(
               loading ? loadingLabel : label,
               textAlign: TextAlign.center,
               style: text?.copyWith(
+                fontSize: dense ? 13.5 : null,
                 color: onPressed == null || loading
                     ? AppColors.inkMuted
                     : AppColors.ink,

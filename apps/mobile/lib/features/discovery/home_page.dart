@@ -258,8 +258,7 @@ class _BerandaState extends State<_Beranda> {
   static bool _isActive(BookingSummary booking) {
     final lifecycle = booking.lifecycleStatus.toLowerCase();
     final payment = booking.paymentStatus.toLowerCase();
-    const terminal = {'completed', 'cancelled', 'canceled', 'expired'};
-    if (terminal.contains(lifecycle)) return false;
+    if (isTerminalLifecycle(lifecycle)) return false;
     const activeLifecycle = {'unpaid', 'confirmed', 'scheduled'};
     const activePayment = {'unpaid', 'dp_paid'};
     return activeLifecycle.contains(lifecycle) ||
@@ -894,7 +893,7 @@ class _ActiveBookingCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
-    final pill = _paymentPill(booking.paymentStatus);
+    final pill = paymentPill(booking.paymentStatus);
     final total = booking.totalCustomerIdr;
     final paid = total - booking.outstandingIdr;
     final paidClamped = paid < 0 ? 0 : (paid > total ? total : paid);
@@ -1087,15 +1086,6 @@ class _ActiveBookingCard extends StatelessWidget {
     );
   }
 }
-
-({String label, PillTone tone}) _paymentPill(String status) =>
-    switch (status.toLowerCase()) {
-      'unpaid' => (label: 'Belum bayar', tone: PillTone.warning),
-      'dp_paid' => (label: 'DP lunas', tone: PillTone.success),
-      'fully_paid' => (label: 'Lunas', tone: PillTone.success),
-      'pending' => (label: 'Menunggu bayar', tone: PillTone.warning),
-      _ => (label: paymentText(status), tone: PillTone.neutral),
-    };
 
 class _ProfileButton extends StatelessWidget {
   const _ProfileButton({required this.onTap});

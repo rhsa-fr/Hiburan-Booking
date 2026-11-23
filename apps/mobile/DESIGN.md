@@ -390,13 +390,27 @@ menerima. Vendor melihat nama tempat + alamat dan tombol **Peta** di detail pesa
 2. **Kartu uang** (§6.4) — elemen terbesar.
 3. Instruksi pembayaran (bila `unpaid`): QRIS (kode + tombol `Simpan`), VA (nomor +
    tombol `Salin`), hitung mundur kedaluwarsa, teks "Selesaikan sebelum 23.59".
-4. Timeline vertikal: Booking dibuat → DP diterima → Dikonfirmasi vendor → Acara →
-   Dana diteruskan. Titik aktif = `primary`, selesai = `accent`, belum = `line`.
+4. Timeline vertikal 4 langkah: **Booking dibuat → Vendor menerima → Bayar DP /
+   DP diterima → Acara**. Judul langkah ketiga mengikuti `payment_status`:
+   "Bayar DP" selama `unpaid`, "DP diterima" setelah DP masuk — jangan pernah
+   hardcode "DP diterima". Titik aktif = `primary`, selesai = `accent`, belum = `line`.
 5. Detail acara & vendor (alamat, jadwal, paket).
 6. Aksi sekunder: `Hubungi vendor (WhatsApp)`, `Batalkan booking` (outline merah,
    konfirmasi bottom sheet dengan konsekuensi DP ditulis jelas).
 7. Polling 15 detik hanya selama `unpaid`; saat berpindah ke `dp_paid` tampilkan
-   perubahan status dengan animasi halus, bukan snackbar.
+   panel konfirmasi eksplisit (bukan snackbar, bukan timer):
+   **"Pembayaran DP diterima"** berisi nominal DP, kode booking, dan tanggal acara
+   yang terkunci. Panel harus ditutup pengguna sebelum kartu pelunasan dipakai.
+8. Pelunasan tidak pernah membuka metode pembayaran otomatis. Kartu ringkas
+   ("Sisa tagihan" + tombol `Bayar pelunasan`) tampil lebih dulu; metode baru
+   dirender setelah tombol ditekan. Sebelum `settlement_available_at` (H-7,
+   ADR 0038) tombol nonaktif dan copy berbunyi "Pelunasan dibuka <tanggal>".
+9. Kepadatan checkout (form Buat Booking dan panel pembayaran) mengikuti skala
+   e-commerce, bukan skala hero: judul seksi `dense` **15,5**; field **42–64 px**
+   (`isDense`, `contentPadding` 12/10, radius 12); jarak antar-field **8**; baris
+   metode **46**; tombol aksi `dense` **46** (tap target 48). Angka uang utama
+   18–19 di dalam form/panel; ukuran hero hanya untuk kartu ringkasan, bukan
+   untuk setiap label.
 
 ### 7.6 Booking saya
 - Segmen: Semua / Aktif (`unpaid`, `dp_paid`, `confirmed`) / Selesai (`completed`,

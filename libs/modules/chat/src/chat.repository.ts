@@ -1,5 +1,10 @@
 import type { Pool } from 'pg';
-import type { ChatMessageView, ChatRole } from './chat.contracts';
+import {
+  CHAT_CHANNEL,
+  type ChatMessageView,
+  type ChatReadNotification,
+  type ChatRole
+} from './chat.contracts';
 
 export interface ChatParticipantRow {
   customer_id: string;
@@ -16,6 +21,7 @@ export interface ChatMessageRow {
   sender_role: ChatRole;
   body: string;
   created_at: Date;
+  read_at: Date | null;
 }
 
 export interface ChatHistoryOptions {
@@ -31,7 +37,24 @@ export interface NewChatMessage {
   body: string;
 }
 
-const COLUMNS = 'id, booking_id, sender_id, sender_role, body, created_at';
+/** Ids actually flipped by [ChatRepository.markRead], plus the value written. */
+export interface ChatReadResult {
+  read_ids: string[];
+  read_at: Date;
+}
+
+/**
+ * Satu `pg_notify` dibatasi 8000 byte oleh PostgreSQL. UUID (36 karakter) +
+ * tanda kutip/koma ≈ 39 byte, jadi 100 id ≈ 4 KB — aman dengan margin besar.
+ *
+ * Konsekuensi yang disengaja: satu panggilan `markRead` bisa menghasilkan
+ * BEBAS BEBERAPA event `read` (100 id per event, batch terakhir lebih kecil).
+ * Klien harus memperlakukan setiap event sebagai penambahan tanda baca dan
+ * menggabungkan `message_ids`; respons HTTP tetap memuat SELURUH id.
+ */
+export const READ_NOTIFY_BATCH_SIZE = 100;
+
+const COLUMNS = 'id, booking_id, sender_id, sender_role, body, created_at, read_at';
 
 /**
  * Chat persistence. Every read is scoped by `booking_id`; permission is decided
@@ -115,6 +138,53 @@ export class ChatRepository {
     if (!row) throw new Error('chat message insert returned no row');
     return row;
   }
+
+  /**
+   * Tanda baca pesan (FR-050/ADR 0011).
+   *
+   * Trigger `tarlink_chat_read_guard` (migrasi 039) melarang `read_at` diubah
+   * setelah terisi, jadi filter `read_at IS NULL` bukan optimasi melainkan
+   * syarat: UPDATE kedua untuk baris yang sama akan menggagalkan transaksi.
+   * Pesan milik pembaca sendiri tidak pernah ditandai.
+   *
+   * NOTIFY dikirim dari transaksi yang sama supaya peristiwa `read` tidak
+   * pernah tersiar untuk tulisan yang nanti di-ROLLBACK. Payload dipecah per
+   * [READ_NOTIFY_BATCH_SIZE] karena batas 8000 byte PostgreSQL.
+   */
+  async markRead(
+    bookingId: string,
+    readerId: string,
+    now: Date
+  ): Promise<ChatReadResult> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const updated = await client.query<{ id: string }>(
+        `UPDATE chat_messages
+            SET read_at = $3::timestamptz
+          WHERE booking_id = $1::uuid
+            AND sender_id <> $2::uuid
+            AND read_at IS NULL
+          RETURNING id`,
+        [bookingId, readerId, now]
+      );
+      const readIds = updated.rows.map((row) => row.id);
+      for (let start = 0; start < readIds.length; start += READ_NOTIFY_BATCH_SIZE) {
+        const batch = readIds.slice(start, start + READ_NOTIFY_BATCH_SIZE);
+        await client.query('SELECT pg_notify($1, $2)', [
+          CHAT_CHANNEL,
+          buildChatReadNotification(bookingId, readerId, batch, now)
+        ]);
+      }
+      await client.query('COMMIT');
+      return { read_ids: readIds, read_at: now };
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
 }
 
 export function toChatMessageView(row: ChatMessageRow): ChatMessageView {
@@ -124,6 +194,27 @@ export function toChatMessageView(row: ChatMessageRow): ChatMessageView {
     sender_id: row.sender_id,
     sender_role: row.sender_role,
     body: row.body,
-    created_at: row.created_at.toISOString()
+    created_at: row.created_at.toISOString(),
+    read_at: row.read_at ? row.read_at.toISOString() : null
   };
+}
+
+/**
+ * One place builds the `read` payload, so the NOTIFY text and what the gateway
+ * parses can never drift. Field order is part of the wire shape.
+ */
+export function buildChatReadNotification(
+  bookingId: string,
+  readerId: string,
+  messageIds: readonly string[],
+  readAt: Date
+): string {
+  const payload: ChatReadNotification = {
+    type: 'read',
+    booking_id: bookingId,
+    reader_id: readerId,
+    message_ids: [...messageIds],
+    read_at: readAt.toISOString()
+  };
+  return JSON.stringify(payload);
 }

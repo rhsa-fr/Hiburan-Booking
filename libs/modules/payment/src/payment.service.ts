@@ -333,6 +333,32 @@ function jsonRupiah(value: bigint): number {
   return Number(value);
 }
 
+/** Asia/Jakarta is UTC+07:00 all year round (no DST since 2014). */
+const WIB_OFFSET_MS = 7 * 60 * 60 * 1000;
+
+/** Short Indonesian months: `Intl` would make the error message locale-dependent. */
+const MONTHS_SHORT_ID = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'Mei',
+  'Jun',
+  'Jul',
+  'Agu',
+  'Sep',
+  'Okt',
+  'Nov',
+  'Des'
+] as const;
+
+/** `2026-11-19T17:00:00Z` -> `20 Nov 2026`: the WIB calendar day of an instant. */
+function formatWibDay(instant: Date): string {
+  const wib = new Date(instant.getTime() + WIB_OFFSET_MS);
+  const month = MONTHS_SHORT_ID[wib.getUTCMonth()] ?? '';
+  return `${wib.getUTCDate()} ${month} ${wib.getUTCFullYear()}`;
+}
+
 /**
  * Parses an amount that arrives from the outside world. A missing or malformed
  * amount is a client error, never an internal one.
@@ -611,6 +637,20 @@ export class PaymentService {
           throw new AppError(
             'CONFLICT',
             `booking lifecycle_status must be confirmed, in_progress, or completed (current: ${booking.lifecycleStatus})`
+          );
+        }
+
+        // ADR 0038: settlement opens at 00:00 WIB on H-7 and the server is the
+        // only clock that decides. The value comes from the row locked above,
+        // so no extra read can disagree with the status checks. A null value
+        // means the booking has no event row and stays ungated.
+        if (
+          booking.settlementOpensAt !== null &&
+          now.getTime() < booking.settlementOpensAt.getTime()
+        ) {
+          throw new AppError(
+            'CONFLICT',
+            `Pelunasan dibuka ${formatWibDay(booking.settlementOpensAt)} (7 hari sebelum acara).`
           );
         }
 

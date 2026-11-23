@@ -358,11 +358,15 @@ export class CatalogRepository {
   }
 
   /**
-   * Grants the owner the `vendor_owner` role scoped to this vendor.
+   * Grants the owner the `vendor_owner` role scoped to this vendor, plus the
+   * global `customer` role.
    *
    * Must run after the vendor row exists: `user_roles` requires vendor roles to
    * carry `vendor_id NOT NULL` and `vendor_scope = vendor_id`. Idempotent — a
-   * re-run (or a previously revoked grant) only clears `revoked_at`.
+   * re-run (or a previously revoked grant) only clears `revoked_at`. The owner
+   * keeps `customer` so the customer app ("Keluar mode vendor", bookings,
+   * favorites, chat) does not answer 403 to its own vendor; a revoked customer
+   * row is restored, matching migration 040.
    */
   async grantVendorOwner(
     client: PoolClient,
@@ -374,6 +378,14 @@ export class CatalogRepository {
        VALUES ($1::uuid, 'vendor_owner'::user_role, $2::uuid, $2::uuid)
        ON CONFLICT (user_id, role, vendor_scope) DO UPDATE SET revoked_at = NULL`,
       [userId, vendorId]
+    );
+
+    await client.query(
+      `INSERT INTO user_roles (user_id, role, vendor_id, vendor_scope)
+       VALUES ($1::uuid, 'customer'::user_role, NULL, '00000000-0000-0000-0000-000000000000'::uuid)
+       ON CONFLICT (user_id, role, vendor_scope)
+       DO UPDATE SET revoked_at = NULL WHERE user_roles.revoked_at IS NOT NULL`,
+      [userId]
     );
   }
 

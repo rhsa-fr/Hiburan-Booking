@@ -9,12 +9,14 @@ import {
   type AccessTokenClaims,
   type Role
 } from '@tarlink/platform/auth';
-import type { ChatMessageView, ChatRole } from './chat.contracts';
+import type { ChatMessageView, ChatReadNotification, ChatRole } from './chat.contracts';
+import { CHAT_CHANNEL } from './chat.contracts';
 import { ChatService } from './chat.service';
+
+export { CHAT_CHANNEL };
 
 /** Path is outside Nest's HTTP router: the upgrade is handled here. */
 export const CHAT_WS_PATH = '/v1/chat/ws';
-export const CHAT_CHANNEL = 'tarlink_chat';
 
 /** A socket may follow several bookings, but not unboundedly many. */
 const MAX_ROOMS_PER_SOCKET = 20;
@@ -134,13 +136,64 @@ export function parseChatNotification(payload: string): ChatMessageView | null {
         : null;
   if (!iso) return null;
 
+  // The insert trigger (021) predates read receipts, so an older payload has no
+  // `read_at`; a freshly inserted row is always unread.
+  const readAt = record.read_at;
+  const readIso =
+    typeof readAt === 'string'
+      ? readAt
+      : readAt instanceof Date
+        ? readAt.toISOString()
+        : null;
+
   return {
     id: record.id,
     booking_id: record.booking_id,
     sender_id: record.sender_id,
     sender_role: record.sender_role,
     body: record.body,
-    created_at: iso
+    created_at: iso,
+    read_at: readIso
+  };
+}
+
+/**
+ * The `read` notification is not a chat row: it has no `sender_id` and no body,
+ * so [parseChatNotification] ignores it and this parser accepts only the exact
+ * receipt shape. Anything else is dropped instead of being broadcast.
+ */
+export function parseChatReadNotification(
+  payload: string
+): ChatReadNotification | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(payload);
+  } catch {
+    return null;
+  }
+  if (typeof value !== 'object' || value === null) return null;
+  const record = value as Record<string, unknown>;
+  if (
+    record.type !== 'read' ||
+    typeof record.booking_id !== 'string' ||
+    typeof record.reader_id !== 'string' ||
+    typeof record.read_at !== 'string' ||
+    Number.isNaN(new Date(record.read_at).getTime()) ||
+    !Array.isArray(record.message_ids)
+  ) {
+    return null;
+  }
+  const messageIds = record.message_ids.filter(
+    (id): id is string => typeof id === 'string'
+  );
+  if (messageIds.length !== record.message_ids.length) return null;
+
+  return {
+    type: 'read',
+    booking_id: record.booking_id,
+    reader_id: record.reader_id,
+    message_ids: messageIds,
+    read_at: record.read_at
   };
 }
 
@@ -409,9 +462,27 @@ export class ChatGateway {
 
   private readonly onNotification = (notification: Notification): void => {
     if (notification.channel !== CHAT_CHANNEL || !notification.payload) return;
+    // A read receipt carries ids only, so it skips the per-socket block check
+    // that `deliver` applies to message bodies.
+    const read = parseChatReadNotification(notification.payload);
+    if (read) {
+      this.deliverRead(read);
+      return;
+    }
     const message = parseChatNotification(notification.payload);
     if (message) void this.deliver(message);
   };
+
+  /** Satu siaran `read` per booking: ids + timestamp, tanpa isi pesan. */
+  private deliverRead(event: ChatReadNotification): void {
+    const targets = this.rooms.get(event.booking_id);
+    if (!targets) return;
+    const payload = JSON.stringify(event);
+    for (const socket of targets) {
+      if (socket.readyState !== WebSocket.OPEN) continue;
+      socket.send(payload);
+    }
+  }
 
   /**
    * Kirim satu pesan ke setiap socket yang berlangganan booking tersebut.

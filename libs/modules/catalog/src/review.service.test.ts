@@ -32,7 +32,8 @@ describe('ReviewService', () => {
       id: BOOKING_ID,
       customer_id: CUSTOMER_ID,
       vendor_id: VENDOR_ID,
-      lifecycle_status: 'completed'
+      lifecycle_status: 'completed',
+      vendor_owner_id: OTHER_USER_ID
     };
 
     const insertedReviewRow = {
@@ -148,6 +149,45 @@ describe('ReviewService', () => {
       });
 
       expect(queryMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects a vendor owner reviewing their own vendor and inserts nothing', async () => {
+      const ownerRow = {
+        ...validBooking,
+        customer_id: OTHER_USER_ID,
+        vendor_owner_id: OTHER_USER_ID
+      };
+      queryMock.mockResolvedValueOnce([ownerRow]);
+
+      await expect(
+        service.submitReview(OTHER_USER_ID, BOOKING_ID, 5, 'Mantap')
+      ).rejects.toMatchObject({
+        code: 'CONFLICT',
+        message: 'Pemilik vendor tidak dapat mengulas vendornya sendiri'
+      });
+
+      // Only the booking/owner lookup ran; no duplicate check, no INSERT.
+      expect(queryMock).toHaveBeenCalledTimes(1);
+      const [bookingSql] = queryMock.mock.calls[0] as [string, unknown[]];
+      expect(bookingSql).toContain('LEFT JOIN vendors v ON v.id = b.vendor_id');
+      expect(bookingSql).toContain('v.owner_user_id AS vendor_owner_id');
+      const sqlSeen = queryMock.mock.calls.map((call) => String(call[0]));
+      expect(sqlSeen.some((sql) => sql.includes('INSERT INTO reviews'))).toBe(false);
+    });
+
+    it('accepts a customer who is not the vendor owner of the same vendor', async () => {
+      queryMock
+        .mockResolvedValueOnce([validBooking])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([insertedReviewRow]);
+
+      const result = await service.submitReview(CUSTOMER_ID, BOOKING_ID, 5, 'Bagus');
+
+      expect(result.vendor_id).toBe(VENDOR_ID);
+      expect(result.customer_id).toBe(CUSTOMER_ID);
+      const [insertSql, insertParams] = queryMock.mock.calls[2] as [string, unknown[]];
+      expect(insertSql).toContain('INSERT INTO reviews');
+      expect(insertParams).toEqual([BOOKING_ID, VENDOR_ID, CUSTOMER_ID, 5, 'Bagus']);
     });
 
     it('throws CONFLICT when booking has already been reviewed (pre-check query)', async () => {

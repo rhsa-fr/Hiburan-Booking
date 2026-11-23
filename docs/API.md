@@ -111,7 +111,7 @@ dan sebagai guard unik per pelanggan.
 | POST | `/auth/login` | `{ email, password }` | **Email**, bukan nomor WA; akun `admin_*` menerima challenge 2FA, bukan sesi. Akun berpassword yang belum verifikasi ditolak `403 EMAIL_NOT_VERIFIED` |
 | POST | `/auth/otp/request` | `{ email }` | Kirim OTP ke email (dev mengembalikan `dev_code` hanya bila `NODE_ENV !== production` **dan** `OTP_DEV_MODE=true`) |
 | POST | `/auth/otp/verify` | `{ email, code }` | Verifikasi OTP; akun `admin_*` juga melewati gerbang 2FA |
-| POST | `/auth/google` | `{ id_token, consent?: { tos_version_id, privacy_version_id } }` | Login Google (opsional, tidak dipakai mobile); `consent` **wajib** bila akun belum ada (FR-103), diabaikan untuk akun lama; akun `admin_*` juga melewati gerbang 2FA |
+| POST | `/auth/google` | `{ id_token, consent?: { tos_version_id, privacy_version_id } }` | Login Google (dipakai mobile). Akun **baru** tidak langsung mendapat sesi: data diparkir di `otp_requests` (`purpose='register'`, `provider='google'`, tanpa hash sandi), kode dikirim ke email, balasan `{ verification_required: true, email, expires_in, provider: 'google', dev_code? }` (ADR 0037). Sesi diterbitkan oleh `POST /auth/register/verify`. Akun lama tetap langsung login; `consent` **wajib** untuk akun baru (FR-103) dan diabaikan untuk akun lama; akun `admin_*` juga melewati gerbang 2FA |
 | POST | `/auth/2fa/verify` | `{ challenge_token, code }` | Langkah 2 login admin: tukar ticket + TOTP 6 digit jadi sesi |
 | POST | `/auth/2fa/backup-code` | `{ challenge_token, code }` | Sama, memakai satu backup code (`XXXX-XXXX`, sekali pakai) |
 | POST | `/auth/2fa/enroll` | `{ enroll_token }` | Langkah 1 enrollment: `secret` + `otpauth_uri` (entri manual, tanpa QR) |
@@ -400,6 +400,7 @@ Query: `page`, `page_size`, `status` (opsional).
   "total_customer_idr": 5050000,
   "dp_amount_idr": 1500000,
   "outstanding_idr": 3550000,
+  "settlement_available_at": "2026-10-13T17:00:00.000Z",
   "created_at": "…",
   "updated_at": "…"
 }
@@ -407,6 +408,14 @@ Query: `page`, `page_size`, `status` (opsional).
 
 `outstanding_idr` mengikuti status pembayaran:
 `unpaid` → total, `dp_paid` → total − DP, `fully_paid`/`refunded` → 0.
+
+`settlement_available_at` (ADR 0038) adalah instan ISO-8601 UTC saat tagihan
+pelunasan boleh dibuat: **pukul 00:00 WIB pada tanggal acara dikurangi 7 hari**.
+Contoh pada respons di atas (`2026-10-13T17:00:00.000Z`) berarti **14 Okt 2026
+00:00 WIB** untuk acara 21 Okt 2026 — bukan tengah malam UTC.
+Nilainya `null` bila booking tidak punya baris event. Klien **tidak** menghitung
+H-7 sendiri; bila nilainya `null` (mis. saat rolling deploy) pelunasan dianggap
+terbuka seperti sebelumnya.
 
 ### Transisi
 
@@ -600,6 +609,10 @@ E-wallet (`gopay`, `ovo`, `dana`, `shopeepay`) ditolak `400 VALIDATION_ERROR`.
 Aturan status:
 - `lifecycle_status` tidak boleh ditutup (`cancelled`, `rejected`, `expired`, `no_show`).
 - `payment_status` harus `dp_paid` (`unpaid` → `409` DP must be paid before settlement, `fully_paid` → `409` booking is already fully paid).
+- Pelunasan hanya dibuka **H-7** (ADR 0038): bila `now < settlement_available_at`
+  endpoint menjawab `409 CONFLICT` dengan pesan
+  `Pelunasan dibuka 20 Nov 2026 (7 hari sebelum acara).` Batas dihitung server
+  dari tanggal acara WIB; mematikan tombol di klien saja tidak cukup.
 - Sisa tagihan dihitung otomatis di server (`total_customer_idr - dp_amount_idr`).
 
 Bentuk respons sama dengan DP (`payment` + `payment_instruction`).
@@ -805,15 +818,30 @@ Akun lain mendapat `403 FORBIDDEN`. Pesan append-only, 1–2000 karakter setelah
 
 Query: `limit` (1–100, default 50), `before` (cursor `next_before` halaman sebelumnya).
 Respons: `{ data: { items, next_before } }`, `items` urut lama → baru. Cursor hanya
-berlaku untuk thread booking yang sama.
+berlaku untuk thread booking yang sama. Setiap item membawa `read_at` (ISO-8601 UTC
+atau `null`); `null` berarti penerima belum membuka pesan itu (migrasi `039`).
 
 ### `POST /bookings/:bookingId/chat/messages`
 
 Body: `{ "body": "…" }`. Respons `201`:
 
 ```json
-{ "data": { "id": "…", "booking_id": "…", "sender_id": "…", "sender_role": "customer", "body": "…", "created_at": "…" } }
+{ "data": { "id": "…", "booking_id": "…", "sender_id": "…", "sender_role": "customer", "body": "…", "created_at": "…", "read_at": null } }
 ```
+
+### `POST /bookings/:bookingId/chat/messages/read`
+
+Body kosong. Menandai semua pesan pada booking tersebut yang **bukan** dikirim
+pemanggil dan belum dibaca (`read_at IS NULL`). Idempoten: pemanggilan kedua
+mengembalikan `read_ids` kosong.
+
+```json
+{ "data": { "read_ids": ["…"], "read_at": "2026-11-22T21:40:00.000Z" } }
+```
+
+Setiap UPDATE mengirim satu atau beberapa `NOTIFY tarlink_chat` bertipe `read`
+(batch maksimal 100 id per notifikasi agar payload di bawah batas 8000 byte),
+lalu diteruskan ke socket thread sebagai frame `read`.
 
 Setiap insert memicu `NOTIFY tarlink_chat`; API yang sedang `LISTEN` meneruskannya ke
 socket pelanggan thread tersebut.
@@ -833,8 +861,11 @@ Frame klien:
 ```
 
 Frame server: `ready`, `subscribed` (berisi `role`), `unsubscribed`, `sent`
-(berisi `message`), `message` (siaran ke semua socket thread), `pong`, dan
-`error { code, message }`. Pengiriman lewat REST juga tersiar ke socket. Setelah
+(berisi `message`), `message` (siaran ke semua socket thread), `read`, `pong`, dan
+`error { code, message }`. Pengiriman lewat REST juga tersiar ke socket. Frame `read`
+berbentuk `{ "type": "read", "booking_id": "…", "reader_id": "…",
+"message_ids": ["…"], "read_at": "…" }` dan dipakai untuk mengubah centang satu
+menjadi centang dua. Setelah
 reconnect, klien memuat ulang riwayat lewat REST. Chat hanya teks; foto/lokasi dan
 penyaringan kontak (FR-135) belum ada.
 

@@ -6,12 +6,14 @@ import type { RawData, WebSocket } from 'ws';
 import type { AccessTokenPayload, Role, SessionChecker } from '@tarlink/platform/auth';
 import { configureSessionChecker, signAccessToken } from '@tarlink/platform/auth';
 import {
+  CHAT_CHANNEL,
   CHAT_WS_PATH,
   ChatGateway,
   extractChatToken,
   isChatOriginAllowed,
   parseChatClientEvent,
-  parseChatNotification
+  parseChatNotification,
+  parseChatReadNotification
 } from './chat.gateway';
 import type { ChatService } from './chat.service';
 
@@ -104,6 +106,76 @@ describe('parseChatNotification', () => {
           sender_id: 'y',
           sender_role: 'robot',
           body: 'z',
+          created_at: '2026-11-05T10:00:00.000Z'
+        })
+      )
+    ).toBeNull();
+  });
+
+  it('treats a read receipt as not-a-message', () => {
+    expect(
+      parseChatNotification(
+        JSON.stringify({
+          type: 'read',
+          booking_id: BOOKING_ID,
+          reader_id: '22222222-2222-4222-8222-222222222222',
+          message_ids: ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'],
+          read_at: '2026-11-22T09:00:00.000Z'
+        })
+      )
+    ).toBeNull();
+  });
+
+  it('defaults read_at to null when the row predates read receipts', () => {
+    const payload = JSON.stringify({
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      booking_id: BOOKING_ID,
+      sender_id: '22222222-2222-4222-8222-222222222222',
+      sender_role: 'vendor',
+      body: 'siap',
+      created_at: '2026-11-05T10:00:00.000Z'
+    });
+    expect(parseChatNotification(payload)?.read_at).toBeNull();
+  });
+});
+
+describe('parseChatReadNotification', () => {
+  const READ_PAYLOAD = {
+    type: 'read',
+    booking_id: BOOKING_ID,
+    reader_id: '22222222-2222-4222-8222-222222222222',
+    message_ids: ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'],
+    read_at: '2026-11-22T09:00:00.000Z'
+  };
+
+  it('parses a read receipt', () => {
+    expect(parseChatReadNotification(JSON.stringify(READ_PAYLOAD))).toEqual(READ_PAYLOAD);
+  });
+
+  it('ignores malformed or unrelated payloads', () => {
+    expect(parseChatReadNotification('not json')).toBeNull();
+    expect(parseChatReadNotification(JSON.stringify({ booking_id: BOOKING_ID }))).toBeNull();
+    expect(
+      parseChatReadNotification(JSON.stringify({ ...READ_PAYLOAD, type: 'message' }))
+    ).toBeNull();
+    expect(
+      parseChatReadNotification(JSON.stringify({ ...READ_PAYLOAD, message_ids: 'nope' }))
+    ).toBeNull();
+    expect(
+      parseChatReadNotification(JSON.stringify({ ...READ_PAYLOAD, read_at: 'kemarin' }))
+    ).toBeNull();
+    expect(
+      parseChatReadNotification(JSON.stringify({ ...READ_PAYLOAD, reader_id: undefined }))
+    ).toBeNull();
+    // A stored message row is never mistaken for a receipt.
+    expect(
+      parseChatReadNotification(
+        JSON.stringify({
+          id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+          booking_id: BOOKING_ID,
+          sender_id: '22222222-2222-4222-8222-222222222222',
+          sender_role: 'vendor',
+          body: 'siap',
           created_at: '2026-11-05T10:00:00.000Z'
         })
       )
@@ -308,6 +380,7 @@ function fakeWebSocket(): FakeWebSocket {
 type GatewayInternals = {
   onConnection(ws: WebSocket, userId: string, roles: Role[], jti: string): void;
   onMessage(ws: WebSocket, data: RawData): Promise<void>;
+  onNotification(notification: { channel: string; payload?: string }): void;
   rejectUpgrade(socket: Duplex, status: number, reason: string): void;
   clients: Map<WebSocket, unknown>;
 };
@@ -426,5 +499,105 @@ describe('ChatGateway per-event session check', () => {
       internalsOf(started).rejectUpgrade(socket as unknown as Duplex, 401, 'Unauthorized')
     ).not.toThrow();
     expect(socket.write).not.toHaveBeenCalled();
+  });
+});
+
+describe('ChatGateway notification fan-out', () => {
+  const resolveRole = vi.fn(async () => 'customer' as const);
+  const service = { resolveRole } as unknown as ChatService;
+
+  let gateway: ChatGateway | null = null;
+
+  beforeEach(() => {
+    configureSessionChecker(null);
+    resolveRole.mockClear();
+  });
+
+  afterEach(() => {
+    configureSessionChecker(null);
+    gateway?.close();
+    gateway = null;
+  });
+
+  function start(): { gateway: ChatGateway; subscriber: FakeWebSocket; stranger: FakeWebSocket } {
+    const started = createGateway(service).gateway;
+    gateway = started;
+    const subscriber = fakeWebSocket();
+    const stranger = fakeWebSocket();
+    const internals = internalsOf(started);
+    internals.onConnection(
+      subscriber as unknown as WebSocket,
+      CHAT_USER_ID,
+      ['customer'],
+      CHAT_JTI
+    );
+    internals.onConnection(stranger as unknown as WebSocket, 'user-2', ['customer'], 'session-2');
+    return { gateway: started, subscriber, stranger };
+  }
+
+  async function subscribe(target: ChatGateway, ws: FakeWebSocket): Promise<void> {
+    await internalsOf(target).onMessage(
+      ws as unknown as WebSocket,
+      Buffer.from(JSON.stringify({ type: 'subscribe', booking_id: BOOKING_ID }))
+    );
+  }
+
+  it('forwards a read receipt to the booking room only, without message bodies', async () => {
+    const { gateway: started, subscriber, stranger } = start();
+    await subscribe(started, subscriber);
+
+    const payload = JSON.stringify({
+      type: 'read',
+      booking_id: BOOKING_ID,
+      reader_id: '22222222-2222-4222-8222-222222222222',
+      message_ids: ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'],
+      read_at: '2026-11-22T09:00:00.000Z'
+    });
+    internalsOf(started).onNotification({ channel: CHAT_CHANNEL, payload });
+
+    expect(subscriber.sent.at(-1)).toEqual({
+      type: 'read',
+      booking_id: BOOKING_ID,
+      reader_id: '22222222-2222-4222-8222-222222222222',
+      message_ids: ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'],
+      read_at: '2026-11-22T09:00:00.000Z'
+    });
+    expect(stranger.sent).toEqual([{ type: 'ready' }]);
+  });
+
+  it('ignores a malformed read payload and keeps the message envelope unchanged', async () => {
+    const { gateway: started, subscriber } = start();
+    await subscribe(started, subscriber);
+
+    internalsOf(started).onNotification({
+      channel: CHAT_CHANNEL,
+      payload: JSON.stringify({ type: 'read', booking_id: BOOKING_ID })
+    });
+    expect(subscriber.sent.at(-1)).toEqual({ type: 'subscribed', booking_id: BOOKING_ID, role: 'customer' });
+
+    internalsOf(started).onNotification({
+      channel: CHAT_CHANNEL,
+      payload: JSON.stringify({
+        id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        booking_id: BOOKING_ID,
+        sender_id: '22222222-2222-4222-8222-222222222222',
+        sender_role: 'vendor',
+        body: 'siap',
+        created_at: '2026-11-05T10:00:00.000Z'
+      })
+    });
+
+    expect(subscriber.sent.at(-1)).toEqual({
+      type: 'message',
+      message: {
+        id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        booking_id: BOOKING_ID,
+        sender_id: '22222222-2222-4222-8222-222222222222',
+        sender_role: 'vendor',
+        body: 'siap',
+        created_at: '2026-11-05T10:00:00.000Z',
+        read_at: null
+      }
+    });
   });
 });

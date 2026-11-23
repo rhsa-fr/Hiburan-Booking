@@ -38,6 +38,12 @@ export interface BookingSnapshot {
   readonly pricePackageIdr: bigint;
   readonly serviceFeeIdr: bigint;
   readonly totalCustomerIdr: bigint;
+  /**
+   * ADR 0038: instant the settlement charge opens (00:00 WIB on
+   * `events.start_date - 7`). Null when the booking has no event row, which
+   * means "no time gate" (§3 of the ADR: rolling deploy must not lock screens).
+   */
+  readonly settlementOpensAt: Date | null;
 }
 
 export interface PaymentRecord {
@@ -365,12 +371,24 @@ function constraintName(error: unknown): string | undefined {
 
 /* -------------------------------------------------------------------- SQL */
 
+/**
+ * ADR 0038: settlement opens at 00:00 WIB exactly 7 days before the event.
+ * `events.start_date` is a DATE (calendar, no zone), so the subtraction runs on
+ * the date itself and the result is then pinned to WIB midnight. Using
+ * `timezone('Asia/Jakarta', e.start_date)` here would shift the day.
+ *
+ * `FOR UPDATE OF b` (not a bare `FOR UPDATE`): PostgreSQL rejects locking the
+ * nullable side of an outer join, and the event row must never be locked from
+ * this path.
+ */
 const SELECT_BOOKING_SQL = `
-SELECT id, customer_id, vendor_id, lifecycle_status, payment_status, payment_deadline,
-       dp_amount_idr, price_package_idr, service_fee_idr, total_customer_idr
-FROM bookings
-WHERE id = $1
-FOR UPDATE
+SELECT b.id, b.customer_id, b.vendor_id, b.lifecycle_status, b.payment_status, b.payment_deadline,
+       b.dp_amount_idr, b.price_package_idr, b.service_fee_idr, b.total_customer_idr,
+       ((e.start_date - 7)::timestamp AT TIME ZONE 'Asia/Jakarta') AS settlement_opens_at
+FROM bookings b
+LEFT JOIN events e ON e.id = b.event_id
+WHERE b.id = $1
+FOR UPDATE OF b
 `;
 
 const SELECT_BOOKING_FOR_PAYMENT_SQL = `
@@ -1071,7 +1089,10 @@ function mapBooking(row: Record<string, unknown>): BookingSnapshot {
     dpAmountIdr: toBigInt(row.dp_amount_idr, 'bookings.dp_amount_idr'),
     pricePackageIdr: toBigInt(row.price_package_idr, 'bookings.price_package_idr'),
     serviceFeeIdr: toBigInt(row.service_fee_idr, 'bookings.service_fee_idr'),
-    totalCustomerIdr: toBigInt(row.total_customer_idr, 'bookings.total_customer_idr')
+    totalCustomerIdr: toBigInt(row.total_customer_idr, 'bookings.total_customer_idr'),
+    // Only SELECT_BOOKING_SQL joins `events`; the payment-scoped lock has no
+    // event column, and a missing value means "no settlement gate".
+    settlementOpensAt: toDateOrNull(row.settlement_opens_at)
   };
 }
 

@@ -538,12 +538,16 @@ class SectionHeader extends StatelessWidget {
     this.caption,
     this.actionLabel,
     this.onAction,
+    this.dense = false,
   });
 
   final String title;
   final String? caption;
   final String? actionLabel;
   final VoidCallback? onAction;
+
+  /// Compact variant for checkout-style screens: smaller title and marker.
+  final bool dense;
 
   @override
   Widget build(BuildContext context) {
@@ -552,14 +556,14 @@ class SectionHeader extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         Container(
-          width: 3,
-          height: 22,
+          width: dense ? 2.5 : 3,
+          height: dense ? 16 : 22,
           decoration: BoxDecoration(
             color: AppColors.limeDark,
             borderRadius: BorderRadius.circular(2),
           ),
         ),
-        const SizedBox(width: 10),
+        SizedBox(width: dense ? Sp.sm : 10),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -567,9 +571,9 @@ class SectionHeader extends StatelessWidget {
               Text(
                 title,
                 style: text.titleLarge?.copyWith(
-                  fontSize: 20,
+                  fontSize: dense ? 15.5 : 20,
                   fontWeight: FontWeight.w800,
-                  letterSpacing: -0.5,
+                  letterSpacing: dense ? -0.25 : -0.5,
                 ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
@@ -818,6 +822,7 @@ class ChoiceTile extends StatelessWidget {
     this.selected = false,
     this.onTap,
     this.trailing,
+    this.dense = false,
   });
 
   final String label;
@@ -827,23 +832,27 @@ class ChoiceTile extends StatelessWidget {
   final VoidCallback? onTap;
   final Widget? trailing;
 
+  /// Compact variant for long single-choice lists (payment methods).
+  final bool dense;
+
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final radius = BorderRadius.circular(dense ? 12 : Radii.lg);
     return Material(
       color: selected ? AppColors.limeSoft : AppColors.card,
-      borderRadius: BorderRadius.circular(Radii.lg),
+      borderRadius: radius,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(Radii.lg),
+        borderRadius: radius,
         child: Container(
-          constraints: const BoxConstraints(minHeight: 58),
-          padding: const EdgeInsets.symmetric(
+          constraints: BoxConstraints(minHeight: dense ? 46 : 58),
+          padding: EdgeInsets.symmetric(
             horizontal: Sp.md,
-            vertical: Sp.sm + 2,
+            vertical: dense ? 5 : Sp.sm + 2,
           ),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(Radii.lg),
+            borderRadius: radius,
             border: Border.all(
               color: selected ? AppColors.limeDark : AppColors.line,
               width: selected ? 1.5 : 1,
@@ -855,20 +864,26 @@ class ChoiceTile extends StatelessWidget {
                 IconBadge(
                   icon: icon!,
                   tone: selected ? IconBadgeTone.lime : IconBadgeTone.neutral,
-                  size: 34,
+                  size: dense ? 26 : 34,
                 ),
-                const SizedBox(width: Sp.md),
+                SizedBox(width: dense ? Sp.sm : Sp.md),
               ],
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
                       label,
-                      style: text.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: -0.15,
-                      ),
+                      style: dense
+                          ? text.bodyMedium?.copyWith(
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: -0.1,
+                            )
+                          : text.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: -0.15,
+                            ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -878,6 +893,7 @@ class ChoiceTile extends StatelessWidget {
                         caption!,
                         style: text.bodySmall?.copyWith(
                           color: AppColors.inkMuted,
+                          fontSize: dense ? 10.5 : null,
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -886,12 +902,12 @@ class ChoiceTile extends StatelessWidget {
                   ],
                 ),
               ),
-              const SizedBox(width: Sp.sm),
+              SizedBox(width: dense ? Sp.sm : Sp.sm),
               trailing ??
                   AnimatedContainer(
                     duration: const Duration(milliseconds: 160),
-                    width: 22,
-                    height: 22,
+                    width: dense ? 19 : 22,
+                    height: dense ? 19 : 22,
                     decoration: BoxDecoration(
                       color: selected ? AppColors.ink : Colors.transparent,
                       shape: BoxShape.circle,
@@ -901,9 +917,9 @@ class ChoiceTile extends StatelessWidget {
                       ),
                     ),
                     child: selected
-                        ? const Icon(
+                        ? Icon(
                             Icons.check_rounded,
-                            size: 14,
+                            size: dense ? 12 : 14,
                             color: AppColors.lime,
                           )
                         : null,

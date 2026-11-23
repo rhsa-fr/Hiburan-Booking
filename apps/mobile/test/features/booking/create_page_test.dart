@@ -415,4 +415,44 @@ void main() {
     expect(event['venue_address'], 'Jl. Raya Pantura, Indramayu');
     expect(event['venue_location'], {'lat': -6.3271, 'lng': 108.3242});
   });
+
+  testWidgets('label wajib dan opsional dibedakan tanpa legenda', (
+    tester,
+  ) async {
+    await _pumpCreatePage(tester);
+
+    // Each requirement marker lives inside its own field's decoration, so the
+    // required path (nama acara, tanggal, alamat) reads first and the optional
+    // fields stay visibly secondary.
+    Finder markOf(String label, String mark) => find.descendant(
+      of: find.ancestor(
+        of: find.text(label),
+        matching: find.byType(TextFormField),
+      ),
+      matching: find.text(mark),
+    );
+
+    expect(markOf('Nama acara', 'Wajib'), findsOneWidget);
+    expect(markOf('Alamat & patokan', 'Wajib'), findsOneWidget);
+    expect(markOf('Perkiraan jumlah tamu', 'Opsional'), findsOneWidget);
+    expect(markOf('Catatan untuk vendor', 'Opsional'), findsOneWidget);
+    expect(markOf('Nama tempat', 'Opsional'), findsOneWidget);
+    expect(find.text('Jenis acara'), findsOneWidget);
+  });
+
+  testWidgets('label berpenanda tidak memutus validasi dan pesan galat', (
+    tester,
+  ) async {
+    final posted = await _pumpCreatePage(tester);
+
+    await tester.enterText(_textField('Alamat & patokan'), 'pendek');
+    await tester.tap(
+      find.widgetWithText(PrimaryButton, 'Kirim permintaan booking'),
+    );
+    await tester.pump();
+
+    expect(find.text('Nama acara wajib diisi.'), findsOneWidget);
+    expect(find.text('Alamat minimal 10 karakter.'), findsOneWidget);
+    expect(posted.body, isNull);
+  });
 }

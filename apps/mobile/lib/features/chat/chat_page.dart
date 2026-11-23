@@ -44,6 +44,8 @@ class _ChatPageState extends State<ChatPage> {
   String? _error;
   String? _sendError;
   String? _nextBefore;
+  bool _markingRead = false;
+  bool _markReadQueued = false;
 
   ChatSocket? _socket;
   Timer? _reconnectTimer;
@@ -99,12 +101,53 @@ class _ChatPageState extends State<ChatPage> {
         _loading = false;
       });
       _scrollToBottom();
+      _markRead();
     } on ApiException catch (error) {
       if (!mounted) return;
       setState(() {
         _loading = false;
         _error = _messageFor(error);
       });
+    }
+  }
+
+  /// Marks every message the other party sent as read. A receipt is cosmetic:
+  /// failures are swallowed so a flaky network never blocks the chat.
+  Future<void> _markRead() async {
+    if (_markingRead) {
+      _markReadQueued = true;
+      return;
+    }
+    final api = AppScope.of(context).api;
+    _markingRead = true;
+    try {
+      final raw = await api.post(
+        '/bookings/${widget.bookingId}/chat/messages/read',
+        body: const <String, dynamic>{},
+      );
+      if (!mounted || raw is! Map) return;
+      final idsRaw = raw['read_ids'];
+      final readAtRaw = raw['read_at'];
+      final readAt = readAtRaw is String ? DateTime.tryParse(readAtRaw) : null;
+      if (readAt == null || idsRaw is! List) return;
+      final ids = idsRaw.whereType<String>().toSet();
+      if (ids.isEmpty) return;
+      setState(() {
+        for (var i = 0; i < _messages.length; i++) {
+          final message = _messages[i];
+          if (message.readAt == null && ids.contains(message.id)) {
+            _messages[i] = message.withReadAt(readAt.toLocal());
+          }
+        }
+      });
+    } on ApiException {
+      // Read ticks are cosmetic; leave the thread usable.
+    } finally {
+      _markingRead = false;
+      if (_markReadQueued) {
+        _markReadQueued = false;
+        if (mounted && !_disposed) unawaited(_markRead());
+      }
     }
   }
 
@@ -194,13 +237,44 @@ class _ChatPageState extends State<ChatPage> {
         final payload = data['message'];
         if (payload is! Map) return;
         final message = ChatMessage.fromJson(payload.cast<String, dynamic>());
-        if (message != null) _upsert(message);
+        if (message != null) {
+          _upsert(message);
+          // The thread is on screen: whatever the other side just sent is read
+          // as soon as it lands, so the sender's tick flips right away.
+          if (mounted &&
+              message.senderId != AppScope.of(context).session.user?.id) {
+            _markRead();
+          }
+        }
+      case 'read':
+        _applyReadReceipt(data);
       case 'error':
         final text = data['message'];
         if (text is String && text.isNotEmpty && mounted) {
           setState(() => _sendError = text);
         }
     }
+  }
+
+  /// `{"type":"read","message_ids":[...]}` — the other party read these rows,
+  /// so their author sees two ticks instead of one.
+  void _applyReadReceipt(Map<String, dynamic> data) {
+    final bookingId = data['booking_id'];
+    if (bookingId is String && bookingId != widget.bookingId) return;
+    final idsRaw = data['message_ids'];
+    final readAtRaw = data['read_at'];
+    final readAt = readAtRaw is String ? DateTime.tryParse(readAtRaw) : null;
+    if (readAt == null || idsRaw is! List) return;
+    final ids = idsRaw.whereType<String>().toSet();
+    if (ids.isEmpty || !mounted) return;
+    setState(() {
+      for (var i = 0; i < _messages.length; i++) {
+        final message = _messages[i];
+        if (message.readAt == null && ids.contains(message.id)) {
+          _messages[i] = message.withReadAt(readAt.toLocal());
+        }
+      }
+    });
   }
 
   void _onSocketDone() {
@@ -413,81 +487,88 @@ class _ChatPageState extends State<ChatPage> {
   Widget _composer(TextTheme text) {
     return SafeArea(
       top: false,
-      child: Container(
-        decoration: const BoxDecoration(
-          color: AppColors.card,
-          border: Border(top: BorderSide(color: AppColors.line)),
+      // A Scaffold's bottomNavigationBar is not lifted by the keyboard, so the
+      // inset is applied here; closed, it is zero and adds no double gap.
+      child: Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.viewInsetsOf(context).bottom,
         ),
-        padding: const EdgeInsets.fromLTRB(Sp.md, Sp.sm, Sp.md, Sp.sm),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (_sendError != null) ...[
-              AppError(message: _sendError!, compact: true),
-              const SizedBox(height: Sp.sm),
-            ],
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _input,
-                    minLines: 1,
-                    maxLines: 4,
-                    maxLength: 2000,
-                    textInputAction: TextInputAction.send,
-                    onSubmitted: (_) => _send(),
-                    decoration: InputDecoration(
-                      hintText: 'Tulis pesan…',
-                      counterText: '',
-                      isDense: true,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: Sp.md,
-                        vertical: Sp.sm,
-                      ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(Radii.sm),
-                        borderSide: const BorderSide(color: AppColors.line),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(Radii.sm),
-                        borderSide: const BorderSide(color: AppColors.line),
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: Sp.sm),
-                SizedBox(
-                  width: 48,
-                  height: 48,
-                  child: FilledButton(
-                    onPressed: _sending ? null : _send,
-                    style: FilledButton.styleFrom(
-                      padding: EdgeInsets.zero,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(Radii.sm),
-                      ),
-                    ),
-                    child: _sending
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.send_rounded, size: 20),
-                  ),
-                ),
+        child: Container(
+          decoration: const BoxDecoration(
+            color: AppColors.card,
+            border: Border(top: BorderSide(color: AppColors.line)),
+          ),
+          padding: const EdgeInsets.fromLTRB(Sp.md, Sp.sm, Sp.md, Sp.sm),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (_sendError != null) ...[
+                AppError(message: _sendError!, compact: true),
+                const SizedBox(height: Sp.sm),
               ],
-            ),
-            const SizedBox(height: Sp.xs),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'Pesan tersimpan untuk keperluan sengketa.',
-                style: text.labelSmall?.copyWith(color: AppColors.inkMuted),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _input,
+                      minLines: 1,
+                      maxLines: 4,
+                      maxLength: 2000,
+                      textInputAction: TextInputAction.send,
+                      onSubmitted: (_) => _send(),
+                      decoration: InputDecoration(
+                        hintText: 'Tulis pesan…',
+                        counterText: '',
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: Sp.md,
+                          vertical: Sp.sm,
+                        ),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(Radii.sm),
+                          borderSide: const BorderSide(color: AppColors.line),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(Radii.sm),
+                          borderSide: const BorderSide(color: AppColors.line),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: Sp.sm),
+                  SizedBox(
+                    width: 48,
+                    height: 48,
+                    child: FilledButton(
+                      onPressed: _sending ? null : _send,
+                      style: FilledButton.styleFrom(
+                        padding: EdgeInsets.zero,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(Radii.sm),
+                        ),
+                      ),
+                      child: _sending
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.send_rounded, size: 20),
+                    ),
+                  ),
+                ],
               ),
-            ),
-          ],
+              const SizedBox(height: Sp.xs),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Pesan tersimpan untuk keperluan sengketa.',
+                  style: text.labelSmall?.copyWith(color: AppColors.inkMuted),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -543,13 +624,31 @@ class _Bubble extends StatelessWidget {
                   style: text.bodyMedium?.copyWith(color: foreground),
                 ),
                 const SizedBox(height: 2),
-                Text(
-                  formatTime(message.createdAt),
-                  style: text.labelSmall?.copyWith(
-                    color: own
-                        ? AppColors.onPrimary.withValues(alpha: 0.72)
-                        : AppColors.inkMuted,
-                  ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      formatTime(message.createdAt),
+                      style: text.labelSmall?.copyWith(
+                        color: own
+                            ? AppColors.onPrimary.withValues(alpha: 0.72)
+                            : AppColors.inkMuted,
+                      ),
+                    ),
+                    // Delivery state belongs to the sender only: one tick for
+                    // sent, two for read.
+                    if (own) ...[
+                      const SizedBox(width: 4),
+                      Icon(
+                        message.readAt != null ? Icons.done_all : Icons.done,
+                        size: 14,
+                        color: AppColors.onPrimary.withValues(alpha: 0.72),
+                        semanticLabel: message.readAt != null
+                            ? 'dibaca'
+                            : 'terkirim',
+                      ),
+                    ],
+                  ],
                 ),
               ],
             ),

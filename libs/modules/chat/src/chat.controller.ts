@@ -16,7 +16,8 @@ import {
   LIST_CHAT_MESSAGES_QUERY,
   SEND_CHAT_MESSAGE_SCHEMA,
   type ChatMessagePage,
-  type ChatMessageView
+  type ChatMessageView,
+  type ChatReadReceipt
 } from './chat.contracts';
 import { ChatService } from './chat.service';
 
@@ -51,6 +52,17 @@ export class ChatController {
     }
     return {
       data: await this.chat.list(requireBookingId(bookingId), requireUser(request), parsed.data)
+    };
+  }
+
+  @Post('messages/read')
+  @HttpCode(200)
+  async markRead(
+    @Param('bookingId') bookingId: string,
+    @Req() request: AuthenticatedRequest
+  ): Promise<{ data: ChatReadReceipt }> {
+    return {
+      data: await this.chat.markRead(requireBookingId(bookingId), requireUser(request))
     };
   }
 
