@@ -147,6 +147,31 @@ jobs:
             --notes "Tarlink ${{ github.ref_name }}" \
             --out latest.json
 
+      - name: Pastikan bucket Supabase ada
+        if: startsWith(github.ref, 'refs/tags/') && vars.APP_UPDATE_BASE_URL != ''
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_BUCKET: ${{ vars.APP_UPDATE_BUCKET }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "::warning::Service key belum diisi; bucket tidak diperiksa."
+            exit 0
+          fi
+          BUCKET="${SUPABASE_BUCKET:-app-releases}"
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            "$SUPABASE_URL/storage/v1/bucket/$BUCKET" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY")
+          if [ "$CODE" = "200" ]; then
+            echo "bucket $BUCKET sudah ada"
+            exit 0
+          fi
+          curl -fsS -X POST "$SUPABASE_URL/storage/v1/bucket" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"id\":\"$BUCKET\",\"name\":\"$BUCKET\",\"public\":true}" > /dev/null
+          echo "bucket $BUCKET dibuat (public)"
+
       - name: Unggah APK + manifest ke Supabase Storage
         if: startsWith(github.ref, 'refs/tags/') && vars.APP_UPDATE_BASE_URL != ''
         env:
