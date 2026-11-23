@@ -100,6 +100,7 @@ jobs:
           FCM_APP_ID: ${{ vars.FCM_APP_ID }}
           FCM_MESSAGING_SENDER_ID: ${{ vars.FCM_MESSAGING_SENDER_ID }}
           FCM_PROJECT_ID: ${{ vars.FCM_PROJECT_ID }}
+          APP_UPDATE_MANIFEST_URL: ${{ vars.APP_UPDATE_MANIFEST_URL }}
         run: |
           flutter build apk --release --split-per-abi \
             --dart-define=API_BASE_URL="$API_BASE_URL" \
@@ -108,7 +109,8 @@ jobs:
             --dart-define=FCM_API_KEY="$FCM_API_KEY" \
             --dart-define=FCM_APP_ID="$FCM_APP_ID" \
             --dart-define=FCM_MESSAGING_SENDER_ID="$FCM_MESSAGING_SENDER_ID" \
-            --dart-define=FCM_PROJECT_ID="$FCM_PROJECT_ID"
+            --dart-define=FCM_PROJECT_ID="$FCM_PROJECT_ID" \
+            --dart-define=APP_UPDATE_MANIFEST_URL="$APP_UPDATE_MANIFEST_URL"
 
       - name: Siapkan nama berkas
         run: |
@@ -127,6 +129,46 @@ jobs:
           name: tarlink-android-apk
           path: apps/mobile/tarlink-*.apk
           if-no-files-found: error
+
+      - name: Susun manifest pembaruan (latest.json)
+        if: startsWith(github.ref, 'refs/tags/') && vars.APP_UPDATE_BASE_URL != ''
+        run: |
+          VERSION_LINE=$(grep '^version:' pubspec.yaml | sed 's/version: //')
+          VERSION="${VERSION_LINE%%+*}"
+          BUILD="${VERSION_LINE#*+}"
+          if [ "$BUILD" = "$VERSION_LINE" ]; then
+            echo "::error::pubspec.yaml harus memakai format version: X.Y.Z+N"
+            exit 1
+          fi
+          node ../../scripts/publish-apk.mjs . \
+            --version "$VERSION" \
+            --build "$BUILD" \
+            --base-url "${{ vars.APP_UPDATE_BASE_URL }}" \
+            --notes "Tarlink ${{ github.ref_name }}" \
+            --out latest.json
+
+      - name: Unggah APK + manifest ke Supabase Storage
+        if: startsWith(github.ref, 'refs/tags/') && vars.APP_UPDATE_BASE_URL != ''
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_BUCKET: ${{ vars.APP_UPDATE_BUCKET }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "::warning::SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY belum diisi; APK tetap tersedia di GitHub Release, manifest tidak diunggah."
+            exit 0
+          fi
+          BUCKET="${SUPABASE_BUCKET:-app-releases}"
+          for f in tarlink-*.apk latest.json; do
+            curl -fsS -X POST "$SUPABASE_URL/storage/v1/object/$BUCKET/$f" \
+              -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+              -H "x-upsert: true" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary "@$f" > /dev/null
+            echo "unggah $BUCKET/$f"
+          done
+          curl -fsS "${{ vars.APP_UPDATE_BASE_URL }}/latest.json" | head -c 400
+          echo
 
       - name: Buat GitHub Release
         if: startsWith(github.ref, 'refs/tags/')

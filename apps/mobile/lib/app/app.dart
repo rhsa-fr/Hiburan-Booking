@@ -1,12 +1,18 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 
 import '../core/api_client.dart';
 import '../core/notifications.dart';
 import '../core/push.dart';
 import '../core/session.dart';
+import '../features/update/app_update_channel.dart';
+import '../features/update/app_update_models.dart';
+import '../features/update/app_update_service.dart';
+import '../features/update/update_dialog.dart';
 import 'routes.dart';
 import 'theme.dart';
 
@@ -17,6 +23,7 @@ class AppScope extends InheritedNotifier<Session> {
     required Session session,
     required this.api,
     this.push,
+    this.update,
     required super.child,
   }) : super(notifier: session);
 
@@ -26,6 +33,10 @@ class AppScope extends InheritedNotifier<Session> {
   /// is still valid, otherwise the old account keeps receiving pushes. Null in
   /// widget tests that only exercise screens.
   final PushService? push;
+
+  /// In-app APK update. Null on web, iOS, widget tests, and builds without
+  /// `APP_UPDATE_MANIFEST_URL`, which keeps every channel call off.
+  final AppUpdateService? update;
 
   Session get session => notifier!;
 
@@ -49,11 +60,24 @@ class TarlinkApp extends StatefulWidget {
   State<TarlinkApp> createState() => _TarlinkAppState();
 }
 
-class _TarlinkAppState extends State<TarlinkApp> {
+class _TarlinkAppState extends State<TarlinkApp> with WidgetsBindingObserver {
   final _navigatorKey = GlobalKey<NavigatorState>();
   final _messengerKey = GlobalKey<ScaffoldMessengerState>();
   late final NotificationPoller _poller;
   late final PushService _push;
+
+  /// Update check plumbing. All of it stays null unless the build is Android
+  /// and carries a manifest URL, so widget tests never open a socket or a
+  /// platform channel.
+  AppUpdateService? _updateService;
+  http.Client? _updateClient;
+  DateTime? _lastUpdateCheck;
+  bool _updateCheckRunning = false;
+  bool _updateDialogOpen = false;
+
+  /// A foreground return re-checks at most this often: the manifest is static
+  /// and a re-check on every resume would just burn data.
+  static const _updateRecheckInterval = Duration(hours: 6);
 
   /// Last popup shown, so a push and the poller do not print the same event
   /// twice inside one poll interval.
@@ -71,7 +95,28 @@ class _TarlinkAppState extends State<TarlinkApp> {
     _push = PushService(onForeground: _showPushPopup);
     widget.session.addListener(_syncDelivery);
     _syncDelivery();
+
+    if (_updateSupported) {
+      _updateClient = http.Client();
+      _updateService = AppUpdateService(
+        client: _updateClient!,
+        channel: MethodChannelAppUpdateChannel(),
+        manifestUrl: appUpdateManifestUrl,
+      );
+      WidgetsBinding.instance.addObserver(this);
+      // After the first frame: a slow manifest must never delay startup.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        unawaited(_checkForUpdate());
+      });
+    }
   }
+
+  /// Android only. `defaultTargetPlatform` keeps `dart:io` out of the web
+  /// bundle, which is why the check is not spelled `Platform.isAndroid`.
+  static bool get _updateSupported =>
+      !kIsWeb &&
+      defaultTargetPlatform == TargetPlatform.android &&
+      appUpdateManifestUrl.trim().isNotEmpty;
 
   /// Deliver only while a session exists: stop polling, drop the device token,
   /// and stop routing pushes the moment the user signs out.
@@ -163,9 +208,78 @@ class _TarlinkAppState extends State<TarlinkApp> {
     );
   }
 
+  /// One silent check, or one manual check triggered from the account tab.
+  /// Errors stay quiet unless the user asked for the check themselves.
+  Future<void> _checkForUpdate({bool manual = false}) async {
+    final service = _updateService;
+    final context = _navigatorKey.currentContext;
+    if (service == null || context == null) return;
+    if (_updateCheckRunning || _updateDialogOpen) return;
+
+    _updateCheckRunning = true;
+    _updateDialogOpen = true;
+    try {
+      final outcome = await runAppUpdateCheck(
+        context,
+        service: service,
+        manual: manual,
+      );
+      if (manual && outcome == AppUpdateCheckOutcome.noUpdate) {
+        _messengerKey.currentState?.showSnackBar(
+          const SnackBar(content: Text('Tarlink sudah versi terbaru.')),
+        );
+      }
+    } on AppUpdateException catch (error) {
+      if (manual) {
+        _messengerKey.currentState?.showSnackBar(
+          SnackBar(content: Text(error.message)),
+        );
+      }
+    } catch (_) {
+      if (manual) {
+        _messengerKey.currentState?.showSnackBar(
+          const SnackBar(content: Text('Pemeriksaan pembaruan gagal.')),
+        );
+      }
+    } finally {
+      _lastUpdateCheck = DateTime.now();
+      _updateCheckRunning = false;
+      _updateDialogOpen = false;
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    unawaited(_resumeUpdate());
+  }
+
+  /// A permission flow leaves a verified APK behind: install it instead of
+  /// asking again. Otherwise re-check, but only after the cooldown.
+  Future<void> _resumeUpdate() async {
+    final service = _updateService;
+    if (service == null) return;
+    if (_updateDialogOpen) return;
+
+    if (service.hasPendingInstall) {
+      await service.installPending();
+      _lastUpdateCheck = DateTime.now();
+      return;
+    }
+
+    final last = _lastUpdateCheck;
+    if (last != null &&
+        DateTime.now().difference(last) < _updateRecheckInterval) {
+      return;
+    }
+    await _checkForUpdate();
+  }
+
   @override
   void dispose() {
     widget.session.removeListener(_syncDelivery);
+    if (_updateService != null) WidgetsBinding.instance.removeObserver(this);
+    _updateClient?.close();
     _poller.stop();
     unawaited(_push.stop());
     super.dispose();
@@ -177,6 +291,7 @@ class _TarlinkAppState extends State<TarlinkApp> {
       session: widget.session,
       api: widget.api,
       push: _push,
+      update: _updateService,
       child: MaterialApp(
         title: 'Tarlink',
         debugShowCheckedModeBanner: false,

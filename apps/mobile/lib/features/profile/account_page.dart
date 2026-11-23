@@ -10,6 +10,8 @@ import '../../core/models.dart';
 import '../../core/ui.dart';
 import '../../core/widgets.dart';
 import '../booking/booking_support.dart';
+import '../update/app_update_models.dart';
+import '../update/update_dialog.dart';
 import 'vendor_apply_page.dart';
 
 /// Support line the customer can reach from the account tab.
@@ -30,6 +32,8 @@ class _AccountPageState extends State<AccountPage> {
   bool _started = false;
   bool _signingOut = false;
   bool _deletingAccount = false;
+  String? _versionName;
+  bool _checkingUpdate = false;
 
   @override
   void didChangeDependencies() {
@@ -38,6 +42,56 @@ class _AccountPageState extends State<AccountPage> {
     _started = true;
     _user = AppScope.of(context).session.user;
     _load();
+    _loadVersion();
+  }
+
+  /// Installed version comes from the native channel; when it is absent (web,
+  /// iOS, tests) the footer shows the app name without a made-up number.
+  Future<void> _loadVersion() async {
+    final update = AppScope.of(context).update;
+    if (update == null) return;
+    try {
+      final device = await update.deviceInfo();
+      if (!mounted) return;
+      setState(() => _versionName = device.versionName);
+    } catch (_) {
+      // Channel unavailable: keep the plain app name.
+    }
+  }
+
+  /// "Tarlink · Versi 1.0.2"; the name alone when the channel is absent.
+  String get _versionLabel {
+    final name = _versionName?.trim() ?? '';
+    return name.isEmpty ? 'Tarlink' : 'Tarlink · Versi $name';
+  }
+
+  /// Manual check. Only this path shows a snackbar: silent startup checks stay
+  /// silent on failure.
+  Future<void> _checkUpdate() async {
+    final update = AppScope.of(context).update;
+    if (update == null || _checkingUpdate) return;
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _checkingUpdate = true);
+    try {
+      final outcome = await runAppUpdateCheck(
+        context,
+        service: update,
+        manual: true,
+      );
+      if (outcome == AppUpdateCheckOutcome.noUpdate) {
+        messenger.showSnackBar(
+          const SnackBar(content: Text('Tarlink sudah versi terbaru.')),
+        );
+      }
+    } on AppUpdateException catch (error) {
+      messenger.showSnackBar(SnackBar(content: Text(error.message)));
+    } catch (_) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Pemeriksaan pembaruan gagal.')),
+      );
+    } finally {
+      if (mounted) setState(() => _checkingUpdate = false);
+    }
   }
 
   Future<void> _load() async {
@@ -172,6 +226,7 @@ class _AccountPageState extends State<AccountPage> {
   @override
   Widget build(BuildContext context) {
     final user = _user;
+    final update = AppScope.of(context).update;
     final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
 
     return Scaffold(
@@ -270,6 +325,21 @@ class _AccountPageState extends State<AccountPage> {
                           label: 'Bantuan via WhatsApp',
                           onTap: _openWhatsApp,
                         ),
+                        if (update != null)
+                          _MenuRow(
+                            icon: Icons.system_update_alt_rounded,
+                            label: 'Cek pembaruan',
+                            onTap: _checkingUpdate ? null : _checkUpdate,
+                            trailing: _checkingUpdate
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : null,
+                          ),
                       ]),
                       const SizedBox(height: Sp.xl),
                       const _ProfileSectionTitle('Akun'),
@@ -310,7 +380,7 @@ class _AccountPageState extends State<AccountPage> {
                       ]),
                       const SizedBox(height: Sp.xl),
                       Text(
-                        'Tarlink Â· Versi 0.1.0',
+                        _versionLabel,
                         textAlign: TextAlign.center,
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: AppColors.inkMuted,
