@@ -19,7 +19,7 @@ dibayar mahal lewat bug.
 
 ### Durasi paket (ADR 0042)
 - Form paket vendor memakai pilihan **Setengah hari (360) / 1 hari (600) /
-  Full day (840) / Lainnya**, nilai tetap disimpan sebagai `duration_minutes`.
+  Full day (720) / Lainnya**, nilai tetap disimpan sebagai `duration_minutes`.
 - Jangan menampilkan durasi paket dengan cara sendiri di fitur baru; pakai
   `packageDurationLabel()` di `lib/core/format.dart`.
 - Paket lama yang durasinya bukan salah satu preset **tidak dibulatkan**; tampil

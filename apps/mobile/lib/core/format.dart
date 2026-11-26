@@ -89,12 +89,14 @@ String sessionLabel(String session) => switch (session.toLowerCase()) {
 };
 
 /// The three durations a vendor can pick without typing (ADR 0042).
-/// Half day = 6 h, one day = 10 h, full day = 14 h; the backend still stores
-/// plain minutes, so `packages.duration_minutes` and its 30–1440 CHECK hold.
+/// Half day = 6 h, one day = 10 h, full day = 12 h; the API still stores plain
+/// minutes, so `packages.duration_minutes` and its 30–1440 CHECK hold.
+/// Production already ships 12-hour packages, so full day is 12 h rather than
+/// a 14 h preset nobody used.
 enum PackageDurationOption {
   halfDay(360, 'Setengah hari', '6 jam'),
   oneDay(600, '1 hari', '10 jam'),
-  fullDay(840, 'Full day', '14 jam');
+  fullDay(720, 'Full day', '12 jam');
 
   const PackageDurationOption(this.minutes, this.label, this.hoursLabel);
 
@@ -113,17 +115,18 @@ PackageDurationOption? packageDurationOption(int minutes) {
   return null;
 }
 
-/// Customer-facing duration. Presets read as words ("Setengah hari (6 jam)").
-/// Custom values stay literal so nobody is told a 3-hour package lasts 6 hours.
+/// Customer-facing duration, always in hours. Presets read as words
+/// ("Setengah hari (6 jam)"); custom values stay literal in hours
+/// ("3 jam", "1,5 jam") so nobody reads a different unit than they typed.
 String packageDurationLabel(int minutes) {
   if (minutes <= 0) return 'Durasi belum diisi';
   final preset = packageDurationOption(minutes);
   if (preset != null) return preset.display;
-  final hours = minutes ~/ 60;
-  final rest = minutes % 60;
-  if (hours == 0) return '$rest menit';
-  if (rest == 0) return '$hours jam';
-  return '$hours jam $rest menit';
+  final hours = minutes / 60;
+  final text = hours == hours.roundToDouble()
+      ? hours.toStringAsFixed(0)
+      : hours.toStringAsFixed(1);
+  return '${text.replaceAll('.', ',')} jam';
 }
 
 /// Minutes → the text a vendor sees in the custom-hours field: 180 → "3".

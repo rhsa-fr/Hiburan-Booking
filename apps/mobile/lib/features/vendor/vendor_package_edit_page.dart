@@ -475,8 +475,7 @@ class _DurationPicker extends StatelessWidget {
             controller: controller,
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
             hint: '3',
-            helper:
-                'Boleh desimal, mis. 1,5 untuk 90 menit. Rentang 0,5–24 jam.',
+            helper: 'Boleh desimal, mis. 1,5 untuk 1 jam 30. Rentang 0,5–24 jam.',
           ),
         ],
       ],
