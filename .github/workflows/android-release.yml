@@ -216,9 +216,9 @@ jobs:
           body: |
             APK Android Tarlink ${{ github.ref_name }}, dipecah per ABI.
 
-            - `arm64-v8a` â€” HP Android modern (pakai ini)
-            - `armeabi-v7a` â€” HP lama 32-bit
-            - `x86_64` â€” emulator
+            - `arm64-v8a` — HP Android modern (pakai ini)
+            - `armeabi-v7a` — HP lama 32-bit
+            - `x86_64` — emulator
 
             - API: `${{ vars.API_BASE_URL }}`
             - Commit: `${{ github.sha }}`
