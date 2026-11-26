@@ -1957,17 +1957,32 @@ class _DateButton extends StatelessWidget {
     final text = Theme.of(context).textTheme;
     final parsed = DateTime.tryParse(date);
     final weekday = parsed == null ? '' : _weekdays[parsed.weekday - 1];
+    final label = booked
+        ? 'Terisi'
+        : uncertain
+        ? 'Belum pasti'
+        : 'Tersedia';
+    final labelBackground = selected
+        ? AppColors.limeDark
+        : booked
+        ? AppColors.neutralSoft
+        : uncertain
+        ? AppColors.warningSoft
+        : AppColors.accentSoft;
+    final labelColor = selected
+        ? AppColors.onLime
+        : booked
+        ? AppColors.inkMuted
+        : uncertain
+        ? AppColors.warning
+        : AppColors.accent;
     return Semantics(
       button: true,
       selected: selected,
       enabled: true,
       label:
           '${parsed == null ? date : formatDate(parsed)}'
-          '${booked
-              ? ', sudah terisi'
-              : uncertain
-              ? ', belum dikonfirmasi'
-              : ''}',
+          ', $label',
       excludeSemantics: true,
       child: Material(
         color: Colors.transparent,
@@ -1992,79 +2007,84 @@ class _DateButton extends StatelessWidget {
                 width: selected ? 1.5 : 1,
               ),
             ),
-            child: Row(
+            child: Column(
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (uncertain) ...[
-                  Container(
-                    width: 6,
-                    height: 6,
-                    decoration: BoxDecoration(
-                      color: selected ? AppColors.onLime : AppColors.warning,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(width: Sp.xs + 2),
-                ],
-                Column(
+                Row(
                   mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          weekday.toUpperCase(),
+                    Text(
+                      weekday.toUpperCase(),
+                      style: text.labelSmall?.copyWith(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.5,
+                        color: selected
+                            ? AppColors.onLime.withValues(alpha: 0.8)
+                            : AppColors.inkMuted,
+                      ),
+                    ),
+                    if (parsed != null) ...[
+                      const SizedBox(width: 4),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 1,
+                        ),
+                        decoration: BoxDecoration(
+                          color: selected
+                              ? AppColors.limeDark
+                              : AppColors.surfaceSoft,
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                        child: Text(
+                          '${parsed.year}',
                           style: text.labelSmall?.copyWith(
                             fontSize: 10,
                             fontWeight: FontWeight.w700,
-                            letterSpacing: 0.5,
                             color: selected
-                                ? AppColors.onLime.withValues(alpha: 0.8)
+                                ? AppColors.onLime
                                 : AppColors.inkMuted,
                           ),
                         ),
-                        if (parsed != null) ...[
-                          const SizedBox(width: 4),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 4,
-                              vertical: 1,
-                            ),
-                            decoration: BoxDecoration(
-                              color: selected
-                                  ? AppColors.limeDark
-                                  : AppColors.surfaceSoft,
-                              borderRadius: BorderRadius.circular(3),
-                            ),
-                            child: Text(
-                              '${parsed.year}',
-                              style: text.labelSmall?.copyWith(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w700,
-                                color: selected
-                                    ? AppColors.onLime
-                                    : AppColors.inkMuted,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      parsed == null ? date : formatDayMonth(parsed),
-                      style: text.titleMedium?.copyWith(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                        color: selected
-                            ? AppColors.onLime
-                            : booked
-                            ? AppColors.inkMuted
-                            : AppColors.ink,
                       ),
-                    ),
+                    ],
                   ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  parsed == null ? date : formatDayMonth(parsed),
+                  style: text.titleMedium?.copyWith(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: selected
+                        ? AppColors.onLime
+                        : booked
+                        ? AppColors.inkMuted
+                        : AppColors.ink,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 5,
+                    vertical: 1,
+                  ),
+                  decoration: BoxDecoration(
+                    color: labelBackground,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    style: text.labelSmall?.copyWith(
+                      fontSize: 9,
+                      height: 1.15,
+                      fontWeight: FontWeight.w800,
+                      color: labelColor,
+                    ),
+                  ),
                 ),
               ],
             ),

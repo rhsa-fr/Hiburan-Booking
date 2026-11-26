@@ -107,9 +107,12 @@ void main() {
         );
 
         expect(find.text('Saldo & Laporan'), findsOneWidget);
-        expect(find.text('Saldo Tertahan (Escrow PJP)'), findsOneWidget);
+        expect(find.text('BISA DICAIRKAN'), findsOneWidget);
         expect(find.text('Rp13.500.000'), findsOneWidget);
-        expect(find.textContaining('jendela sengketa lewat'), findsOneWidget);
+        expect(
+          find.text('Saldo yang sudah bisa kamu cairkan.'),
+          findsOneWidget,
+        );
         expect(find.text('BK-261027-001'), findsOneWidget);
         expect(find.text('Pentas Tarling Indramayu'), findsOneWidget);
         expect(find.text('+Rp4.500.000'), findsOneWidget);

@@ -1557,7 +1557,7 @@ class _VendorPageState extends State<VendorPage> {
       );
     }
     return SizedBox(
-      height: 76,
+      height: 86,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         clipBehavior: Clip.none,
@@ -2275,14 +2275,14 @@ class _DateChip extends StatelessWidget {
     final blocked = state == 'blocked';
     final waiting = state == 'waiting';
     final background = selected
-        ? AppColors.ink
+        ? AppColors.stage
         : blocked
         ? AppColors.surfaceSoft
         : waiting
         ? AppColors.warningSoft
         : AppColors.card;
     final borderColor = selected
-        ? AppColors.ink
+        ? AppColors.stage
         : blocked
         ? AppColors.line
         : waiting
@@ -2300,13 +2300,25 @@ class _DateChip extends StatelessWidget {
         : blocked
         ? AppColors.muted2
         : AppColors.ink;
-    final dotColor = selected
+    final label = blocked
+        ? 'Terisi'
+        : waiting
+        ? 'Belum pasti'
+        : 'Tersedia';
+    final labelBackground = selected
         ? AppColors.lime
         : blocked
         ? AppColors.surfaceHighest
         : waiting
+        ? AppColors.warningSoft
+        : AppColors.limeSoft;
+    final labelColor = selected
+        ? AppColors.onLime
+        : blocked
+        ? AppColors.muted2
+        : waiting
         ? AppColors.warning
-        : AppColors.limeDark;
+        : AppColors.accent;
 
     return Semantics(
       button: true,
@@ -2314,12 +2326,7 @@ class _DateChip extends StatelessWidget {
       enabled: true,
       label:
           '${_weekdayShort[date.weekday - 1]} ${date.day} '
-          '${_monthShort[date.month - 1]}'
-          '${blocked
-              ? ', sudah terisi'
-              : waiting
-              ? ', belum pasti'
-              : ''}',
+          '${_monthShort[date.month - 1]}, $label',
       excludeSemantics: true,
       child: Material(
         color: background,
@@ -2331,8 +2338,8 @@ class _DateChip extends StatelessWidget {
         child: InkWell(
           onTap: onTap,
           child: SizedBox(
-            width: 58,
-            height: 76,
+            width: 62,
+            height: 86,
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -2368,12 +2375,27 @@ class _DateChip extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 4),
-                Container(
-                  width: 5,
-                  height: 5,
-                  decoration: BoxDecoration(
-                    color: dotColor,
-                    shape: BoxShape.circle,
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 4,
+                      vertical: 1,
+                    ),
+                    decoration: BoxDecoration(
+                      color: labelBackground,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      style: TextStyle(
+                        fontSize: 9,
+                        height: 1.15,
+                        fontWeight: FontWeight.w800,
+                        color: labelColor,
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -2414,11 +2436,14 @@ class _LegendDot extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          width: 6,
-          height: 6,
-          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(3),
+          ),
         ),
-        const SizedBox(width: 4),
+        const SizedBox(width: 5),
         Text(
           label,
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
