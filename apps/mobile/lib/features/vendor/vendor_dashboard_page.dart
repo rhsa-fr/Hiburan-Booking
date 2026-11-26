@@ -7,6 +7,7 @@ import '../../core/format.dart';
 import '../../core/models.dart';
 import '../booking/booking_support.dart';
 import 'vendor_booking_detail_page.dart';
+import 'vendor_day_state.dart';
 import 'vendor_header.dart';
 import 'vendor_theme.dart';
 import 'vendor_ui.dart';
@@ -762,9 +763,10 @@ class _VendorDashboardPageState extends State<VendorDashboardPage> {
               spacing: 12,
               runSpacing: 4,
               children: [
-                _WeekLegend(color: VendorColors.ink, label: 'Terisi'),
-                _WeekLegend(color: VendorColors.limeDark, label: 'Tersedia'),
-                _WeekLegend(color: VendorColors.amber, label: 'Ditahan'),
+                _WeekLegend(color: VendorColors.lime, label: 'Buka'),
+                _WeekLegend(color: VendorColors.amber, label: 'Sebagian'),
+                _WeekLegend(color: VendorColors.ink, label: 'Penuh'),
+                _WeekLegend(color: VendorColors.danger, label: 'Tutup'),
                 _WeekLegend(color: VendorColors.line, label: 'Kosong'),
               ],
             ),
@@ -1335,6 +1337,28 @@ class _WeekCell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final state = aggregateVendorDayState(dayState, nightState);
+    final label = vendorDayStateLabel(state);
+    final (background, foreground, border) = switch (state) {
+      'open' => (
+        VendorColors.lime,
+        VendorColors.onLime,
+        VendorColors.limeDark,
+      ),
+      'held' || 'partial' => (
+        VendorColors.waitBg,
+        VendorColors.waitFg,
+        VendorColors.amber.withValues(alpha: 0.40),
+      ),
+      'full' => (VendorColors.stage, Colors.white, VendorColors.stage),
+      'blocked' => (
+        VendorColors.danger.withValues(alpha: 0.12),
+        VendorColors.danger,
+        VendorColors.danger.withValues(alpha: 0.35),
+      ),
+      _ => (VendorColors.softRow, VendorColors.muted, VendorColors.lineSoft),
+    };
+
     return Column(
       children: [
         Text(
@@ -1354,38 +1378,33 @@ class _WeekCell extends StatelessWidget {
           style: vendorText(size: 13, weight: FontWeight.w700),
         ),
         const SizedBox(height: 5),
-        _SlotBar(state: dayState),
-        const SizedBox(height: 3),
-        _SlotBar(state: nightState),
+        Container(
+          height: 18,
+          alignment: Alignment.center,
+          padding: const EdgeInsets.symmetric(horizontal: 3),
+          decoration: BoxDecoration(
+            color: background,
+            borderRadius: BorderRadius.circular(5),
+            border: Border.all(color: border),
+          ),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              label,
+              maxLines: 1,
+              style: vendorText(
+                size: 9,
+                weight: FontWeight.w800,
+                color: foreground,
+                height: 1.1,
+              ),
+            ),
+          ),
+        ),
       ],
     );
   }
 }
-
-class _SlotBar extends StatelessWidget {
-  const _SlotBar({required this.state});
-
-  final String? state;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 7,
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: _slotColor(state),
-        borderRadius: BorderRadius.circular(3),
-      ),
-    );
-  }
-}
-
-Color _slotColor(String? state) => switch (state) {
-  'available' => VendorColors.limeDark,
-  'held' => VendorColors.amber,
-  'booked' => VendorColors.ink,
-  _ => VendorColors.line,
-};
 
 class _WeekLegend extends StatelessWidget {
   const _WeekLegend({required this.color, required this.label});
@@ -1400,10 +1419,10 @@ class _WeekLegend extends StatelessWidget {
       children: [
         Container(
           width: 10,
-          height: 4,
+          height: 10,
           decoration: BoxDecoration(
             color: color,
-            borderRadius: BorderRadius.circular(1),
+            borderRadius: BorderRadius.circular(3),
           ),
         ),
         const SizedBox(width: 4),

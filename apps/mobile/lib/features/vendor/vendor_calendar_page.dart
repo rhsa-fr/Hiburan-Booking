@@ -6,6 +6,7 @@ import '../../app/theme.dart';
 import '../../core/api_exception.dart';
 import '../../core/format.dart';
 import '../booking/booking_support.dart';
+import 'vendor_day_state.dart';
 import 'vendor_header.dart';
 import 'vendor_theme.dart';
 import 'vendor_ui.dart';
@@ -573,11 +574,11 @@ class _VendorCalendarPageState extends State<VendorCalendarPage> {
           spacing: 12,
           runSpacing: 5,
           children: [
-            _Legend(color: VendorColors.limeDark, label: 'Tersedia'),
-            _Legend(color: VendorColors.amber, label: 'Ditahan'),
-            _Legend(color: VendorColors.ink, label: 'Dipesan'),
+            _Legend(color: VendorColors.lime, label: 'Buka'),
+            _Legend(color: VendorColors.amber, label: 'Ditahan / sebagian'),
+            _Legend(color: VendorColors.ink, label: 'Penuh'),
             _Legend(color: VendorColors.danger, label: 'Tutup'),
-            _Legend(color: VendorColors.line, label: 'Belum diisi'),
+            _Legend(color: VendorColors.line, label: 'Kosong'),
           ],
         ),
         VendorSectionTitle(label: 'Agenda', trailing: formatDate(_selected)),
@@ -620,29 +621,36 @@ class _VendorCalendarPageState extends State<VendorCalendarPage> {
 
   Widget _dayCell(int year, int month, int daysInMonth, int day) {
     if (day < 1 || day > daysInMonth) {
-      return const SizedBox(height: 46);
+      return const SizedBox(height: 58);
     }
     final date = DateTime(year, month, day);
     final key = isoDate(date);
     final selected = _sameDay(date, _selected);
-    final dayState = _availability['$key|day'];
-    final nightState = _availability['$key|night'];
+    final state = aggregateVendorDayState(
+      _availability['$key|day'],
+      _availability['$key|night'],
+    );
+    final look = _dayLook(state, selected);
 
     return Padding(
-      padding: const EdgeInsets.all(1),
+      padding: const EdgeInsets.all(1.5),
       child: Semantics(
         button: true,
         selected: selected,
-        label: 'Tanggal ${formatDate(date)}',
+        label: 'Tanggal ${formatDate(date)}, ${look.label}',
         child: InkWell(
           onTap: () => setState(() => _selected = date),
-          borderRadius: BorderRadius.circular(7),
+          borderRadius: BorderRadius.circular(9),
           child: Container(
-            height: 46,
-            padding: const EdgeInsets.symmetric(vertical: 5),
+            height: 58,
+            padding: const EdgeInsets.symmetric(vertical: 4),
             decoration: BoxDecoration(
-              color: selected ? VendorColors.stage : Colors.transparent,
-              borderRadius: BorderRadius.circular(7),
+              color: look.background,
+              borderRadius: BorderRadius.circular(9),
+              border: Border.all(
+                color: look.border,
+                width: selected ? 1.6 : 1,
+              ),
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -650,19 +658,34 @@ class _VendorCalendarPageState extends State<VendorCalendarPage> {
                 Text(
                   '$day',
                   style: vendorText(
-                    size: 12.5,
-                    weight: selected ? FontWeight.w700 : FontWeight.w600,
-                    color: selected ? Colors.white : VendorColors.ink,
+                    size: 13.5,
+                    weight: FontWeight.w800,
+                    color: look.dateColor,
                   ),
                 ),
-                const SizedBox(height: 5),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    _SlotDot(state: dayState, selected: selected),
-                    const SizedBox(width: 2),
-                    _SlotDot(state: nightState, selected: selected),
-                  ],
+                const SizedBox(height: 3),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 1,
+                    ),
+                    decoration: BoxDecoration(
+                      color: look.badge,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      look.label,
+                      maxLines: 1,
+                      style: vendorText(
+                        size: 9.5,
+                        weight: FontWeight.w800,
+                        color: look.badgeText,
+                        height: 1.15,
+                      ),
+                    ),
+                  ),
                 ),
               ],
             ),
@@ -670,6 +693,72 @@ class _VendorCalendarPageState extends State<VendorCalendarPage> {
         ),
       ),
     );
+  }
+
+  /// Aggregates the two sessions into one label a non-technical owner can read
+  /// at a glance. Two 4px dots were unreadable on a phone at arm's length.
+  ({Color background, Color border, Color dateColor, Color badge, Color badgeText, String label})
+  _dayLook(String state, bool selected) {
+    if (selected) {
+      return (
+        background: VendorColors.stage,
+        border: VendorColors.lime,
+        dateColor: Colors.white,
+        badge: VendorColors.lime,
+        badgeText: VendorColors.onLime,
+        label: vendorDayStateLabel(state),
+      );
+    }
+    return switch (state) {
+      'open' => (
+        background: VendorColors.limeSoft,
+        border: VendorColors.limeDark.withValues(alpha: 0.55),
+        dateColor: VendorColors.ink,
+        badge: VendorColors.lime,
+        badgeText: VendorColors.onLime,
+        label: vendorDayStateLabel(state),
+      ),
+      'held' => (
+        background: VendorColors.waitBg,
+        border: VendorColors.amber.withValues(alpha: 0.40),
+        dateColor: VendorColors.ink,
+        badge: VendorColors.waitBg,
+        badgeText: VendorColors.waitFg,
+        label: vendorDayStateLabel(state),
+      ),
+      'partial' => (
+        background: VendorColors.waitBg,
+        border: VendorColors.amber.withValues(alpha: 0.40),
+        dateColor: VendorColors.ink,
+        badge: VendorColors.waitBg,
+        badgeText: VendorColors.waitFg,
+        label: vendorDayStateLabel(state),
+      ),
+      'full' => (
+        background: VendorColors.doneBg,
+        border: VendorColors.line,
+        dateColor: VendorColors.ink,
+        badge: VendorColors.stage,
+        badgeText: Colors.white,
+        label: vendorDayStateLabel(state),
+      ),
+      'blocked' => (
+        background: VendorColors.danger.withValues(alpha: 0.12),
+        border: VendorColors.danger.withValues(alpha: 0.35),
+        dateColor: VendorColors.ink,
+        badge: VendorColors.danger.withValues(alpha: 0.16),
+        badgeText: VendorColors.danger,
+        label: vendorDayStateLabel(state),
+      ),
+      _ => (
+        background: VendorColors.softRow,
+        border: VendorColors.lineSoft,
+        dateColor: VendorColors.muted,
+        badge: VendorColors.lineSoft,
+        badgeText: VendorColors.muted,
+        label: vendorDayStateLabel(state),
+      ),
+    };
   }
 
   Widget _agenda() {
@@ -774,45 +863,6 @@ class _AgendaRow extends StatelessWidget {
   }
 }
 
-class _SlotDot extends StatelessWidget {
-  const _SlotDot({required this.state, required this.selected});
-
-  final String? state;
-  final bool selected;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 4,
-      height: 4,
-      decoration: BoxDecoration(
-        color: _slotColor(state, selected),
-        shape: BoxShape.circle,
-      ),
-    );
-  }
-}
-
-Color _slotColor(String? state, bool selected) {
-  if (selected) {
-    return switch (state) {
-      'available' => VendorColors.lime,
-      'held' => VendorColors.amber,
-      'booked' => Colors.white,
-      'unconfirmed' || 'stale' => Colors.white54,
-      _ => Colors.white24,
-    };
-  }
-  return switch (state) {
-    'available' => VendorColors.limeDark,
-    'held' => VendorColors.amber,
-    'booked' => VendorColors.ink,
-    'blocked' => VendorColors.danger,
-    'unconfirmed' || 'stale' => VendorColors.line,
-    _ => VendorColors.line,
-  };
-}
-
 class _Legend extends StatelessWidget {
   const _Legend({required this.color, required this.label});
 
@@ -825,11 +875,14 @@ class _Legend extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          width: 8,
-          height: 8,
-          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(3),
+          ),
         ),
-        const SizedBox(width: 4),
+        const SizedBox(width: 5),
         Text(label, style: vendorText(size: 11, color: VendorColors.muted)),
       ],
     );
