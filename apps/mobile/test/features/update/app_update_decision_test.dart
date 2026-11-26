@@ -58,6 +58,48 @@ void main() {
       expect(info!.forced, isTrue);
     });
 
+    // Regresi production 2026-11-26: APK split membawa prefix ABI pada
+    // versionCode (1000/2000/4000), sehingga 1.0.3 melaporkan 2004 dan
+    // perbandingan langsung dengan build_number 5 selalu "sudah terbaru".
+    group('versionCode APK split ber-prefix ABI', () {
+      for (final (abi, code) in [
+        ('armeabi-v7a', 1004),
+        ('arm64-v8a', 2004),
+        ('x86_64', 4004),
+      ]) {
+        test('$abi build 4 melihat build 5 sebagai pembaruan', () {
+          final info = decideAppUpdate(
+            manifest: parse(
+              buildNumber: 5,
+              artifacts: [
+                artifact(abi: abi),
+              ],
+            ),
+            device: deviceInfo(versionCode: code, abis: [abi]),
+          );
+          expect(info, isNotNull, reason: '$code harus dinormalkan ke 4');
+          expect(info!.buildNumber, 5);
+        });
+      }
+
+      test('build yang sama setelah dinormalkan tidak menawarkan apa pun', () {
+        final info = decideAppUpdate(
+          manifest: parse(buildNumber: 5),
+          device: deviceInfo(versionCode: 2005),
+        );
+        expect(info, isNull);
+      });
+
+      test('forced memakai build number yang sudah dinormalkan', () {
+        final info = decideAppUpdate(
+          manifest: parse(buildNumber: 6, minSupportedBuild: 6),
+          device: deviceInfo(versionCode: 2005),
+        );
+        expect(info, isNotNull);
+        expect(info!.forced, isTrue);
+      });
+    });
+
     test('min_supported_build sama dengan versi terpasang tidak memaksa', () {
       final info = decideAppUpdate(
         manifest: parse(buildNumber: 5, minSupportedBuild: 3),

@@ -233,6 +233,17 @@ class AppUpdateInfo {
   int get sizeBytes => artifact.sizeBytes;
 }
 
+/// The pubspec build number as reported by Android, with Flutter's split-APK
+/// ABI prefix removed.
+///
+/// `flutter build apk --split-per-abi` stamps each APK's `versionCode` with an
+/// ABI prefix before the build number: armeabi-v7a +1000, arm64-v8a +2000,
+/// x86_64 +4000. Comparing that raw value with the manifest's `build_number`
+/// (2004 vs 5) reports "already latest" forever, which is exactly the bug this
+/// function exists to prevent. The build number is the last three digits, and
+/// a non-split build (no prefix) passes through unchanged.
+int installedBuildNumber(AppUpdateDeviceInfo device) => device.versionCode % 1000;
+
 /// Decides whether to offer [manifest] to a device running [device].
 ///
 /// `build_number` is the comparison truth; `version` is display only. The
@@ -242,13 +253,14 @@ AppUpdateInfo? decideAppUpdate({
   required AppUpdateManifest manifest,
   required AppUpdateDeviceInfo device,
 }) {
-  if (manifest.buildNumber <= device.versionCode) return null;
+  final installed = installedBuildNumber(device);
+  if (manifest.buildNumber <= installed) return null;
   final artifact = pickAppUpdateArtifact(manifest.artifacts, device.abis);
   if (artifact == null) return null;
   return AppUpdateInfo(
     manifest: manifest,
     artifact: artifact,
-    forced: device.versionCode < manifest.minSupportedBuild,
+    forced: installed < manifest.minSupportedBuild,
   );
 }
 
