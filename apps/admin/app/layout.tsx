@@ -1,21 +1,13 @@
 import type { Metadata, Viewport } from 'next';
-import { Inter } from 'next/font/google';
 import type { ReactNode } from 'react';
 import { Providers } from '@/components/providers';
 import './globals.css';
 
 /**
- * Inter, di-host sendiri oleh next/font (tanpa <link> ke CDN).
- * Variabel CSS-nya menjadi `--font-inter`, sama dengan yang dipakai
- * tailwind.config.ts untuk seluruh keluarga sans.
+ * Font panel memakai stack sistem. `next/font/google` sempat membuat build
+ * produksi gagal ketika jaringan ke Google Fonts bermasalah; panel operasi
+ * tidak boleh bergantung pada fetch font saat build.
  */
-const inter = Inter({
-  subsets: ['latin'],
-  weight: ['400', '500', '600', '700', '800'],
-  display: 'swap',
-  variable: '--font-inter',
-  fallback: ['system-ui', 'Segoe UI', 'sans-serif']
-});
 
 /**
  * CSP panel memakai nonce per request (apps/admin/middleware.ts), dan Next hanya
@@ -42,7 +34,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="id" className={inter.variable}>
+    <html lang="id">
       <body>
         <Providers>{children}</Providers>
       </body>

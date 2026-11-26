@@ -3,7 +3,10 @@
 @tailwind utilities;
 
 :root {
-  /* Inter dimuat lewat next/font (lihat app/layout.tsx) sebagai --font-inter. */
+  /* Font sistem; build panel tidak mengambil font dari jaringan. */
+:root {
+  --font-inter: 'Inter', system-ui, 'Segoe UI', sans-serif;
+}
 
   /* Palette acuan: northstar dashboard (kertas hangat, sidebar hampir hitam,
      aksen kapur). Token yang sama dengan tailwind.config.ts, dipakai untuk
