@@ -378,10 +378,13 @@ booking yang sama (tidak membuat baris baru) dan menandai
 `Idempotency-Replayed: true`.
 
 Sejak 2026-11-26 (ADR 0043), pembuatan booking **mengunci slot selama 24 jam**
-(batas `respond_deadline`). Pelanggan lain yang mencoba tanggal + sesi yang sama
-menerima `409 SLOT_UNAVAILABLE`. Kunci dilepas saat vendor menolak, booking
+(batas `respond_deadline`). Sejak ADR 0044, **satu tanggal hanya untuk satu
+booking**: hold/booking hidup di sesi mana pun (`day`/`night`/`full`) mengunci
+seluruh tanggal. Pelanggan lain yang mencoba tanggal yang sama — walau berbeda
+sesi — menerima `409 SLOT_UNAVAILABLE`. Kunci dilepas saat vendor menolak, booking
 dibatalkan/kedaluwarsa, atau hold-nya lewat waktu — hold yang kedaluwarsa terbaca
-sebagai `unconfirmed` sehingga tanggal kembali bisa dipesan.
+sebagai `unconfirmed` sehingga tanggal kembali bisa dipesan. Blokir vendor tetap
+per sesi, kecuali blokir `full` yang berlaku sehari penuh.
 
 ### `GET /bookings`
 

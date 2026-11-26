@@ -118,22 +118,35 @@ const PUBLIC_VENDOR_WHERE = `
            AND c.slug = $3
            AND c.is_active
       ))
-  AND ($4::date IS NULL OR EXISTS (
-        SELECT 1
-          FROM (
-            SELECT
-              bool_or(cs.session = 'full')  AS full_ok,
-              bool_or(cs.session = 'day')   AS day_ok,
-              bool_or(cs.session = 'night') AS night_ok
-              FROM calendar_slots cs
-             WHERE cs.vendor_id = v.id
-               AND cs.date = $4::date
-               AND cs.status = 'available'
-          ) slots
-         WHERE ($5::text IS NULL AND (slots.full_ok OR slots.day_ok OR slots.night_ok))
-            OR ($5::text = 'full'  AND (slots.full_ok OR (slots.day_ok AND slots.night_ok)))
-            OR ($5::text = 'day'   AND (slots.day_ok OR slots.full_ok))
-            OR ($5::text = 'night' AND (slots.night_ok OR slots.full_ok))
+  AND ($4::date IS NULL OR (
+        NOT EXISTS (
+          SELECT 1
+            FROM calendar_slots taken
+           WHERE taken.vendor_id = v.id
+             AND taken.date = $4::date
+             AND (
+               taken.status = 'booked'
+               OR (taken.status = 'held' AND taken.hold_expires_at > now())
+               OR (taken.status = 'blocked' AND taken.session = 'full')
+             )
+        )
+        AND EXISTS (
+          SELECT 1
+            FROM (
+              SELECT
+                bool_or(cs.session = 'full')  AS full_ok,
+                bool_or(cs.session = 'day')   AS day_ok,
+                bool_or(cs.session = 'night') AS night_ok
+                FROM calendar_slots cs
+               WHERE cs.vendor_id = v.id
+                 AND cs.date = $4::date
+                 AND cs.status = 'available'
+            ) slots
+           WHERE ($5::text IS NULL AND (slots.full_ok OR slots.day_ok OR slots.night_ok))
+              OR ($5::text = 'full'  AND (slots.full_ok OR (slots.day_ok AND slots.night_ok)))
+              OR ($5::text = 'day'   AND (slots.day_ok OR slots.full_ok))
+              OR ($5::text = 'night' AND (slots.night_ok OR slots.full_ok))
+        )
       ))
 `;
 

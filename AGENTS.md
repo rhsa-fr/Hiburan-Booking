@@ -343,6 +343,12 @@ Invarian baru (2026-11-23, jangan dikembalikan tanpa ADR):
   selama 24 jam (`blocking: true`, `holdExpiresAt = respond_deadline`). Pelanggan
   lain menerima `409 SLOT_UNAVAILABLE`. Kunci lepas saat tolak/batal/kedaluwarsa
   atau hold lewat waktu. Jangan mengembalikan ke non-blocking.
+- **Satu tanggal satu booking** (ADR 0044): hold/booking hidup di sesi mana pun
+  (`day`/`night`/`full`) mengunci seluruh tanggal. `listAvailability` menurunkan
+  status semua sesi; `reserve` memakai advisory lock per `(vendor, tanggal)` dan
+  menolak booking lain di tanggal yang sama; filter tanggal katalog juga
+  menyembunyikan tanggal yang sudah ditempati. Blokir vendor tetap per sesi
+  kecuali blokir `full`.
 - **Timeline booking kanonik 4 langkah**: Booking dibuat → Vendor menerima →
   Bayar DP/DP diterima → Acara. Judul "DP diterima" hanya boleh muncul saat
   `payment_status` sudah lunas DP; jangan hardcode. Label status dipusatkan di
