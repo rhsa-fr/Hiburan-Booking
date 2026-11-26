@@ -88,6 +88,65 @@ String sessionLabel(String session) => switch (session.toLowerCase()) {
   _ => session.replaceAll('_', ' '),
 };
 
+/// The three durations a vendor can pick without typing (ADR 0042).
+/// Half day = 6 h, one day = 10 h, full day = 14 h; the backend still stores
+/// plain minutes, so `packages.duration_minutes` and its 30–1440 CHECK hold.
+enum PackageDurationOption {
+  halfDay(360, 'Setengah hari', '6 jam'),
+  oneDay(600, '1 hari', '10 jam'),
+  fullDay(840, 'Full day', '14 jam');
+
+  const PackageDurationOption(this.minutes, this.label, this.hoursLabel);
+
+  final int minutes;
+  final String label;
+  final String hoursLabel;
+
+  String get display => '$label ($hoursLabel)';
+}
+
+/// The preset a stored value matches, or null when it is a custom duration.
+PackageDurationOption? packageDurationOption(int minutes) {
+  for (final option in PackageDurationOption.values) {
+    if (option.minutes == minutes) return option;
+  }
+  return null;
+}
+
+/// Customer-facing duration. Presets read as words ("Setengah hari (6 jam)").
+/// Custom values stay literal so nobody is told a 3-hour package lasts 6 hours.
+String packageDurationLabel(int minutes) {
+  if (minutes <= 0) return 'Durasi belum diisi';
+  final preset = packageDurationOption(minutes);
+  if (preset != null) return preset.display;
+  final hours = minutes ~/ 60;
+  final rest = minutes % 60;
+  if (hours == 0) return '$rest menit';
+  if (rest == 0) return '$hours jam';
+  return '$hours jam $rest menit';
+}
+
+/// Minutes → the text a vendor sees in the custom-hours field: 180 → "3".
+String packageDurationHoursInput(int minutes) {
+  final hours = minutes / 60;
+  final text = hours == hours.roundToDouble()
+      ? hours.toStringAsFixed(0)
+      : hours.toStringAsFixed(1);
+  return text.replaceAll('.', ',');
+}
+
+/// Custom-hours text → minutes. Accepts "3", "1,5", "1.5"; enforces 30–1440.
+/// Returns null when the text is not a number inside that range.
+int? packageDurationMinutesFromHours(String raw) {
+  final normalized = raw.trim().replaceAll(',', '.');
+  if (normalized.isEmpty) return null;
+  final hours = double.tryParse(normalized);
+  if (hours == null) return null;
+  final minutes = (hours * 60).round();
+  if (minutes < 30 || minutes > 1440) return null;
+  return minutes;
+}
+
 String relativeFreshness(String? isoTimestamp, {int staleAfterDays = 7}) {
   final timestamp = isoTimestamp == null ? null : DateTime.tryParse(isoTimestamp);
   if (timestamp == null) return 'Jadwal belum pernah diperbarui.';

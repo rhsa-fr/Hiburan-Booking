@@ -951,7 +951,7 @@ class _VendorPageState extends State<VendorPage> {
                 Text(
                   vendor.displayName,
                   style: text.headlineSmall?.copyWith(
-                    fontSize: 27,
+                    fontSize: 26,
                     height: 1.08,
                     fontWeight: FontWeight.w800,
                     letterSpacing: -1,
@@ -1217,7 +1217,7 @@ class _VendorPageState extends State<VendorPage> {
     if (package != null && package.durationMinutes > 0) {
       facts.add((
         icon: Icons.schedule,
-        value: _duration(package.durationMinutes),
+        value: packageDurationLabel(package.durationMinutes),
         label: 'Durasi',
       ));
     }
@@ -1278,7 +1278,7 @@ class _VendorPageState extends State<VendorPage> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: text.labelSmall?.copyWith(
-                      fontSize: 8.5,
+                      fontSize: 10,
                       letterSpacing: 0.8,
                       color: AppColors.muted2,
                       fontWeight: FontWeight.w700,
@@ -1751,7 +1751,7 @@ class _PackageCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     final meta = <String>[
-      if (package.durationMinutes > 0) _duration(package.durationMinutes),
+      if (package.durationMinutes > 0) packageDurationLabel(package.durationMinutes),
       if (package.personnelCount > 0) '${package.personnelCount} personel',
     ].join(' · ');
     final dp = minDpBp > 0 ? package.basePriceIdr * minDpBp ~/ 10000 : 0;
@@ -2291,15 +2291,6 @@ class _LegendDot extends StatelessWidget {
       ],
     );
   }
-}
-
-String _duration(int minutes) {
-  if (minutes <= 0) return 'Durasi belum diisi';
-  final hours = minutes ~/ 60;
-  final rest = minutes % 60;
-  if (hours == 0) return '$rest menit';
-  if (rest == 0) return '$hours jam';
-  return '$hours jam $rest menit';
 }
 
 String _percent(int basisPoints) {

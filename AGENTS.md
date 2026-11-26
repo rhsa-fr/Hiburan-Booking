@@ -17,6 +17,14 @@ dibayar mahal lewat bug.
 
 ## 2. Aturan yang tidak boleh dilanggar
 
+### Durasi paket (ADR 0042)
+- Form paket vendor memakai pilihan **Setengah hari (360) / 1 hari (600) /
+  Full day (840) / Lainnya**, nilai tetap disimpan sebagai `duration_minutes`.
+- Jangan menampilkan durasi paket dengan cara sendiri di fitur baru; pakai
+  `packageDurationLabel()` di `lib/core/format.dart`.
+- Paket lama yang durasinya bukan salah satu preset **tidak dibulatkan**; tampil
+  literal ("3 jam"). Pembulatan hanya lewat migrasi yang disetujui pemilik.
+
 ### Uang
 - Semua nilai uang = **integer rupiah** (`BIGINT`), tidak pernah float.
 - Jurnal ledger **append-only**. Tidak ada `UPDATE`/`DELETE` pada `journal_entries`

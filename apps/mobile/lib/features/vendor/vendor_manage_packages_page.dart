@@ -433,7 +433,7 @@ class _PackageCard extends StatelessWidget {
     final personnel = (item['personnel_count'] as num?)?.toInt() ?? 0;
     final price = moneyValue(item, 'base_price_idr') ?? 0;
     final meta = <String>[
-      if (duration > 0) _duration(duration),
+      if (duration > 0) packageDurationLabel(duration),
       if (personnel > 0) '$personnel personel',
     ].join(' · ');
 
@@ -526,12 +526,5 @@ class _PackageCard extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  String _duration(int minutes) {
-    if (minutes < 60) return '$minutes menit';
-    final hours = minutes ~/ 60;
-    final rest = minutes % 60;
-    return rest == 0 ? '$hours jam' : '$hours jam $rest menit';
   }
 }

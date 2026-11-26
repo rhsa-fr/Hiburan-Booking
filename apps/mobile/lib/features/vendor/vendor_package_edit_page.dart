@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../app/app.dart';
 import '../../core/api_exception.dart';
+import '../../core/format.dart';
 import '../booking/booking_support.dart';
 import 'vendor_header.dart';
 import 'vendor_media_picker.dart';
@@ -21,7 +22,8 @@ class VendorPackageEditPage extends StatefulWidget {
 
 class _VendorPackageEditPageState extends State<VendorPackageEditPage> {
   final _name = TextEditingController();
-  final _duration = TextEditingController();
+  final _customHours = TextEditingController();
+  PackageDurationOption? _durationOption = PackageDurationOption.halfDay;
   final _personnel = TextEditingController();
   final _price = TextEditingController();
   final _description = TextEditingController();
@@ -41,7 +43,7 @@ class _VendorPackageEditPageState extends State<VendorPackageEditPage> {
     final item = widget.initial;
     if (item != null) {
       _name.text = item['name']?.toString() ?? '';
-      _duration.text = item['duration_minutes']?.toString() ?? '360';
+      _applyInitialDuration((item['duration_minutes'] as num?)?.toInt() ?? 360);
       _personnel.text = item['personnel_count']?.toString() ?? '';
       final price = moneyValue(item, 'base_price_idr') ?? 0;
       _price.text = price > 0 ? '$price' : '';
@@ -52,15 +54,25 @@ class _VendorPackageEditPageState extends State<VendorPackageEditPage> {
           : '';
       _photoUrl = item['photo_url']?.toString();
       _active = item['is_active'] != false;
+    }
+  }
+
+  /// Stored minutes → the chip that matches, or the custom field when the
+  /// vendor's duration is not one of the three presets.
+  void _applyInitialDuration(int minutes) {
+    final preset = packageDurationOption(minutes);
+    if (preset != null) {
+      _durationOption = preset;
     } else {
-      _duration.text = '360';
+      _durationOption = null;
+      _customHours.text = packageDurationHoursInput(minutes);
     }
   }
 
   @override
   void dispose() {
     _name.dispose();
-    _duration.dispose();
+    _customHours.dispose();
     _personnel.dispose();
     _price.dispose();
     _description.dispose();
@@ -104,7 +116,9 @@ class _VendorPackageEditPageState extends State<VendorPackageEditPage> {
 
   Future<void> _save() async {
     final name = _name.text.trim();
-    final duration = _intOf(_duration);
+    final duration =
+        _durationOption?.minutes ??
+        packageDurationMinutesFromHours(_customHours.text);
     final price = _intOf(_price);
     final personnel = _intOf(_personnel);
 
@@ -112,8 +126,8 @@ class _VendorPackageEditPageState extends State<VendorPackageEditPage> {
       _notice('Nama paket wajib diisi.');
       return;
     }
-    if (duration == null || duration < 30 || duration > 1440) {
-      _notice('Durasi harus 30–1440 menit.');
+    if (duration == null) {
+      _notice('Durasi khusus harus antara 0,5 dan 24 jam.');
       return;
     }
     if (price == null || price <= 0) {
@@ -214,17 +228,15 @@ class _VendorPackageEditPageState extends State<VendorPackageEditPage> {
                     hint: 'Paket Hajatan Lengkap',
                   ),
                   const SizedBox(height: 12),
+                  _DurationPicker(
+                    selected: _durationOption,
+                    controller: _customHours,
+                    onSelect: (option) =>
+                        setState(() => _durationOption = option),
+                  ),
+                  const SizedBox(height: 12),
                   Row(
                     children: [
-                      Expanded(
-                        child: VendorTextField(
-                          label: 'Durasi (menit)',
-                          controller: _duration,
-                          keyboardType: TextInputType.number,
-                          hint: '360',
-                        ),
-                      ),
-                      const SizedBox(width: 10),
                       Expanded(
                         child: VendorTextField(
                           label: 'Personel',
@@ -233,15 +245,17 @@ class _VendorPackageEditPageState extends State<VendorPackageEditPage> {
                           hint: '15',
                         ),
                       ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: VendorTextField(
+                          label: 'Harga paket',
+                          controller: _price,
+                          keyboardType: TextInputType.number,
+                          prefixText: 'Rp ',
+                          hint: '15000000',
+                        ),
+                      ),
                     ],
-                  ),
-                  const SizedBox(height: 12),
-                  VendorTextField(
-                    label: 'Harga paket',
-                    controller: _price,
-                    keyboardType: TextInputType.number,
-                    prefixText: 'Rp ',
-                    hint: '15000000',
                   ),
                   const SizedBox(height: 12),
                   VendorTextField(
@@ -396,6 +410,149 @@ class _VendorPackageEditPageState extends State<VendorPackageEditPage> {
               ? 'Simpan paket'
               : 'Simpan perubahan',
           onPressed: _saving ? null : _save,
+        ),
+      ),
+    );
+  }
+}
+
+/// Four choices replace the old free-text minutes field: the three standard
+/// durations plus a custom one for short packages (ADR 0042). The stored value
+/// is still minutes, so nothing downstream changes.
+class _DurationPicker extends StatelessWidget {
+  const _DurationPicker({
+    required this.selected,
+    required this.controller,
+    required this.onSelect,
+  });
+
+  final PackageDurationOption? selected;
+  final TextEditingController controller;
+  final ValueChanged<PackageDurationOption?> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'DURASI',
+          style: vendorText(
+            size: 11,
+            weight: FontWeight.w800,
+            letterSpacing: 0.6,
+            color: VendorColors.muted,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            for (final option in PackageDurationOption.values) ...[
+              Expanded(
+                child: _DurationChoice(
+                  title: option.label,
+                  detail: option.hoursLabel,
+                  selected: selected == option,
+                  onTap: () => onSelect(option),
+                ),
+              ),
+              const SizedBox(width: 6),
+            ],
+            Expanded(
+              child: _DurationChoice(
+                title: 'Lainnya',
+                detail: 'khusus',
+                selected: selected == null,
+                onTap: () => onSelect(null),
+              ),
+            ),
+          ],
+        ),
+        if (selected == null) ...[
+          const SizedBox(height: 10),
+          VendorTextField(
+            label: 'Durasi khusus (jam)',
+            controller: controller,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            hint: '3',
+            helper:
+                'Boleh desimal, mis. 1,5 untuk 90 menit. Rentang 0,5–24 jam.',
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _DurationChoice extends StatelessWidget {
+  const _DurationChoice({
+    required this.title,
+    required this.detail,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String title;
+  final String detail;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final fg = selected ? VendorColors.ink : VendorColors.muted;
+    final radius = BorderRadius.circular(VendorRadii.sm + 2);
+    // `Ink` only paints when a Material sits above it; VendorCard is a plain
+    // Container, so the chip draws its own background instead.
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: '$title, $detail',
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: radius,
+        child: Container(
+          height: 62,
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          decoration: BoxDecoration(
+            color: selected ? VendorColors.limeSoft : VendorColors.cardWhite,
+            borderRadius: radius,
+            border: Border.all(
+              color: selected ? VendorColors.limeDark : VendorColors.line,
+              width: selected ? 1.6 : 1,
+            ),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              SizedBox(
+                height: 28,
+                child: Center(
+                  child: Text(
+                    title,
+                    maxLines: 2,
+                    textAlign: TextAlign.center,
+                    style: vendorText(
+                      size: 11.5,
+                      weight: FontWeight.w800,
+                      color: fg,
+                      height: 1.12,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                detail,
+                maxLines: 1,
+                style: vendorText(
+                  size: 9.5,
+                  weight: FontWeight.w600,
+                  color: VendorColors.muted,
+                  letterSpacing: 0.2,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

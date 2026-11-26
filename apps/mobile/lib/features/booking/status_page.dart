@@ -2352,7 +2352,7 @@ class _PaymentBadge extends StatelessWidget {
             maxLines: 1,
             style: const TextStyle(
               color: AppColors.ink,
-              fontSize: 9,
+              fontSize: 10,
               fontWeight: FontWeight.w800,
             ),
           ),
