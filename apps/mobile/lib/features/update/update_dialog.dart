@@ -280,7 +280,7 @@ class _AppUpdateDialogState extends State<AppUpdateDialog>
             color: AppColors.lime,
             borderRadius: BorderRadius.circular(12),
           ),
-          child: const Icon(
+          child: Icon(
             Icons.system_update_alt_rounded,
             size: 20,
             color: AppColors.ink,
@@ -418,7 +418,7 @@ class _AppUpdateDialogState extends State<AppUpdateDialog>
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Icon(
+                Icon(
                   Icons.priority_high_rounded,
                   size: 14,
                   color: AppColors.warning,

@@ -112,11 +112,11 @@ class _NotificationBellState extends State<NotificationBell> {
                   decoration: BoxDecoration(
                     color: AppColors.lime,
                     borderRadius: BorderRadius.circular(Radii.pill),
-                    border: Border.all(color: AppColors.primary, width: 1.5),
+                    border: Border.all(color: AppColors.limeDark, width: 1.5),
                   ),
                   child: Text(
                     label,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 10,
                       height: 1,
                       fontWeight: FontWeight.w800,

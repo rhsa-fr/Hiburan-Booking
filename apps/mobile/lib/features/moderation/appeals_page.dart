@@ -253,7 +253,7 @@ class _TakedownCard extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(Radii.lg),
-        side: const BorderSide(color: AppColors.line),
+        side: BorderSide(color: AppColors.line),
       ),
       child: Padding(
         padding: const EdgeInsets.all(Sp.lg),

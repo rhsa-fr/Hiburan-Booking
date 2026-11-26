@@ -106,17 +106,17 @@ InputDecoration authField({
     focusedBorder: border(AppColors.secondary, 2),
     errorBorder: border(AppColors.danger),
     focusedErrorBorder: border(AppColors.danger, 2),
-    hintStyle: const TextStyle(
+    hintStyle: TextStyle(
       fontSize: 14,
       height: 1.5,
       color: AppColors.inkMuted,
     ),
-    helperStyle: const TextStyle(
+    helperStyle: TextStyle(
       fontSize: 12,
       height: 1.45,
       color: AppColors.inkMuted,
     ),
-    errorStyle: const TextStyle(
+    errorStyle: TextStyle(
       fontSize: 12,
       height: 1.45,
       color: AppColors.danger,
@@ -131,7 +131,7 @@ InputDecoration authLineField({
   Widget? prefixIcon,
   Widget? suffixIcon,
 }) {
-  const base = UnderlineInputBorder(
+  final base = UnderlineInputBorder(
     borderSide: BorderSide(color: AppColors.lineStrong),
   );
   return InputDecoration(
@@ -145,21 +145,21 @@ InputDecoration authLineField({
     suffixIconConstraints: const BoxConstraints(minWidth: 44, minHeight: 44),
     border: base,
     enabledBorder: base,
-    focusedBorder: const UnderlineInputBorder(
+    focusedBorder: UnderlineInputBorder(
       borderSide: BorderSide(color: AppColors.ink, width: 2),
     ),
-    errorBorder: const UnderlineInputBorder(
+    errorBorder: UnderlineInputBorder(
       borderSide: BorderSide(color: AppColors.danger),
     ),
-    focusedErrorBorder: const UnderlineInputBorder(
+    focusedErrorBorder: UnderlineInputBorder(
       borderSide: BorderSide(color: AppColors.danger, width: 2),
     ),
-    hintStyle: const TextStyle(
+    hintStyle: TextStyle(
       fontSize: 15,
       height: 1.4,
       color: AppColors.muted2,
     ),
-    errorStyle: const TextStyle(
+    errorStyle: TextStyle(
       fontSize: 11.5,
       height: 1.4,
       color: AppColors.danger,
@@ -347,12 +347,12 @@ class AuthSubmitButton extends StatelessWidget {
         child: Row(
           children: [
             if (loading) ...[
-              const SizedBox(
+              SizedBox(
                 width: 16,
                 height: 16,
                 child: CircularProgressIndicator(
                   strokeWidth: 2,
-                  color: AppColors.ink,
+                  color: AppColors.onLime,
                 ),
               ),
               const SizedBox(width: 10),
@@ -369,8 +369,8 @@ class AuthSubmitButton extends StatelessWidget {
               Container(
                 width: 28,
                 height: 28,
-                decoration: const BoxDecoration(
-                  color: AppColors.ink,
+                decoration: BoxDecoration(
+                  color: AppColors.stage,
                   shape: BoxShape.circle,
                 ),
                 child: const Icon(
@@ -440,7 +440,7 @@ class AuthStage extends StatelessWidget {
   Widget build(BuildContext context) {
     final topInset = MediaQuery.paddingOf(context).top;
     return Container(
-      color: AppColors.ink,
+      color: AppColors.stage,
       child: Stack(
         children: [
           const Positioned.fill(

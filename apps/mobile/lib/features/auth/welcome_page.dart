@@ -11,7 +11,7 @@ class WelcomePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.ink,
+      backgroundColor: AppColors.stage,
       body: LayoutBuilder(
         builder: (context, constraints) {
           final heroHeight = constraints.maxHeight * 0.58;
@@ -27,7 +27,7 @@ class WelcomePage extends StatelessWidget {
                       fit: BoxFit.cover,
                       alignment: const Alignment(0, -0.2),
                     ),
-                    const DecoratedBox(
+                    DecoratedBox(
                       decoration: BoxDecoration(
                         gradient: LinearGradient(
                           begin: Alignment.topCenter,
@@ -36,7 +36,7 @@ class WelcomePage extends StatelessWidget {
                             Color(0xE60B1220),
                             Color(0x6B0B1220),
                             Color(0xF20B1220),
-                            AppColors.ink,
+                            AppColors.stage,
                           ],
                           stops: [0, 0.3, 0.78, 1],
                         ),

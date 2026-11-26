@@ -421,7 +421,7 @@ class _HomeHeader extends StatelessWidget {
     final rawName = user?.fullName?.trim() ?? '';
     final firstName = rawName.isEmpty ? null : rawName.split(' ').first;
     return DecoratedBox(
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -578,12 +578,12 @@ class _CategoryShortcuts extends StatelessWidget {
   /// One saturated disc per category. Four pale tints of the same lightness
   /// made the row read as four identical boxes; a solid disc plus a white glyph
   /// gives each shortcut an identity and keeps the canvas quiet.
-  static const _items =
+  static final _items =
       <({String label, IconData icon, Color disc, String category})>[
         (
           label: 'Tarling & Dangdut',
           icon: Icons.queue_music,
-          disc: AppColors.ink,
+          disc: AppColors.stage,
           category: 'tarling',
         ),
         (
@@ -982,7 +982,7 @@ class _ActiveBookingCard extends StatelessWidget {
                             ),
                             child: Text(
                               daysLeft == 0 ? 'HARI INI' : 'H-$daysLeft',
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 10,
                                 height: 1.2,
                                 fontWeight: FontWeight.w800,
@@ -1037,7 +1037,7 @@ class _ActiveBookingCard extends StatelessWidget {
                             color: AppColors.lime,
                             shape: BoxShape.circle,
                           ),
-                          child: const Icon(
+                          child: Icon(
                             Icons.arrow_forward,
                             size: 20,
                             color: AppColors.ink,

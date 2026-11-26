@@ -338,7 +338,7 @@ class _RegisterPageState extends State<RegisterPage> {
     final text = Theme.of(context).textTheme;
 
     return Scaffold(
-      backgroundColor: AppColors.ink,
+      backgroundColor: AppColors.stage,
       body: Column(
         children: [
           AuthStage(
@@ -513,7 +513,7 @@ class _RegisterPageState extends State<RegisterPage> {
             const SizedBox(height: Sp.sm),
             Row(
               children: [
-                const Icon(
+                Icon(
                   Icons.info_outline,
                   size: 14,
                   color: AppColors.muted2,

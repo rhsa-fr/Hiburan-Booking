@@ -428,7 +428,7 @@ class _NotificationRow extends StatelessWidget {
                         const SizedBox(height: 6),
                         Row(
                           children: [
-                            const Icon(
+                            Icon(
                               Icons.schedule,
                               size: 12,
                               color: AppColors.muted2,
@@ -436,7 +436,7 @@ class _NotificationRow extends StatelessWidget {
                             const SizedBox(width: 4),
                             Text(
                               timeLabel,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 11,
                                 height: 1.2,
                                 fontWeight: FontWeight.w500,

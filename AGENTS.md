@@ -17,6 +17,17 @@ dibayar mahal lewat bug.
 
 ## 2. Aturan yang tidak boleh dilanggar
 
+### Tema & mode gelap (ADR 0045)
+- Warna hanya lewat `AppColors`; jangan hardcode `Colors.white`/`Color(0xFF…)`
+  untuk latar atau teks kecuali memang bagian dari aset (mis. logo QRIS).
+- Latar yang harus selalu gelap (auth, stage header, hero vendor, money block,
+  bottom bar vendor) memakai `AppColors.stage`, **bukan** `AppColors.ink`.
+- Teks/ikon di atas lime memakai `AppColors.onLime`.
+- `AppColors` adalah getter dinamis. Jangan membungkusnya dengan `const`; analyzer
+  akan menolak. Pilihan mode ada di Profil → Preferensi → Tampilan
+  (`Sistem`/`Terang`/`Gelap`, disimpan sebagai `theme_mode`).
+- Setiap layar baru wajib dicek di kedua mode (screenshot 390×844).
+
 ### Durasi paket (ADR 0042)
 - Form paket vendor memakai pilihan **Setengah hari (360) / 1 hari (600) /
   Full day (720) / Lainnya**, nilai tetap disimpan sebagai `duration_minutes`.

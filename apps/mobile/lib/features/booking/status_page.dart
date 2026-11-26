@@ -780,12 +780,12 @@ class _BookingStatusPageState extends State<BookingStatusPage>
         color: AppColors.card,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(Radii.sm),
-          side: const BorderSide(color: AppColors.line),
+          side: BorderSide(color: AppColors.line),
         ),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: _copyCode,
-          child: const SizedBox(
+          child: SizedBox(
             width: 38,
             height: 38,
             child: Center(
@@ -815,7 +815,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
                 const SizedBox(width: 4),
                 GestureDetector(
                   onTap: _copyCode,
-                  child: const Icon(
+                  child: Icon(
                     Icons.copy,
                     size: 14,
                     color: AppColors.inkMuted,
@@ -1599,8 +1599,8 @@ class _BookingStatusPageState extends State<BookingStatusPage>
           label: const Text('Simpan kode QR'),
           style: OutlinedButton.styleFrom(
             minimumSize: const Size.fromHeight(44),
-            foregroundColor: AppColors.primary,
-            side: const BorderSide(color: AppColors.line),
+            foregroundColor: AppColors.ink,
+            side: BorderSide(color: AppColors.line),
           ),
         ),
       ],
@@ -1623,14 +1623,14 @@ class _BookingStatusPageState extends State<BookingStatusPage>
         data: payload,
         version: QrVersions.auto,
         size: size,
-        backgroundColor: AppColors.card,
-        eyeStyle: const QrEyeStyle(
+        backgroundColor: Colors.white,
+        eyeStyle: QrEyeStyle(
           eyeShape: QrEyeShape.square,
-          color: AppColors.ink,
+          color: AppColors.stage,
         ),
-        dataModuleStyle: const QrDataModuleStyle(
+        dataModuleStyle: QrDataModuleStyle(
           dataModuleShape: QrDataModuleShape.square,
-          color: AppColors.ink,
+          color: AppColors.stage,
         ),
         semanticsLabel: label,
       );
@@ -1705,8 +1705,8 @@ class _BookingStatusPageState extends State<BookingStatusPage>
           label: const Text('Salin nomor VA'),
           style: OutlinedButton.styleFrom(
             minimumSize: const Size.fromHeight(44),
-            foregroundColor: AppColors.primary,
-            side: const BorderSide(color: AppColors.line),
+            foregroundColor: AppColors.ink,
+            side: BorderSide(color: AppColors.line),
           ),
         ),
       ],
@@ -1890,7 +1890,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
                                 steps[index].title,
                                 style: text.titleMedium?.copyWith(
                                   color: switch (steps[index].state) {
-                                    _StepState.active => AppColors.primary,
+                                    _StepState.active => AppColors.accent,
                                     _StepState.done => AppColors.ink,
                                     _StepState.warning => AppColors.warning,
                                     _StepState.pending => AppColors.inkMuted,
@@ -1956,7 +1956,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
       children: [
         for (var index = 0; index < rows.length; index++) ...[
           if (index > 0)
-            const Divider(height: Sp.xl, color: AppColors.line, thickness: 1),
+            Divider(height: Sp.xl, color: AppColors.line, thickness: 1),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -2014,7 +2014,7 @@ class _BookingStatusPageState extends State<BookingStatusPage>
                   children: [
                     for (var index = 0; index < _disputes.length; index++) ...[
                       if (index > 0)
-                        const Divider(
+                        Divider(
                           height: Sp.xl,
                           color: AppColors.line,
                           thickness: 1,
@@ -2206,7 +2206,7 @@ class _StepDot extends StatelessWidget {
         const Icon(Icons.check, size: 14, color: AppColors.onPrimary),
       ),
       _StepState.active => (
-        AppColors.primary,
+        AppColors.accent,
         Container(
           width: 8,
           height: 8,
@@ -2221,7 +2221,7 @@ class _StepDot extends StatelessWidget {
         Container(
           width: 8,
           height: 8,
-          decoration: const BoxDecoration(
+          decoration: BoxDecoration(
             color: AppColors.line,
             shape: BoxShape.circle,
           ),
@@ -2229,7 +2229,7 @@ class _StepDot extends StatelessWidget {
       ),
       _StepState.warning => (
         AppColors.warningSoft,
-        const Icon(
+        Icon(
           Icons.priority_high_rounded,
           size: 14,
           color: AppColors.warning,
@@ -2270,7 +2270,7 @@ class _Countdown extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Padding(
+          Padding(
             padding: EdgeInsets.only(top: 1),
             child: Icon(Icons.schedule, size: 18, color: AppColors.warning),
           ),
@@ -2350,7 +2350,7 @@ class _PaymentBadge extends StatelessWidget {
           child: Text(
             _fallback[method] ?? '',
             maxLines: 1,
-            style: const TextStyle(
+            style: TextStyle(
               color: AppColors.ink,
               fontSize: 10,
               fontWeight: FontWeight.w800,
@@ -2685,8 +2685,8 @@ class _DisputeSheetState extends State<_DisputeSheet> {
                   child: FilledButton(
                     onPressed: _busy ? null : _submit,
                     style: FilledButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: AppColors.onPrimary,
+                      backgroundColor: AppColors.lime,
+                      foregroundColor: AppColors.onLime,
                       minimumSize: const Size.fromHeight(48),
                     ),
                     child: Text(_busy ? 'Mengirim…' : 'Kirim sengketa'),

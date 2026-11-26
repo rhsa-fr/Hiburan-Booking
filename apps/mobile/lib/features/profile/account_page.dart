@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../app/app.dart';
 import '../../app/routes.dart';
 import '../../app/theme.dart';
+import '../../app/theme_controller.dart';
 import '../../core/api_exception.dart';
 import '../../core/format.dart';
 import '../../core/models.dart';
@@ -227,6 +228,7 @@ class _AccountPageState extends State<AccountPage> {
   Widget build(BuildContext context) {
     final user = _user;
     final update = AppScope.of(context).update;
+    final theme = ThemeScope.of(context);
     final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
 
     return Scaffold(
@@ -277,6 +279,35 @@ class _AccountPageState extends State<AccountPage> {
                       ],
                       const SizedBox(height: Sp.md),
                       _VendorPromo(onTap: _openVendorApply),
+                      const SizedBox(height: Sp.xl),
+                      const _ProfileSectionTitle('Preferensi'),
+                      const SizedBox(height: Sp.sm),
+                      _menuCard([
+                        _MenuRow(
+                          icon: Icons.brightness_6_outlined,
+                          label: 'Tampilan',
+                          onTap: _pickTheme,
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                _themeLabel(theme.mode),
+                                style: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(
+                                      color: AppColors.inkMuted,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                              ),
+                              const SizedBox(width: 2),
+                              Icon(
+                                Icons.chevron_right,
+                                size: 18,
+                                color: AppColors.inkMuted,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ]),
                       const SizedBox(height: Sp.xl),
                       const _ProfileSectionTitle('Aktivitas'),
                       const SizedBox(height: Sp.sm),
@@ -397,6 +428,90 @@ class _AccountPageState extends State<AccountPage> {
     );
   }
 
+  Future<void> _pickTheme() async {
+    final controller = ThemeScope.of(context);
+    final chosen = await showModalBottomSheet<ThemeMode>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: AppColors.card,
+      builder: (sheet) {
+        final text = Theme.of(sheet).textTheme;
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(Sp.lg, 0, Sp.lg, Sp.lg),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Tampilan',
+                  style: text.titleLarge?.copyWith(fontSize: 18),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Pilih tema yang paling nyaman untuk matamu.',
+                  style: text.bodySmall?.copyWith(color: AppColors.inkMuted),
+                ),
+                const SizedBox(height: Sp.sm),
+                for (final mode in const [
+                  ThemeMode.system,
+                  ThemeMode.light,
+                  ThemeMode.dark,
+                ])
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(
+                      _themeIcon(mode),
+                      color: controller.mode == mode
+                          ? AppColors.ink
+                          : AppColors.inkMuted,
+                    ),
+                    title: Text(
+                      _themeLabel(mode),
+                      style: text.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.ink,
+                      ),
+                    ),
+                    subtitle: Text(
+                      _themeHint(mode),
+                      style: text.bodySmall?.copyWith(color: AppColors.inkMuted),
+                    ),
+                    trailing: controller.mode == mode
+                        ? const Icon(
+                            Icons.check_circle_rounded,
+                            color: AppColors.limeDark,
+                          )
+                        : null,
+                    onTap: () => Navigator.pop(sheet, mode),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (chosen != null) await controller.setMode(chosen);
+  }
+
+  static String _themeLabel(ThemeMode mode) => switch (mode) {
+    ThemeMode.system => 'Sistem',
+    ThemeMode.light => 'Terang',
+    ThemeMode.dark => 'Gelap',
+  };
+
+  static String _themeHint(ThemeMode mode) => switch (mode) {
+    ThemeMode.system => 'Menyesuaikan pengaturan HP',
+    ThemeMode.light => 'Latar terang sepanjang waktu',
+    ThemeMode.dark => 'Latar gelap, nyaman untuk malam',
+  };
+
+  static IconData _themeIcon(ThemeMode mode) => switch (mode) {
+    ThemeMode.system => Icons.brightness_auto_outlined,
+    ThemeMode.light => Icons.light_mode_outlined,
+    ThemeMode.dark => Icons.dark_mode_outlined,
+  };
+
   void _openVendorApply() {
     Navigator.push(
       context,
@@ -424,7 +539,7 @@ class _AccountPageState extends State<AccountPage> {
           children: [
             for (var i = 0; i < rows.length; i++) ...[
               if (i > 0)
-                const Divider(height: 1, thickness: 1, color: AppColors.line),
+                Divider(height: 1, thickness: 1, color: AppColors.line),
               rows[i],
             ],
           ],
@@ -450,7 +565,7 @@ class _IdentityCard extends StatelessWidget {
 
     return Container(
       decoration: BoxDecoration(
-        color: AppColors.ink,
+        color: AppColors.stage,
         borderRadius: BorderRadius.circular(18),
       ),
       clipBehavior: Clip.antiAlias,
@@ -471,11 +586,11 @@ class _IdentityCard extends StatelessWidget {
                   ),
                   child: Text(
                     _monogram(user),
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 19,
                       height: 1,
                       fontWeight: FontWeight.w800,
-                      color: AppColors.ink,
+                      color: AppColors.onLime,
                     ),
                   ),
                 ),
@@ -555,7 +670,7 @@ class _VendorPromo extends StatelessWidget {
                 width: 42,
                 height: 42,
                 decoration: const BoxDecoration(
-                  color: AppColors.ink,
+                  color: AppColors.stage,
                   shape: BoxShape.circle,
                 ),
                 child: const Icon(
@@ -575,14 +690,14 @@ class _VendorPromo extends StatelessWidget {
                         fontSize: 14,
                         fontWeight: FontWeight.w800,
                         letterSpacing: -0.2,
-                        color: AppColors.ink,
+                        color: AppColors.onLime,
                       ),
                     ),
                     const SizedBox(height: 2),
                     Text(
                       'Daftarkan grup atau sound system.',
                       style: text.bodySmall?.copyWith(
-                        color: AppColors.ink.withValues(alpha: 0.68),
+                        color: AppColors.onLime.withValues(alpha: 0.68),
                       ),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
@@ -591,7 +706,11 @@ class _VendorPromo extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: Sp.sm),
-              const Icon(Icons.arrow_forward, size: 18, color: AppColors.ink),
+              const Icon(
+                Icons.arrow_forward,
+                size: 18,
+                color: AppColors.onLime,
+              ),
             ],
           ),
         ),
@@ -694,7 +813,7 @@ class _MenuRow extends StatelessWidget {
                 if (trailing != null)
                   trailing!
                 else
-                  const Icon(
+                  Icon(
                     Icons.chevron_right,
                     size: 18,
                     color: AppColors.inkMuted,
@@ -748,7 +867,7 @@ class _SignOutSheet extends StatelessWidget {
                     style: OutlinedButton.styleFrom(
                       minimumSize: const Size.fromHeight(52),
                       foregroundColor: AppColors.ink,
-                      side: const BorderSide(color: AppColors.line),
+                      side: BorderSide(color: AppColors.line),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(Radii.sm),
                       ),
@@ -853,7 +972,7 @@ class _DeleteAccountSheetState extends State<_DeleteAccountSheet> {
                     style: OutlinedButton.styleFrom(
                       minimumSize: const Size.fromHeight(52),
                       foregroundColor: AppColors.ink,
-                      side: const BorderSide(color: AppColors.line),
+                      side: BorderSide(color: AppColors.line),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(Radii.sm),
                       ),
@@ -976,7 +1095,7 @@ class _PolicySheetState extends State<_PolicySheet> {
                 ],
               ),
             ),
-            const Divider(height: 1, thickness: 1, color: AppColors.line),
+            Divider(height: 1, thickness: 1, color: AppColors.line),
             Expanded(child: _content(context)),
           ],
         ),
@@ -1145,7 +1264,7 @@ class _PolicyPair extends StatelessWidget {
             textAlign: TextAlign.end,
             style: text.bodyMedium?.copyWith(
               fontWeight: FontWeight.w600,
-              color: AppColors.primary,
+              color: AppColors.ink,
             ),
           ),
         ],

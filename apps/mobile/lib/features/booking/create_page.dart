@@ -1121,7 +1121,7 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
     return Container(
       padding: const EdgeInsets.all(Sp.md),
       decoration: BoxDecoration(
-        color: AppColors.ink,
+        color: AppColors.stage,
         borderRadius: BorderRadius.circular(Radii.lg),
         boxShadow: const [
           BoxShadow(
@@ -1296,7 +1296,7 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
             ),
             child: Row(
               children: [
-                const Icon(
+                Icon(
                   Icons.event_outlined,
                   size: 18,
                   color: AppColors.inkMuted,
@@ -1353,7 +1353,7 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
                   ),
                 ),
                 const SizedBox(width: Sp.sm),
-                const Icon(
+                Icon(
                   Icons.chevron_right,
                   size: 22,
                   color: AppColors.inkMuted,
@@ -1429,7 +1429,7 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
                   Text(
                     'DP $_dpRatePercent%',
                     style: text.labelSmall?.copyWith(
-                      color: AppColors.primary,
+                      color: AppColors.accent,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
@@ -1445,7 +1445,7 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Padding(
+                    Padding(
                       padding: EdgeInsets.only(top: 1),
                       child: Icon(
                         Icons.check_circle_outline,
@@ -1489,7 +1489,7 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
             const SizedBox(height: Sp.sm),
             for (var i = 0; i < package.addons.length; i++) ...[
               if (i > 0)
-                const Divider(
+                Divider(
                   height: Sp.md,
                   color: AppColors.line,
                   thickness: 1,
@@ -1858,13 +1858,13 @@ class _SlotSheetState extends State<_SlotSheet> {
                         vertical: 3,
                       ),
                       decoration: BoxDecoration(
-                        color: AppColors.primary,
+                        color: AppColors.surfaceHighest,
                         borderRadius: BorderRadius.circular(Radii.sm),
                       ),
                       child: Text(
                         'Tahun ${DateTime.tryParse(date)!.year}',
                         style: text.labelSmall?.copyWith(
-                          color: AppColors.onPrimary,
+                          color: AppColors.ink,
                           fontWeight: FontWeight.w700,
                           fontSize: 11,
                         ),
@@ -1982,13 +1982,13 @@ class _DateButton extends StatelessWidget {
             ),
             decoration: BoxDecoration(
               color: selected
-                  ? AppColors.primary
+                  ? AppColors.lime
                   : booked
                   ? AppColors.neutralSoft
                   : AppColors.card,
               borderRadius: BorderRadius.circular(Radii.sm),
               border: Border.all(
-                color: selected ? AppColors.primary : AppColors.line,
+                color: selected ? AppColors.limeDark : AppColors.line,
                 width: selected ? 1.5 : 1,
               ),
             ),
@@ -2000,7 +2000,7 @@ class _DateButton extends StatelessWidget {
                     width: 6,
                     height: 6,
                     decoration: BoxDecoration(
-                      color: selected ? AppColors.onPrimary : AppColors.warning,
+                      color: selected ? AppColors.onLime : AppColors.warning,
                       shape: BoxShape.circle,
                     ),
                   ),
@@ -2020,7 +2020,7 @@ class _DateButton extends StatelessWidget {
                             fontWeight: FontWeight.w700,
                             letterSpacing: 0.5,
                             color: selected
-                                ? AppColors.onPrimary.withValues(alpha: 0.8)
+                                ? AppColors.onLime.withValues(alpha: 0.8)
                                 : AppColors.inkMuted,
                           ),
                         ),
@@ -2033,7 +2033,7 @@ class _DateButton extends StatelessWidget {
                             ),
                             decoration: BoxDecoration(
                               color: selected
-                                  ? AppColors.primaryContainer
+                                  ? AppColors.limeDark
                                   : AppColors.surfaceSoft,
                               borderRadius: BorderRadius.circular(3),
                             ),
@@ -2043,7 +2043,7 @@ class _DateButton extends StatelessWidget {
                                 fontSize: 10,
                                 fontWeight: FontWeight.w700,
                                 color: selected
-                                    ? AppColors.onPrimary
+                                    ? AppColors.onLime
                                     : AppColors.inkMuted,
                               ),
                             ),
@@ -2058,7 +2058,7 @@ class _DateButton extends StatelessWidget {
                         fontSize: 14,
                         fontWeight: FontWeight.w700,
                         color: selected
-                            ? AppColors.onPrimary
+                            ? AppColors.onLime
                             : booked
                             ? AppColors.inkMuted
                             : AppColors.ink,

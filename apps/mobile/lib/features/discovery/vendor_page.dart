@@ -748,6 +748,8 @@ class _VendorPageState extends State<VendorPage> {
         _heroImage(vendor),
         const SizedBox(height: Sp.md),
         _factsBand(vendor),
+        const SizedBox(height: Sp.md),
+        _bookingSteps(),
         const SizedBox(height: Sp.xl),
         if (description.isNotEmpty) ...[
           Padding(
@@ -898,8 +900,8 @@ class _VendorPageState extends State<VendorPage> {
                     stops: const [0.18, 0.55, 1],
                     colors: [
                       Colors.transparent,
-                      AppColors.ink.withValues(alpha: 0.38),
-                      AppColors.ink.withValues(alpha: 0.96),
+                      AppColors.stage.withValues(alpha: 0.38),
+                      AppColors.stage.withValues(alpha: 0.96),
                     ],
                   ),
                 ),
@@ -929,7 +931,7 @@ class _VendorPageState extends State<VendorPage> {
                         ),
                         child: Text(
                           category,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 10,
                             height: 1.2,
                             fontWeight: FontWeight.w800,
@@ -1047,15 +1049,15 @@ class _VendorPageState extends State<VendorPage> {
         _heroSolid ? 10 : 26,
       ),
       decoration: BoxDecoration(
-        color: _heroSolid ? AppColors.ink : Colors.transparent,
+        color: _heroSolid ? AppColors.stage : Colors.transparent,
         gradient: _heroSolid
             ? null
             : LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
                 colors: [
-                  AppColors.ink.withValues(alpha: 0.86),
-                  AppColors.ink.withValues(alpha: 0),
+                  AppColors.stage.withValues(alpha: 0.86),
+                  AppColors.stage.withValues(alpha: 0),
                 ],
               ),
         boxShadow: _heroSolid
@@ -1139,8 +1141,78 @@ class _VendorPageState extends State<VendorPage> {
     );
   }
 
-  Widget _sectionTitle(String title, {String? caption, Widget? trailing}) {
-    final text = Theme.of(context).textTheme;
+  /// Three plain-language steps before the detail dump: laypeople should know
+  /// that choosing a date is not a payment and that the vendor answers first.
+  Widget _bookingSteps() {
+    const steps = ['Pilih tanggal', 'Vendor konfirmasi', 'Bayar DP'];
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: Sp.lg),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(Sp.md, Sp.sm + 2, Sp.md, Sp.sm + 2),
+        decoration: BoxDecoration(
+          color: AppColors.card,
+          borderRadius: BorderRadius.circular(Radii.lg),
+          border: Border.all(color: AppColors.line),
+        ),
+        child: Row(
+          children: [
+            for (var i = 0; i < steps.length; i++) ...[
+              if (i > 0)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  child: Icon(
+                    Icons.chevron_right_rounded,
+                    size: 16,
+                    color: AppColors.muted2,
+                  ),
+                ),
+              Expanded(
+                child: Row(
+                  children: [
+                    Container(
+                      width: 22,
+                      height: 22,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: AppColors.limeSoft,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: AppColors.limeDark),
+                      ),
+                      child: Text(
+                        '${i + 1}',
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          height: 1,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.ink,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        steps[i],
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          height: 1.2,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.ink,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _sectionTitle(String title, {String? caption, Widget? trailing}) {    final text = Theme.of(context).textTheme;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
@@ -1186,7 +1258,7 @@ class _VendorPageState extends State<VendorPage> {
         Container(
           width: 24,
           height: 24,
-          decoration: const BoxDecoration(
+          decoration: BoxDecoration(
             color: AppColors.limeSoft,
             shape: BoxShape.circle,
           ),
@@ -1287,7 +1359,7 @@ class _VendorPageState extends State<VendorPage> {
     for (var i = 0; i < facts.length; i += 2) {
       if (i > 0) {
         rows.add(
-          const Padding(
+          Padding(
             padding: EdgeInsets.symmetric(vertical: Sp.md),
             child: Divider(height: 1, color: AppColors.line),
           ),
@@ -1642,8 +1714,8 @@ class _VendorPageState extends State<VendorPage> {
     final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
 
     return Container(
-      decoration: const BoxDecoration(
-        color: AppColors.ink,
+      decoration: BoxDecoration(
+        color: AppColors.stage,
         borderRadius: BorderRadius.vertical(top: Radius.circular(Radii.xxl)),
         boxShadow: [
           BoxShadow(
@@ -1782,13 +1854,13 @@ class _ExpandableDescriptionState extends State<_ExpandableDescription> {
               TextButton(
                 onPressed: () => setState(() => _expanded = !_expanded),
                 style: TextButton.styleFrom(
-                  foregroundColor: AppColors.primary,
+                  foregroundColor: AppColors.accent,
                   padding: EdgeInsets.zero,
                   minimumSize: const Size(0, 44),
                   tapTargetSize: MaterialTapTargetSize.padded,
                   textStyle: Theme.of(context).textTheme.labelMedium?.copyWith(
                     fontWeight: FontWeight.w700,
-                    color: AppColors.primary,
+                    color: AppColors.accent,
                   ),
                 ),
                 child: Text(_expanded ? 'Tutup' : 'Baca selengkapnya'),
@@ -1828,12 +1900,12 @@ class _PackageCard extends StatelessWidget {
       button: true,
       selected: selected,
       child: Material(
-        color: selected ? AppColors.ink : AppColors.card,
+        color: selected ? AppColors.stage : AppColors.card,
         clipBehavior: Clip.antiAlias,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(Radii.xxl),
           side: BorderSide(
-            color: selected ? AppColors.ink : AppColors.line,
+            color: selected ? AppColors.stage : AppColors.line,
             width: 1,
           ),
         ),
@@ -1853,7 +1925,7 @@ class _PackageCard extends StatelessWidget {
                       Image.network(
                         package.photoUrl!.trim(),
                         fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => const ColoredBox(
+                        errorBuilder: (_, __, ___) => ColoredBox(
                           color: AppColors.surfaceSoft,
                           child: Icon(
                             Icons.music_note,
@@ -1868,7 +1940,7 @@ class _PackageCard extends StatelessWidget {
                             end: Alignment.bottomCenter,
                             colors: [
                               Colors.transparent,
-                              (selected ? AppColors.ink : Colors.black)
+                              (selected ? AppColors.stage : Colors.black)
                                   .withValues(alpha: 0.45),
                             ],
                           ),
@@ -1891,7 +1963,7 @@ class _PackageCard extends StatelessWidget {
                           child: Text(
                             meta,
                             style: TextStyle(
-                              color: selected ? AppColors.ink : Colors.white,
+                              color: selected ? AppColors.onLime : Colors.white,
                               fontSize: 11,
                               fontWeight: FontWeight.w700,
                             ),
@@ -1940,14 +2012,14 @@ class _PackageCard extends StatelessWidget {
                                       Radii.pill,
                                     ),
                                   ),
-                                  child: const Text(
+                                  child: Text(
                                     'DIPILIH',
                                     style: TextStyle(
                                       fontSize: 9.5,
                                       height: 1.2,
                                       fontWeight: FontWeight.w800,
                                       letterSpacing: 0.5,
-                                      color: AppColors.ink,
+                                      color: AppColors.onLime,
                                     ),
                                   ),
                                 ),
@@ -2105,10 +2177,10 @@ class _PackageCard extends StatelessWidget {
                           ),
                         ),
                         child: selected
-                            ? const Icon(
+                            ? Icon(
                                 Icons.check_rounded,
                                 size: 17,
-                                color: AppColors.ink,
+                                color: AppColors.onLime,
                               )
                             : null,
                       ),
@@ -2318,7 +2390,7 @@ class _ScheduleLegend extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Wrap(
+    return Wrap(
       spacing: 14,
       runSpacing: 4,
       children: [
@@ -2559,7 +2631,7 @@ class _ReviewSheetState extends State<_ReviewSheet> {
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(
+                    icon: Icon(
                       Icons.close,
                       size: 20,
                       color: AppColors.inkMuted,
@@ -2617,16 +2689,16 @@ class _ReviewSheetState extends State<_ReviewSheet> {
                   fillColor: AppColors.surface,
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(Radii.sm),
-                    borderSide: const BorderSide(color: AppColors.line),
+                    borderSide: BorderSide(color: AppColors.line),
                   ),
                   enabledBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(Radii.sm),
-                    borderSide: const BorderSide(color: AppColors.line),
+                    borderSide: BorderSide(color: AppColors.line),
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(Radii.sm),
                     borderSide: const BorderSide(
-                      color: AppColors.primary,
+                      color: AppColors.limeDark,
                       width: 1.5,
                     ),
                   ),

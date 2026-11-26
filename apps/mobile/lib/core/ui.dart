@@ -218,7 +218,7 @@ class StageHeader extends StatelessWidget {
         child: Container(
           constraints: BoxConstraints(minHeight: height),
           decoration: BoxDecoration(
-            gradient: const LinearGradient(
+            gradient: LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
               colors: AppColors.primaryDeepEnd,
@@ -356,7 +356,7 @@ class PosterTile extends StatelessWidget {
                     stops: const [0.4, 1.0],
                     colors: [
                       Colors.transparent,
-                      AppColors.ink.withValues(alpha: 0.28),
+                      AppColors.stage.withValues(alpha: 0.28),
                     ],
                   ),
                 ),
@@ -448,7 +448,7 @@ class PosterTile extends StatelessWidget {
                             stops: const [0.3, 1.0],
                             colors: [
                               Colors.transparent,
-                              AppColors.ink.withValues(alpha: 0.5),
+                              AppColors.stage.withValues(alpha: 0.5),
                             ],
                           ),
                         ),
@@ -1025,7 +1025,7 @@ class VendorCard extends StatelessWidget {
           Row(
             children: [
               if (ratingText != null) ...[
-                const Icon(
+                Icon(
                   Icons.star_rounded,
                   size: 15,
                   color: AppColors.tertiary,
@@ -1212,8 +1212,8 @@ class VendorCard extends StatelessWidget {
                             Container(
                               width: 32,
                               height: 32,
-                              decoration: const BoxDecoration(
-                                color: AppColors.ink,
+                              decoration: BoxDecoration(
+                                color: AppColors.stage,
                                 shape: BoxShape.circle,
                               ),
                               child: const Icon(
@@ -1338,7 +1338,7 @@ class _DpPill extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppColors.primarySoft,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
+        border: Border.all(color: AppColors.lineStrong),
       ),
       child: Text(
         'DP $percent%',
@@ -1385,7 +1385,7 @@ class MoneyBlock extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(Sp.lg),
       decoration: BoxDecoration(
-        color: AppColors.ink,
+        color: AppColors.stage,
         borderRadius: BorderRadius.circular(Radii.xxl),
         border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
         boxShadow: const [
@@ -1579,8 +1579,8 @@ class SelectChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     final foreground = selected ? AppColors.lime : AppColors.ink;
-    final background = selected ? AppColors.ink : AppColors.card;
-    final border = selected ? AppColors.ink : AppColors.line;
+    final background = selected ? AppColors.stage : AppColors.card;
+    final border = selected ? AppColors.stage : AppColors.line;
     final radius = Radii.pill;
     return Semantics(
       button: onTap != null,
@@ -1595,7 +1595,7 @@ class SelectChip extends StatelessWidget {
           boxShadow: selected
               ? [
                   BoxShadow(
-                    color: AppColors.ink.withValues(alpha: 0.16),
+                    color: AppColors.stage.withValues(alpha: 0.16),
                     blurRadius: 10,
                     offset: const Offset(0, 3),
                   ),
@@ -1705,7 +1705,7 @@ class SegmentBar extends StatelessWidget {
                             style: text.labelMedium?.copyWith(
                               fontSize: 12.5,
                               color: i == index
-                                  ? AppColors.ink
+                                  ? AppColors.onLime
                                   : AppColors.inkMuted,
                               fontWeight: i == index
                                   ? FontWeight.w800
@@ -1891,7 +1891,7 @@ class StatusPill extends StatelessWidget {
       ),
       PillTone.brand => (
         background: AppColors.primarySoft,
-        foreground: AppColors.primary,
+        foreground: AppColors.ink,
       ),
     };
 
@@ -1984,7 +1984,7 @@ class MediaGalleryReel extends StatelessWidget {
                         fit: BoxFit.cover,
                         errorBuilder: (_, __, ___) => Container(
                           color: AppColors.surfaceSoft,
-                          child: const Icon(
+                          child: Icon(
                             Icons.broken_image_outlined,
                             color: AppColors.inkMuted,
                           ),
@@ -2106,11 +2106,11 @@ class StageVideoCard extends StatelessWidget {
                       width: 56,
                       height: 56,
                       decoration: BoxDecoration(
-                        color: AppColors.primary.withValues(alpha: 0.95),
+                        color: AppColors.stage.withValues(alpha: 0.95),
                         shape: BoxShape.circle,
                         boxShadow: [
                           BoxShadow(
-                            color: AppColors.primary.withValues(alpha: 0.4),
+                            color: AppColors.stage.withValues(alpha: 0.4),
                             blurRadius: 16,
                             spreadRadius: 2,
                           ),
@@ -2561,12 +2561,12 @@ class _TarlinkDatePickerSheetState extends State<_TarlinkDatePickerSheet> {
                   color: AppColors.surfaceSoft,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(Radii.sm),
-                    side: const BorderSide(color: AppColors.line),
+                    side: BorderSide(color: AppColors.line),
                   ),
                   clipBehavior: Clip.antiAlias,
                   child: InkWell(
                     onTap: () => Navigator.pop(context),
-                    child: const SizedBox(
+                    child: SizedBox(
                       width: 34,
                       height: 34,
                       child: Center(
@@ -2595,10 +2595,10 @@ class _TarlinkDatePickerSheetState extends State<_TarlinkDatePickerSheet> {
               ),
               child: Row(
                 children: [
-                  const Icon(
+                  Icon(
                     Icons.event_outlined,
                     size: 18,
-                    color: AppColors.primary,
+                    color: AppColors.ink,
                   ),
                   const SizedBox(width: Sp.sm),
                   Expanded(
@@ -2661,10 +2661,10 @@ class _TarlinkDatePickerSheetState extends State<_TarlinkDatePickerSheet> {
                           label: Text('$y'),
                           selected: isSelected,
                           onSelected: (_) => _onYearChanged(y),
-                          selectedColor: AppColors.primary,
+                          selectedColor: AppColors.lime,
                           labelStyle: TextStyle(
                             color: isSelected
-                                ? AppColors.onPrimary
+                                ? AppColors.onLime
                                 : AppColors.ink,
                             fontWeight: isSelected
                                 ? FontWeight.w700
@@ -2675,7 +2675,7 @@ class _TarlinkDatePickerSheetState extends State<_TarlinkDatePickerSheet> {
                             borderRadius: BorderRadius.circular(Radii.sm),
                             side: BorderSide(
                               color: isSelected
-                                  ? AppColors.primary
+                                  ? AppColors.limeDark
                                   : AppColors.line,
                             ),
                           ),
@@ -2808,11 +2808,11 @@ class _TarlinkDatePickerSheetState extends State<_TarlinkDatePickerSheet> {
                       _selectedDate!.day == day;
 
                   return Material(
-                    color: isSelected ? AppColors.primary : Colors.transparent,
+                    color: isSelected ? AppColors.lime : Colors.transparent,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(8),
                       side: isSelected
-                          ? const BorderSide(color: AppColors.primary)
+                          ? const BorderSide(color: AppColors.limeDark)
                           : BorderSide.none,
                     ),
                     child: InkWell(
@@ -2834,7 +2834,7 @@ class _TarlinkDatePickerSheetState extends State<_TarlinkDatePickerSheet> {
                                 ? FontWeight.w700
                                 : FontWeight.w500,
                             color: isSelected
-                                ? AppColors.onPrimary
+                                ? AppColors.onLime
                                 : (isDisabled ? AppColors.line : AppColors.ink),
                           ),
                         ),

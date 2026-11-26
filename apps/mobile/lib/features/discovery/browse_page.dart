@@ -380,6 +380,34 @@ class _BrowsePageState extends State<BrowsePage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (_categories.isNotEmpty) ...[
+            SizedBox(
+              height: 38,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: _categories.length + 1,
+                separatorBuilder: (_, _) => const SizedBox(width: Sp.sm),
+                itemBuilder: (context, index) {
+                  if (index == 0) {
+                    return SelectChip(
+                      label: 'Semua',
+                      selected: _category == null,
+                      onTap: () => _setCategory(null),
+                      compact: true,
+                    );
+                  }
+                  final category = _categories[index - 1];
+                  return SelectChip(
+                    label: category.name,
+                    selected: _category == category.slug,
+                    onTap: () => _setCategory(category.slug),
+                    compact: true,
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: Sp.xs),
+          ],
           Row(
             children: [
               Expanded(
@@ -484,35 +512,6 @@ class _BrowsePageState extends State<BrowsePage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  if (_categories.isNotEmpty) ...[
-                    SizedBox(
-                      height: 36,
-                      child: ListView.separated(
-                        scrollDirection: Axis.horizontal,
-                        itemCount: _categories.length + 1,
-                        separatorBuilder: (_, _) =>
-                            const SizedBox(width: Sp.sm),
-                        itemBuilder: (context, index) {
-                          if (index == 0) {
-                            return SelectChip(
-                              label: 'Semua kategori',
-                              selected: _category == null,
-                              onTap: () => _setCategory(null),
-                              compact: true,
-                            );
-                          }
-                          final category = _categories[index - 1];
-                          return SelectChip(
-                            label: category.name,
-                            selected: _category == category.slug,
-                            onTap: () => _setCategory(category.slug),
-                            compact: true,
-                          );
-                        },
-                      ),
-                    ),
-                    const SizedBox(height: Sp.md),
-                  ],
                   Row(
                     children: [
                       Expanded(child: _dateTile()),
@@ -576,13 +575,13 @@ class _BrowsePageState extends State<BrowsePage> {
                 GestureDetector(
                   behavior: HitTestBehavior.opaque,
                   onTap: _clearDate,
-                  child: const Padding(
+                  child: Padding(
                     padding: EdgeInsets.all(4),
                     child: Icon(Icons.close, size: 16, color: AppColors.ink),
                   ),
                 ),
               ] else ...[
-                const Icon(
+                Icon(
                   Icons.keyboard_arrow_down,
                   size: 16,
                   color: AppColors.inkMuted,
@@ -637,13 +636,13 @@ class _BrowsePageState extends State<BrowsePage> {
                 GestureDetector(
                   behavior: HitTestBehavior.opaque,
                   onTap: () => setState(() => _region = null),
-                  child: const Padding(
+                  child: Padding(
                     padding: EdgeInsets.all(4),
                     child: Icon(Icons.close, size: 16, color: AppColors.ink),
                   ),
                 ),
               ] else ...[
-                const Icon(
+                Icon(
                   Icons.keyboard_arrow_down,
                   size: 16,
                   color: AppColors.inkMuted,
@@ -680,10 +679,10 @@ class _BrowsePageState extends State<BrowsePage> {
                   ),
                   child: Row(
                     children: [
-                      const Icon(
+                      Icon(
                         Icons.location_on_outlined,
                         size: 20,
-                        color: AppColors.primary,
+                        color: AppColors.ink,
                       ),
                       const SizedBox(width: Sp.sm),
                       Text(
@@ -703,14 +702,14 @@ class _BrowsePageState extends State<BrowsePage> {
                     ],
                   ),
                 ),
-                const Divider(height: 1, color: AppColors.line),
+                Divider(height: 1, color: AppColors.line),
                 ListTile(
                   leading: Icon(
                     _region == null
                         ? Icons.radio_button_checked
                         : Icons.radio_button_off,
                     color: _region == null
-                        ? AppColors.primary
+                        ? AppColors.accent
                         : AppColors.inkMuted,
                   ),
                   title: const Text(
@@ -730,7 +729,7 @@ class _BrowsePageState extends State<BrowsePage> {
                           ? Icons.radio_button_checked
                           : Icons.radio_button_off,
                       color: _region == r
-                          ? AppColors.primary
+                          ? AppColors.accent
                           : AppColors.inkMuted,
                     ),
                     title: Text(
@@ -850,7 +849,7 @@ class _BrowsePageState extends State<BrowsePage> {
                 ),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: AppColors.secondary,
-                  side: const BorderSide(color: AppColors.secondary),
+                  side: BorderSide(color: AppColors.secondary),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(Radii.sm),
                   ),

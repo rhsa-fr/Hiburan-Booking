@@ -144,7 +144,7 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
     final text = Theme.of(context).textTheme;
 
     return Scaffold(
-      backgroundColor: AppColors.ink,
+      backgroundColor: AppColors.stage,
       body: Column(
         children: [
           AuthStage(
@@ -180,7 +180,7 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
             const SizedBox(height: 6),
             Row(
               children: [
-                const Icon(
+                Icon(
                   Icons.alternate_email,
                   size: 17,
                   color: AppColors.inkMuted,

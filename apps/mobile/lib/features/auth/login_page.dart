@@ -264,7 +264,7 @@ class _LoginPageState extends State<LoginPage> {
     final notice = AppScope.of(context).session.notice;
 
     return Scaffold(
-      backgroundColor: AppColors.ink,
+      backgroundColor: AppColors.stage,
       body: Column(
         children: [
           const AuthStage(
@@ -494,7 +494,7 @@ class _LoginPageState extends State<LoginPage> {
             const SizedBox(height: Sp.sm),
             Row(
               children: [
-                const Icon(
+                Icon(
                   Icons.info_outline,
                   size: 14,
                   color: AppColors.muted2,
