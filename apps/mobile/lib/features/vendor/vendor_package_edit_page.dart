@@ -384,7 +384,7 @@ class _VendorPackageEditPageState extends State<VendorPackageEditPage> {
         ),
       ),
       bottomNavigationBar: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           color: VendorColors.cardWhite,
           borderRadius: BorderRadius.vertical(
             top: Radius.circular(VendorRadii.lg),

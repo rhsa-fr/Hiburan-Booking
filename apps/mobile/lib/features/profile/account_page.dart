@@ -5,6 +5,7 @@ import '../../app/app.dart';
 import '../../app/routes.dart';
 import '../../app/theme.dart';
 import '../../app/theme_controller.dart';
+import '../../app/theme_picker.dart';
 import '../../core/api_exception.dart';
 import '../../core/format.dart';
 import '../../core/models.dart';
@@ -228,7 +229,7 @@ class _AccountPageState extends State<AccountPage> {
   Widget build(BuildContext context) {
     final user = _user;
     final update = AppScope.of(context).update;
-    final theme = ThemeScope.of(context);
+    final theme = ThemeScope.maybeOf(context);
     final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
 
     return Scaffold(
@@ -286,12 +287,14 @@ class _AccountPageState extends State<AccountPage> {
                         _MenuRow(
                           icon: Icons.brightness_6_outlined,
                           label: 'Tampilan',
-                          onTap: _pickTheme,
+                          onTap: theme == null
+                              ? null
+                              : () => showThemePicker(context),
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Text(
-                                _themeLabel(theme.mode),
+                                themeModeLabel(theme?.mode ?? ThemeMode.light),
                                 style: Theme.of(context).textTheme.bodySmall
                                     ?.copyWith(
                                       color: AppColors.inkMuted,
@@ -427,90 +430,6 @@ class _AccountPageState extends State<AccountPage> {
       ),
     );
   }
-
-  Future<void> _pickTheme() async {
-    final controller = ThemeScope.of(context);
-    final chosen = await showModalBottomSheet<ThemeMode>(
-      context: context,
-      showDragHandle: true,
-      backgroundColor: AppColors.card,
-      builder: (sheet) {
-        final text = Theme.of(sheet).textTheme;
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(Sp.lg, 0, Sp.lg, Sp.lg),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  'Tampilan',
-                  style: text.titleLarge?.copyWith(fontSize: 18),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  'Pilih tema yang paling nyaman untuk matamu.',
-                  style: text.bodySmall?.copyWith(color: AppColors.inkMuted),
-                ),
-                const SizedBox(height: Sp.sm),
-                for (final mode in const [
-                  ThemeMode.system,
-                  ThemeMode.light,
-                  ThemeMode.dark,
-                ])
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(
-                      _themeIcon(mode),
-                      color: controller.mode == mode
-                          ? AppColors.ink
-                          : AppColors.inkMuted,
-                    ),
-                    title: Text(
-                      _themeLabel(mode),
-                      style: text.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.ink,
-                      ),
-                    ),
-                    subtitle: Text(
-                      _themeHint(mode),
-                      style: text.bodySmall?.copyWith(color: AppColors.inkMuted),
-                    ),
-                    trailing: controller.mode == mode
-                        ? const Icon(
-                            Icons.check_circle_rounded,
-                            color: AppColors.limeDark,
-                          )
-                        : null,
-                    onTap: () => Navigator.pop(sheet, mode),
-                  ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-    if (chosen != null) await controller.setMode(chosen);
-  }
-
-  static String _themeLabel(ThemeMode mode) => switch (mode) {
-    ThemeMode.system => 'Sistem',
-    ThemeMode.light => 'Terang',
-    ThemeMode.dark => 'Gelap',
-  };
-
-  static String _themeHint(ThemeMode mode) => switch (mode) {
-    ThemeMode.system => 'Menyesuaikan pengaturan HP',
-    ThemeMode.light => 'Latar terang sepanjang waktu',
-    ThemeMode.dark => 'Latar gelap, nyaman untuk malam',
-  };
-
-  static IconData _themeIcon(ThemeMode mode) => switch (mode) {
-    ThemeMode.system => Icons.brightness_auto_outlined,
-    ThemeMode.light => Icons.light_mode_outlined,
-    ThemeMode.dark => Icons.dark_mode_outlined,
-  };
 
   void _openVendorApply() {
     Navigator.push(

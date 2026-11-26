@@ -218,11 +218,11 @@ class _FilterChip extends StatelessWidget {
       button: true,
       selected: selected,
       child: Material(
-        color: selected ? VendorColors.ink : VendorColors.cardWhite,
+        color: selected ? VendorColors.stage : VendorColors.cardWhite,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(VendorRadii.pill),
           side: BorderSide(
-            color: selected ? VendorColors.ink : VendorColors.lineSoft,
+            color: selected ? VendorColors.stage : VendorColors.lineSoft,
           ),
         ),
         clipBehavior: Clip.antiAlias,
@@ -240,7 +240,7 @@ class _FilterChip extends StatelessWidget {
                     weight: FontWeight.w700,
                     color: selected
                         ? VendorColors.lime
-                        : const Color(0xFF414C5C),
+                        : VendorColors.muted,
                   ),
                 ),
               ),
@@ -277,7 +277,7 @@ class _OrderRow extends StatelessWidget {
             Container(
               width: 52,
               padding: const EdgeInsets.symmetric(vertical: 12),
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 color: VendorColors.softFill,
                 border: Border(right: BorderSide(color: VendorColors.line)),
               ),
@@ -363,6 +363,14 @@ class _OrderRow extends StatelessWidget {
                     ),
                   ],
                 ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: Icon(
+                Icons.chevron_right_rounded,
+                size: 20,
+                color: VendorColors.muted,
               ),
             ),
           ],

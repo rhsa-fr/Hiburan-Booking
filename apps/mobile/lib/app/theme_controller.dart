@@ -19,20 +19,20 @@ class ThemeController extends ChangeNotifier {
 
   final FlutterSecureStorage _storage;
 
-  ThemeMode _mode = ThemeMode.system;
+  ThemeMode _mode = ThemeMode.light;
   ThemeMode get mode => _mode;
 
   Future<void> restore() async {
-    ThemeMode next = ThemeMode.system;
+    ThemeMode next = ThemeMode.light;
     try {
       final raw = await _storage.read(key: _key);
       next = switch (raw) {
-        'light' => ThemeMode.light,
+        'system' => ThemeMode.system,
         'dark' => ThemeMode.dark,
-        _ => ThemeMode.system,
+        _ => ThemeMode.light,
       };
     } catch (_) {
-      next = ThemeMode.system;
+      next = ThemeMode.light;
     }
     if (next != _mode) {
       _mode = next;
@@ -76,9 +76,12 @@ class ThemeScope extends InheritedNotifier<ThemeController> {
     required super.child,
   }) : super(notifier: controller);
 
+  static ThemeController? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<ThemeScope>()?.notifier;
+
   static ThemeController of(BuildContext context) {
-    final scope = context.dependOnInheritedWidgetOfExactType<ThemeScope>();
-    assert(scope != null, 'ThemeScope tidak ditemukan di atas widget ini.');
-    return scope!.notifier!;
+    final controller = maybeOf(context);
+    assert(controller != null, 'ThemeScope tidak ditemukan di atas widget ini.');
+    return controller!;
   }
 }

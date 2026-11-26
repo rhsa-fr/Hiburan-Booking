@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../app/app.dart';
 import '../../app/routes.dart';
+import '../../app/theme.dart';
 import '../../core/api_exception.dart';
 import '../../core/format.dart';
 import '../booking/booking_support.dart';
@@ -186,10 +187,15 @@ class _VendorCalendarPageState extends State<VendorCalendarPage> {
               lastDate: DateTime.now().add(const Duration(days: 730)),
               builder: (ctx, child) => Theme(
                 data: ThemeData(
-                  colorScheme: const ColorScheme.light(
-                    primary: VendorColors.ink,
-                    onPrimary: Colors.white,
-                    surface: VendorColors.cardWhite,
+                  colorScheme: ColorScheme.fromSeed(
+                    seedColor: VendorColors.ink,
+                    brightness: AppColors.isDark
+                        ? Brightness.dark
+                        : Brightness.light,
+                  ).copyWith(
+                    primary: VendorColors.lime,
+                    onPrimary: VendorColors.onLime,
+                    surface: VendorColors.card,
                     onSurface: VendorColors.ink,
                   ),
                   textButtonTheme: TextButtonThemeData(
@@ -463,7 +469,7 @@ class _VendorCalendarPageState extends State<VendorCalendarPage> {
             ),
             child: Row(
               children: [
-                const Icon(
+                Icon(
                   Icons.schedule,
                   size: 16,
                   color: VendorColors.waitFg,
@@ -543,9 +549,9 @@ class _VendorCalendarPageState extends State<VendorCalendarPage> {
                           child: LinearProgressIndicator(
                             value: daysInMonth == 0 ? 0 : filled / daysInMonth,
                             minHeight: 4,
-                            backgroundColor: const Color(0xFFE3E4DE),
-                            valueColor: const AlwaysStoppedAnimation(
-                              VendorColors.ink,
+                            backgroundColor: VendorColors.line,
+                            valueColor: AlwaysStoppedAnimation(
+                              VendorColors.lime,
                             ),
                           ),
                         ),
@@ -563,7 +569,7 @@ class _VendorCalendarPageState extends State<VendorCalendarPage> {
           ),
         ),
         const SizedBox(height: VendorSp.sm),
-        const Wrap(
+        Wrap(
           spacing: 12,
           runSpacing: 5,
           children: [
@@ -635,7 +641,7 @@ class _VendorCalendarPageState extends State<VendorCalendarPage> {
             height: 46,
             padding: const EdgeInsets.symmetric(vertical: 5),
             decoration: BoxDecoration(
-              color: selected ? VendorColors.ink : Colors.transparent,
+              color: selected ? VendorColors.stage : Colors.transparent,
               borderRadius: BorderRadius.circular(7),
             ),
             child: Column(
@@ -860,7 +866,7 @@ class _DateField extends StatelessWidget {
           color: VendorColors.cardWhite,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(VendorRadii.sm),
-            side: const BorderSide(color: VendorColors.line),
+            side: BorderSide(color: VendorColors.line),
           ),
           clipBehavior: Clip.antiAlias,
           child: InkWell(
@@ -875,7 +881,7 @@ class _DateField extends StatelessWidget {
                       style: vendorText(size: 12.5, weight: FontWeight.w600),
                     ),
                   ),
-                  const Icon(
+                  Icon(
                     Icons.calendar_today_outlined,
                     size: 15,
                     color: VendorColors.muted,

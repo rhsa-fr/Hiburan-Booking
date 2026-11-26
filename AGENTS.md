@@ -25,8 +25,12 @@ dibayar mahal lewat bug.
 - Teks/ikon di atas lime memakai `AppColors.onLime`.
 - `AppColors` adalah getter dinamis. Jangan membungkusnya dengan `const`; analyzer
   akan menolak. Pilihan mode ada di Profil → Preferensi → Tampilan
-  (`Sistem`/`Terang`/`Gelap`, disimpan sebagai `theme_mode`).
+  (`Sistem`/`Terang`/`Gelap`, disimpan sebagai `theme_mode`). **Default Terang**;
+  gelap hanya aktif bila dipilih.
 - Setiap layar baru wajib dicek di kedua mode (screenshot 390×844).
+- Portal vendor memakai `VendorColors` (dinamis mengikuti `AppColors.isDark`);
+  latar yang selalu gelap memakai `VendorColors.stage`, teks di atas lime
+  memakai `VendorColors.onLime`.
 
 ### Durasi paket (ADR 0042)
 - Form paket vendor memakai pilihan **Setengah hari (360) / 1 hari (600) /

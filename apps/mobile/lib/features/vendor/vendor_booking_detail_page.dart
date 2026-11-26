@@ -379,7 +379,7 @@ class _VendorBookingDetailPageState extends State<VendorBookingDetailPage> {
             children: [
               Container(
                 padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
                   color: VendorColors.softRow,
                   border: Border(
                     bottom: BorderSide(color: VendorColors.lineSoft),
@@ -464,7 +464,7 @@ class _VendorBookingDetailPageState extends State<VendorBookingDetailPage> {
                         color: VendorColors.ink,
                       ),
                     ),
-                    const Padding(
+                    Padding(
                       padding: EdgeInsets.symmetric(vertical: 11),
                       child: Divider(height: 1, color: VendorColors.lineSoft),
                     ),
@@ -485,7 +485,7 @@ class _VendorBookingDetailPageState extends State<VendorBookingDetailPage> {
                         ),
                         child: Row(
                           children: [
-                            const Icon(
+                            Icon(
                               Icons.place_outlined,
                               size: 16,
                               color: VendorColors.muted,
@@ -626,7 +626,7 @@ class _VendorBookingDetailPageState extends State<VendorBookingDetailPage> {
               ),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14),
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
                   border: Border(top: BorderSide(color: VendorColors.lineSoft)),
                 ),
                 child: Column(
@@ -755,8 +755,8 @@ class _VendorBookingDetailPageState extends State<VendorBookingDetailPage> {
 
     final bottom = MediaQuery.viewPaddingOf(context).bottom;
     return Container(
-      decoration: const BoxDecoration(
-        color: VendorColors.ink,
+      decoration: BoxDecoration(
+        color: VendorColors.stage,
         border: Border(top: BorderSide(color: VendorColors.lime, width: 2)),
       ),
       padding: EdgeInsets.fromLTRB(18, 10, 18, 15 + bottom),
@@ -1133,15 +1133,15 @@ class _VendorDeclineSheetState extends State<VendorDeclineSheet> {
                 contentPadding: const EdgeInsets.all(VendorSp.md),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(VendorRadii.sm),
-                  borderSide: const BorderSide(color: VendorColors.line),
+                  borderSide: BorderSide(color: VendorColors.line),
                 ),
                 enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(VendorRadii.sm),
-                  borderSide: const BorderSide(color: VendorColors.line),
+                  borderSide: BorderSide(color: VendorColors.line),
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(VendorRadii.sm),
-                  borderSide: const BorderSide(color: VendorColors.ink),
+                  borderSide: BorderSide(color: VendorColors.ink),
                 ),
               ),
             ),

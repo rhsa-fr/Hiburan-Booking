@@ -227,10 +227,10 @@ class _VendorEarningsPageState extends State<VendorEarningsPage> {
           Container(
             padding: const EdgeInsets.all(VendorSp.lg),
             decoration: BoxDecoration(
-              gradient: const LinearGradient(
+              gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: [Color(0xFF1B2946), VendorColors.ink],
+                colors: [VendorColors.headerTop, VendorColors.stage],
               ),
               borderRadius: BorderRadius.circular(VendorRadii.md),
               boxShadow: const [
@@ -328,7 +328,7 @@ class _VendorEarningsPageState extends State<VendorEarningsPage> {
                 const SizedBox(height: VendorSp.md),
                 Container(
                   padding: const EdgeInsets.only(top: 10),
-                  decoration: const BoxDecoration(
+                  decoration: BoxDecoration(
                     border: Border(top: BorderSide(color: VendorColors.lineSoft)),
                   ),
                   child: Row(
@@ -785,7 +785,7 @@ class _EarningsExportSheet extends StatelessWidget {
               ),
               if (clawback > 0)
                 _ExportAmountRow('Clawback', clawback),
-              const Divider(height: VendorSp.lg, color: VendorColors.lineSoft),
+              Divider(height: VendorSp.lg, color: VendorColors.lineSoft),
               _ExportAmountRow(
                 'Pendapatan bersih',
                 _amount(totals, 'net_vendor_idr'),

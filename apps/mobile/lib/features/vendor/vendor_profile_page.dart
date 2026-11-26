@@ -3,6 +3,8 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/app.dart';
 import '../../app/routes.dart';
+import '../../app/theme_controller.dart';
+import '../../app/theme_picker.dart';
 import '../../core/api_exception.dart';
 import '../../core/format.dart';
 import '../booking/booking_support.dart';
@@ -298,6 +300,7 @@ class _VendorProfilePageState extends State<VendorProfilePage> {
   }
 
   Widget _content(Map<String, dynamic> me, Map<String, dynamic>? public) {
+    final theme = ThemeScope.maybeOf(context);
     final verification = me['verification_status']?.toString() ?? '';
     final regionName = public?['region_name']?.toString().trim() ?? '';
     final regionCode = me['region_code']?.toString() ?? '';
@@ -414,6 +417,17 @@ class _VendorProfilePageState extends State<VendorProfilePage> {
               ),
             ],
           ),
+          const VendorSectionTitle(label: 'Preferensi'),
+          VendorCard(
+            padding: EdgeInsets.zero,
+            child: _InfoRow(
+              title: 'Tampilan',
+              subtitle: themeModeLabel(theme?.mode ?? ThemeMode.light),
+              trailingIcon: Icons.brightness_6_outlined,
+              onTap: theme == null ? null : () => showThemePicker(context),
+              showDivider: false,
+            ),
+          ),
           const VendorSectionTitle(label: 'Akun'),
           VendorCard(
             padding: EdgeInsets.zero,
@@ -508,10 +522,10 @@ class _ProfileHero extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
+        gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFF182540), VendorColors.ink],
+          colors: [VendorColors.headerTop, VendorColors.stage],
         ),
         borderRadius: BorderRadius.circular(VendorRadii.lg),
         boxShadow: const [
@@ -678,7 +692,7 @@ class _ActionTile extends StatelessWidget {
       color: VendorColors.cardWhite,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(VendorRadii.md),
-        side: const BorderSide(color: VendorColors.lineSoft),
+        side: BorderSide(color: VendorColors.lineSoft),
       ),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -781,7 +795,7 @@ class _InfoRow extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         border: showDivider
-            ? const Border(bottom: BorderSide(color: VendorColors.lineSoft))
+            ? Border(bottom: BorderSide(color: VendorColors.lineSoft))
             : null,
       ),
       child: onTap == null
