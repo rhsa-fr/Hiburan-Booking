@@ -4,6 +4,8 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../app/app.dart';
 import '../../app/routes.dart';
 import '../../app/theme.dart';
+import '../../app/theme_controller.dart';
+import '../../app/theme_picker.dart';
 import '../../core/api_exception.dart';
 import '../../core/format.dart';
 import '../../core/models.dart';
@@ -227,6 +229,12 @@ class _AccountPageState extends State<AccountPage> {
   Widget build(BuildContext context) {
     final user = _user;
     final update = AppScope.of(context).update;
+    final theme = ThemeScope.maybeOf(context);
+    final isVendor =
+        user?.roles.any(
+          (role) => role == 'vendor_owner' || role == 'vendor_member',
+        ) ??
+        false;
     final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
 
     return Scaffold(
@@ -276,7 +284,43 @@ class _AccountPageState extends State<AccountPage> {
                         ],
                       ],
                       const SizedBox(height: Sp.md),
-                      _VendorPromo(onTap: _openVendorApply),
+                      _VendorPromo(
+                        onTap: isVendor
+                            ? _openVendorMode
+                            : _openVendorApply,
+                        registered: isVendor,
+                      ),
+                      const SizedBox(height: Sp.xl),
+                      const _ProfileSectionTitle('Preferensi'),
+                      const SizedBox(height: Sp.sm),
+                      _menuCard([
+                        _MenuRow(
+                          icon: Icons.brightness_6_outlined,
+                          label: 'Tampilan',
+                          onTap: theme == null
+                              ? null
+                              : () => showThemePicker(context),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                themeModeLabel(theme?.mode ?? ThemeMode.light),
+                                style: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(
+                                      color: AppColors.inkMuted,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                              ),
+                              const SizedBox(width: 2),
+                              Icon(
+                                Icons.chevron_right,
+                                size: 18,
+                                color: AppColors.inkMuted,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ]),
                       const SizedBox(height: Sp.xl),
                       const _ProfileSectionTitle('Aktivitas'),
                       const SizedBox(height: Sp.sm),
@@ -346,6 +390,11 @@ class _AccountPageState extends State<AccountPage> {
                       const SizedBox(height: Sp.sm),
                       _menuCard([
                         _MenuRow(
+                          icon: Icons.person_outline,
+                          label: 'Edit profil',
+                          onTap: _openEditProfile,
+                        ),
+                        _MenuRow(
                           icon: Icons.delete_forever_outlined,
                           label: 'Hapus akun',
                           danger: true,
@@ -397,6 +446,17 @@ class _AccountPageState extends State<AccountPage> {
     );
   }
 
+  Future<void> _openEditProfile() async {
+    final updated = await Navigator.pushNamed(context, Routes.editProfile);
+    if (updated == true && mounted) {
+      setState(() => _user = AppScope.of(context).session.user);
+    }
+  }
+
+  void _openVendorMode() {
+    Navigator.pushNamed(context, Routes.vendorHome);
+  }
+
   void _openVendorApply() {
     Navigator.push(
       context,
@@ -424,7 +484,7 @@ class _AccountPageState extends State<AccountPage> {
           children: [
             for (var i = 0; i < rows.length; i++) ...[
               if (i > 0)
-                const Divider(height: 1, thickness: 1, color: AppColors.line),
+                Divider(height: 1, thickness: 1, color: AppColors.line),
               rows[i],
             ],
           ],
@@ -450,7 +510,7 @@ class _IdentityCard extends StatelessWidget {
 
     return Container(
       decoration: BoxDecoration(
-        color: AppColors.ink,
+        color: AppColors.stage,
         borderRadius: BorderRadius.circular(18),
       ),
       clipBehavior: Clip.antiAlias,
@@ -471,11 +531,11 @@ class _IdentityCard extends StatelessWidget {
                   ),
                   child: Text(
                     _monogram(user),
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 19,
                       height: 1,
                       fontWeight: FontWeight.w800,
-                      color: AppColors.ink,
+                      color: AppColors.onLime,
                     ),
                   ),
                 ),
@@ -534,9 +594,10 @@ class _IdentityCard extends StatelessWidget {
 /// Growth card: the vendor door is a first-class action, not the ninth row of
 /// a settings list. It opens the application form that already exists.
 class _VendorPromo extends StatelessWidget {
-  const _VendorPromo({required this.onTap});
+  const _VendorPromo({required this.onTap, this.registered = false});
 
   final VoidCallback onTap;
+  final bool registered;
 
   @override
   Widget build(BuildContext context) {
@@ -555,11 +616,13 @@ class _VendorPromo extends StatelessWidget {
                 width: 42,
                 height: 42,
                 decoration: const BoxDecoration(
-                  color: AppColors.ink,
+                  color: AppColors.stage,
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(
-                  Icons.storefront_outlined,
+                child: Icon(
+                  registered
+                      ? Icons.dashboard_customize_outlined
+                      : Icons.storefront_outlined,
                   size: 20,
                   color: AppColors.lime,
                 ),
@@ -570,19 +633,21 @@ class _VendorPromo extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Buka jasa hiburanmu',
+                      registered ? 'Kelola vendor' : 'Buka jasa hiburanmu',
                       style: text.labelLarge?.copyWith(
                         fontSize: 14,
                         fontWeight: FontWeight.w800,
                         letterSpacing: -0.2,
-                        color: AppColors.ink,
+                        color: AppColors.onLime,
                       ),
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'Daftarkan grup atau sound system.',
+                      registered
+                          ? 'Dashboard, kalender, dan pesanan.'
+                          : 'Daftarkan grup atau sound system.',
                       style: text.bodySmall?.copyWith(
-                        color: AppColors.ink.withValues(alpha: 0.68),
+                        color: AppColors.onLime.withValues(alpha: 0.68),
                       ),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
@@ -591,7 +656,11 @@ class _VendorPromo extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: Sp.sm),
-              const Icon(Icons.arrow_forward, size: 18, color: AppColors.ink),
+              const Icon(
+                Icons.arrow_forward,
+                size: 18,
+                color: AppColors.onLime,
+              ),
             ],
           ),
         ),
@@ -694,7 +763,7 @@ class _MenuRow extends StatelessWidget {
                 if (trailing != null)
                   trailing!
                 else
-                  const Icon(
+                  Icon(
                     Icons.chevron_right,
                     size: 18,
                     color: AppColors.inkMuted,
@@ -748,7 +817,7 @@ class _SignOutSheet extends StatelessWidget {
                     style: OutlinedButton.styleFrom(
                       minimumSize: const Size.fromHeight(52),
                       foregroundColor: AppColors.ink,
-                      side: const BorderSide(color: AppColors.line),
+                      side: BorderSide(color: AppColors.line),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(Radii.sm),
                       ),
@@ -853,7 +922,7 @@ class _DeleteAccountSheetState extends State<_DeleteAccountSheet> {
                     style: OutlinedButton.styleFrom(
                       minimumSize: const Size.fromHeight(52),
                       foregroundColor: AppColors.ink,
-                      side: const BorderSide(color: AppColors.line),
+                      side: BorderSide(color: AppColors.line),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(Radii.sm),
                       ),
@@ -976,7 +1045,7 @@ class _PolicySheetState extends State<_PolicySheet> {
                 ],
               ),
             ),
-            const Divider(height: 1, thickness: 1, color: AppColors.line),
+            Divider(height: 1, thickness: 1, color: AppColors.line),
             Expanded(child: _content(context)),
           ],
         ),
@@ -1145,7 +1214,7 @@ class _PolicyPair extends StatelessWidget {
             textAlign: TextAlign.end,
             style: text.bodyMedium?.copyWith(
               fontWeight: FontWeight.w600,
-              color: AppColors.primary,
+              color: AppColors.ink,
             ),
           ),
         ],

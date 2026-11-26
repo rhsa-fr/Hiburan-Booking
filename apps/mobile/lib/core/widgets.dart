@@ -194,7 +194,7 @@ class AppError extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Icon(Icons.info_outline, size: 20, color: AppColors.danger),
+            Icon(Icons.info_outline, size: 20, color: AppColors.danger),
             const SizedBox(width: Sp.sm),
             Expanded(
               child: Text(
@@ -354,7 +354,7 @@ class PrimaryButton extends StatelessWidget {
                 fontSize: dense ? 13.5 : null,
                 color: onPressed == null || loading
                     ? AppColors.inkMuted
-                    : AppColors.ink,
+                    : AppColors.onLime,
               ),
             ),
           ),
@@ -473,7 +473,7 @@ const _labels = <StatusKind, Map<String, String>>{
     'expired' => (label: label, fg: AppColors.danger, bg: AppColors.dangerSoft),
     'booked' => (
       label: label,
-      fg: AppColors.primary,
+      fg: AppColors.ink,
       bg: AppColors.primarySoft,
     ),
     _ => (label: label, fg: AppColors.inkMuted, bg: AppColors.neutralSoft),

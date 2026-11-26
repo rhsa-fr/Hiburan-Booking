@@ -15,6 +15,7 @@ import '../features/update/app_update_service.dart';
 import '../features/update/update_dialog.dart';
 import 'routes.dart';
 import 'theme.dart';
+import 'theme_controller.dart';
 
 /// Session + API for every screen, without a state-management package.
 class AppScope extends InheritedNotifier<Session> {
@@ -65,6 +66,7 @@ class _TarlinkAppState extends State<TarlinkApp> with WidgetsBindingObserver {
   final _messengerKey = GlobalKey<ScaffoldMessengerState>();
   late final NotificationPoller _poller;
   late final PushService _push;
+  late final ThemeController _theme;
 
   /// Update check plumbing. All of it stays null unless the build is Android
   /// and carries a manifest URL, so widget tests never open a socket or a
@@ -93,6 +95,8 @@ class _TarlinkAppState extends State<TarlinkApp> with WidgetsBindingObserver {
       onNotification: _showPopup,
     );
     _push = PushService(onForeground: _showPushPopup);
+    _theme = ThemeController()..addListener(_onThemeChanged);
+    unawaited(_theme.restore());
     widget.session.addListener(_syncDelivery);
     _syncDelivery();
 
@@ -136,8 +140,11 @@ class _TarlinkAppState extends State<TarlinkApp> with WidgetsBindingObserver {
     }
   }
 
-  void _openBooking(String bookingId) {
-    final navigator = _navigatorKey.currentState;
+  void _onThemeChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _openBooking(String bookingId) {    final navigator = _navigatorKey.currentState;
     final route = _isVendorOwner(widget.session)
         ? Routes.vendorBookingDetail
         : Routes.bookingStatus;
@@ -278,6 +285,9 @@ class _TarlinkAppState extends State<TarlinkApp> with WidgetsBindingObserver {
   @override
   void dispose() {
     widget.session.removeListener(_syncDelivery);
+    _theme
+      ..removeListener(_onThemeChanged)
+      ..dispose();
     if (_updateService != null) WidgetsBinding.instance.removeObserver(this);
     _updateClient?.close();
     _poller.stop();
@@ -292,16 +302,21 @@ class _TarlinkAppState extends State<TarlinkApp> with WidgetsBindingObserver {
       api: widget.api,
       push: _push,
       update: _updateService,
-      child: MaterialApp(
-        title: 'Tarlink',
-        debugShowCheckedModeBanner: false,
-        theme: buildTheme(),
-        navigatorKey: _navigatorKey,
-        scaffoldMessengerKey: _messengerKey,
-        initialRoute: widget.session.authorized
-            ? (_isVendorOwner(widget.session) ? Routes.vendorHome : Routes.home)
-            : Routes.welcome,
-        onGenerateRoute: Routes.onGenerateRoute,
+      child: ThemeScope(
+        controller: _theme,
+        child: MaterialApp(
+          title: 'Tarlink',
+          debugShowCheckedModeBanner: false,
+          theme: buildTheme(brightness: Brightness.light),
+          darkTheme: buildTheme(brightness: Brightness.dark),
+          themeMode: _theme.mode,
+          navigatorKey: _navigatorKey,
+          scaffoldMessengerKey: _messengerKey,
+          initialRoute: widget.session.authorized
+              ? (_isVendorOwner(widget.session) ? Routes.vendorHome : Routes.home)
+              : Routes.welcome,
+          onGenerateRoute: Routes.onGenerateRoute,
+        ),
       ),
     );
   }
@@ -324,7 +339,9 @@ class AppShell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: SystemUiOverlayStyle.dark,
+      value: AppColors.isDark
+          ? SystemUiOverlayStyle.light
+          : SystemUiOverlayStyle.dark,
       child: Scaffold(
         body: IndexedStack(
           index: index,
@@ -356,6 +373,7 @@ class _CustomerTabBar extends StatelessWidget {
       active: Icons.receipt_long,
       label: 'Booking',
     ),
+    (icon: Icons.chat_bubble_outline, active: Icons.chat_bubble, label: 'Chat'),
     (icon: Icons.person_outline, active: Icons.person, label: 'Profil'),
   ];
 
@@ -411,7 +429,8 @@ class _CustomerTabItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = selected ? AppColors.ink : AppColors.muted2;
+    final iconColor = selected ? AppColors.onLime : AppColors.muted2;
+    final labelColor = selected ? AppColors.ink : AppColors.muted2;
     return InkWell(
       onTap: onTap,
       child: Column(
@@ -428,7 +447,7 @@ class _CustomerTabItem extends StatelessWidget {
             child: Icon(
               selected ? item.active : item.icon,
               size: 19,
-              color: color,
+              color: iconColor,
             ),
           ),
           const SizedBox(height: 2),
@@ -439,7 +458,7 @@ class _CustomerTabItem extends StatelessWidget {
               height: 1.2,
               letterSpacing: 0.1,
               fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-              color: color,
+              color: labelColor,
             ),
           ),
         ],
@@ -481,7 +500,7 @@ class StageSearchField extends StatelessWidget {
               isDense: true,
               filled: true,
               fillColor: AppColors.card,
-              prefixIcon: const Icon(
+              prefixIcon: Icon(
                 Icons.search,
                 size: 20,
                 color: AppColors.inkMuted,
@@ -508,16 +527,16 @@ class StageSearchField extends StatelessWidget {
               contentPadding: const EdgeInsets.symmetric(vertical: Sp.md),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(Radii.xl),
-                borderSide: const BorderSide(color: AppColors.line),
+                borderSide: BorderSide(color: AppColors.line),
               ),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(Radii.xl),
-                borderSide: const BorderSide(color: AppColors.line),
+                borderSide: BorderSide(color: AppColors.line),
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(Radii.xl),
                 borderSide: const BorderSide(
-                  color: AppColors.primary,
+                  color: AppColors.limeDark,
                   width: 2,
                 ),
               ),

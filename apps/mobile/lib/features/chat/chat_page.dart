@@ -494,7 +494,7 @@ class _ChatPageState extends State<ChatPage> {
           bottom: MediaQuery.viewInsetsOf(context).bottom,
         ),
         child: Container(
-          decoration: const BoxDecoration(
+          decoration: BoxDecoration(
             color: AppColors.card,
             border: Border(top: BorderSide(color: AppColors.line)),
           ),
@@ -527,11 +527,11 @@ class _ChatPageState extends State<ChatPage> {
                         ),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(Radii.sm),
-                          borderSide: const BorderSide(color: AppColors.line),
+                          borderSide: BorderSide(color: AppColors.line),
                         ),
                         enabledBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(Radii.sm),
-                          borderSide: const BorderSide(color: AppColors.line),
+                          borderSide: BorderSide(color: AppColors.line),
                         ),
                       ),
                     ),
@@ -614,7 +614,7 @@ class _Bubble extends StatelessWidget {
                     child: Text(
                       message.roleLabel,
                       style: text.labelSmall?.copyWith(
-                        color: AppColors.primary,
+                        color: AppColors.accent,
                         fontWeight: FontWeight.w700,
                       ),
                     ),

@@ -359,7 +359,7 @@ class _VendorManageProfilePageState extends State<VendorManageProfilePage> {
       bottomNavigationBar: _loading || _error != null
           ? null
           : Container(
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 color: VendorColors.cardWhite,
                 borderRadius: BorderRadius.vertical(
                   top: Radius.circular(VendorRadii.lg),

@@ -319,7 +319,7 @@ class _EmailOtpPageState extends State<EmailOtpPage> {
     final text = Theme.of(context).textTheme;
 
     return Scaffold(
-      backgroundColor: AppColors.ink,
+      backgroundColor: AppColors.stage,
       body: Column(
         children: [
           AuthStage(
@@ -355,7 +355,7 @@ class _EmailOtpPageState extends State<EmailOtpPage> {
           const SizedBox(height: 6),
           Row(
             children: [
-              const Icon(
+              Icon(
                 Icons.mark_email_read_outlined,
                 size: 18,
                 color: AppColors.inkMuted,

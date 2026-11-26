@@ -404,7 +404,7 @@ class _BookingCard extends StatelessWidget {
                           Sp.sm,
                           10,
                         ),
-                        decoration: const BoxDecoration(
+                        decoration: BoxDecoration(
                           color: AppColors.surfaceSoft,
                           border: Border(
                             top: BorderSide(color: AppColors.line),
@@ -433,7 +433,7 @@ class _BookingCard extends StatelessWidget {
                               ),
                             ),
                             const SizedBox(width: 2),
-                            const Icon(
+                            Icon(
                               Icons.chevron_right,
                               size: 18,
                               color: AppColors.inkMuted,
@@ -481,7 +481,7 @@ class _DateSpine extends StatelessWidget {
     final value = date;
     return Container(
       width: 58,
-      color: AppColors.ink,
+      color: AppColors.stage,
       padding: const EdgeInsets.symmetric(vertical: 13),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.start,

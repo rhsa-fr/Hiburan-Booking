@@ -120,6 +120,7 @@ dan sebagai guard unik per pelanggan.
 | POST | `/auth/refresh` | `{ refresh_token?, cookie? }` | Rotasi sesi; tanpa body memakai cookie `tarlink_rt` (panel) atau Bearer lama (legacy) |
 | POST | `/auth/logout` | `{ refresh_token? }` | Mencabut sesi dari refresh token body, cookie `tarlink_rt`, atau `jti`; selalu menghapus cookie |
 | GET | `/auth/me` | — | Profil + peran pengguna |
+| PATCH | `/auth/me` | `{ full_name?, phone? }` | Ubah nama tampilan / nomor WhatsApp sendiri |
 | DELETE | `/auth/me` | `{ confirm: "HAPUS AKUN", reason? }` | Hapus akun mandiri (anonimisasi, FR-101) |
 | GET | `/auth/account-deletion` | — | Status permintaan hapus akun terbaru |
 
@@ -194,6 +195,12 @@ Enrollment dan verifikasi TOTP membutuhkan `TOTP_ENCRYPTION_KEY` (base64 dari 32
 
 `GET /auth/me` mengembalikan `{ "data": { "user": { id, phone, email, full_name,
 roles, created_at } } }`. Peran diambil dari database, bukan dari isi token.
+
+`PATCH /auth/me` mengubah `full_name` dan/atau `phone` milik pemanggil. Email
+tidak bisa diubah di sini karena perubahan email login memerlukan verifikasi ulang.
+Nomor dinormalisasi ke format `62…`; nomor yang sudah dipakai akun lain dijawab
+`409 CONFLICT`. Body kosong dijawab `400 VALIDATION_ERROR`. Respons sama dengan
+`GET /auth/me` sehingga klien bisa langsung memperbarui sesi lokal.
 
 Registrasi wajib menyertakan `consent` (FR-103) berisi `id` versi kebijakan yang
 sedang aktif dari `GET /policies/tos` dan `GET /policies/privacy`. API menolak
@@ -378,10 +385,13 @@ booking yang sama (tidak membuat baris baru) dan menandai
 `Idempotency-Replayed: true`.
 
 Sejak 2026-11-26 (ADR 0043), pembuatan booking **mengunci slot selama 24 jam**
-(batas `respond_deadline`). Pelanggan lain yang mencoba tanggal + sesi yang sama
-menerima `409 SLOT_UNAVAILABLE`. Kunci dilepas saat vendor menolak, booking
+(batas `respond_deadline`). Sejak ADR 0044, **satu tanggal hanya untuk satu
+booking**: hold/booking hidup di sesi mana pun (`day`/`night`/`full`) mengunci
+seluruh tanggal. Pelanggan lain yang mencoba tanggal yang sama — walau berbeda
+sesi — menerima `409 SLOT_UNAVAILABLE`. Kunci dilepas saat vendor menolak, booking
 dibatalkan/kedaluwarsa, atau hold-nya lewat waktu — hold yang kedaluwarsa terbaca
-sebagai `unconfirmed` sehingga tanggal kembali bisa dipesan.
+sebagai `unconfirmed` sehingga tanggal kembali bisa dipesan. Blokir vendor tetap
+per sesi, kecuali blokir `full` yang berlaku sehari penuh.
 
 ### `GET /bookings`
 
@@ -819,6 +829,37 @@ Satu percakapan per booking. Peserta ditentukan dari **relasi booking**, bukan d
 peran di token: pelanggan pemilik booking → `customer`; pemilik atau anggota aktif
 vendor → `vendor`; admin (`admin_support`, `admin_finance`, `admin_super`) → `admin`.
 Akun lain mendapat `403 FORBIDDEN`. Pesan append-only, 1–2000 karakter setelah trim.
+
+### `GET /v1/chats`
+
+Kotak masuk: satu baris per booking yang sudah memiliki pesan terlihat. Pelanggan
+melihat semua vendor yang pernah ia chat; pemilik/anggota vendor melihat semua
+booking yang pelanggannya menulis. Pesan yang disembunyikan moderator
+(`hidden_at`) dan pesan dari pengguna yang diblokir tidak dihitung.
+
+```json
+{
+  "data": {
+    "items": [
+      {
+        "booking_id": "…",
+        "booking_code": "TRL-2611-0001",
+        "vendor_id": "…",
+        "vendor_name": "Organ Tarling DWS Group",
+        "counterpart_name": "Organ Tarling DWS Group",
+        "counterpart_role": "vendor",
+        "last_message": "Halo, masih tersedia?",
+        "last_at": "2026-11-26T08:00:00.000Z",
+        "unread_count": 2
+      }
+    ]
+  }
+}
+```
+
+`counterpart_name` adalah lawan bicara: nama vendor untuk pelanggan, nama pelanggan
+untuk vendor. `unread_count` hanya menghitung pesan yang bukan dikirim pemanggil dan
+`read_at IS NULL`. Urut dari pesan terakhir terbaru, maksimal 100 thread.
 
 ### `GET /bookings/:bookingId/chat/messages`
 

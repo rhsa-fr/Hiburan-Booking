@@ -114,6 +114,18 @@ class Session extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Applies a profile payload returned by `PATCH /auth/me` without touching
+  /// tokens or the refresh schedule.
+  Future<void> updateUser(Map<String, dynamic> user) async {
+    _user = user;
+    try {
+      await _storage.write(key: _userKey, value: jsonEncode(user));
+    } catch (_) {
+      // The in-memory profile still updates for this run.
+    }
+    notifyListeners();
+  }
+
   /// Local sign-out. The caller revokes the token on the server first.
   Future<void> signOut() => clear();
 

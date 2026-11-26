@@ -242,6 +242,8 @@ describe('GET /vendors', () => {
     expect(sqlOf(0)).toContain('c.slug = $3');
     expect(sqlOf(0)).toContain('cs.date = $4::date');
     expect(sqlOf(0)).toContain("cs.status = 'available'");
+    expect(sqlOf(0)).toContain('NOT EXISTS');
+    expect(sqlOf(0)).toContain("taken.status = 'booked'");
     expect(sqlOf(0)).toContain('starting_price_idr ASC NULLS LAST');
     expect(paramsOf(0)).toEqual([null, null, 'organ-tunggal', '2026-12-05', 'night', 20, 0]);
     expect(paramsOf(1)).toEqual([null, null, 'organ-tunggal', '2026-12-05', 'night']);

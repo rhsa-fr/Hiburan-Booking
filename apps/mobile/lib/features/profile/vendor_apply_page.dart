@@ -322,7 +322,7 @@ class _VendorApplyPageState extends State<VendorApplyPage> {
           style: OutlinedButton.styleFrom(
             minimumSize: const Size.fromHeight(52),
             foregroundColor: AppColors.ink,
-            side: const BorderSide(color: AppColors.line),
+            side: BorderSide(color: AppColors.line),
           ),
         ),
         const SizedBox(height: Sp.xl),

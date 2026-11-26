@@ -10,6 +10,7 @@ import '../../core/ui.dart';
 import '../../core/widgets.dart';
 import '../booking/booking_support.dart';
 import '../booking/list_page.dart';
+import '../chat/chat_inbox_page.dart';
 import '../notifications/notification_bell.dart';
 import '../profile/account_page.dart';
 import 'browse_page.dart';
@@ -28,7 +29,8 @@ class _HomePageState extends State<HomePage> {
   static const _beranda = 0;
   static const _jelajah = 1;
   static const _booking = 2;
-  static const _profil = 3;
+  static const _chat = 3;
+  static const _profil = 4;
 
   final _search = TextEditingController();
   final _visited = <int>{_beranda};
@@ -108,6 +110,10 @@ class _HomePageState extends State<HomePage> {
           const SizedBox.shrink(),
         if (_visited.contains(_booking))
           BookingListPage(onBrowse: () => _selectTab(_jelajah))
+        else
+          const SizedBox.shrink(),
+        if (_visited.contains(_chat))
+          const ChatInboxPage()
         else
           const SizedBox.shrink(),
         if (_visited.contains(_profil))
@@ -421,7 +427,7 @@ class _HomeHeader extends StatelessWidget {
     final rawName = user?.fullName?.trim() ?? '';
     final firstName = rawName.isEmpty ? null : rawName.split(' ').first;
     return DecoratedBox(
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -578,12 +584,12 @@ class _CategoryShortcuts extends StatelessWidget {
   /// One saturated disc per category. Four pale tints of the same lightness
   /// made the row read as four identical boxes; a solid disc plus a white glyph
   /// gives each shortcut an identity and keeps the canvas quiet.
-  static const _items =
+  static final _items =
       <({String label, IconData icon, Color disc, String category})>[
         (
           label: 'Tarling & Dangdut',
           icon: Icons.queue_music,
-          disc: AppColors.ink,
+          disc: AppColors.stage,
           category: 'tarling',
         ),
         (
@@ -982,7 +988,7 @@ class _ActiveBookingCard extends StatelessWidget {
                             ),
                             child: Text(
                               daysLeft == 0 ? 'HARI INI' : 'H-$daysLeft',
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 10,
                                 height: 1.2,
                                 fontWeight: FontWeight.w800,
@@ -1037,7 +1043,7 @@ class _ActiveBookingCard extends StatelessWidget {
                             color: AppColors.lime,
                             shape: BoxShape.circle,
                           ),
-                          child: const Icon(
+                          child: Icon(
                             Icons.arrow_forward,
                             size: 20,
                             color: AppColors.ink,

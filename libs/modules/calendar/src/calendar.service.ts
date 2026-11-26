@@ -17,6 +17,7 @@ import {
   type BlockDateInput,
   type BlockDatesOptions,
   type BlockDatesResult,
+  type CalendarSlotRow,
   type ReserveOptions,
   type ReserveSlotInput
 } from './calendar.repository';
@@ -83,9 +84,31 @@ export class CalendarService {
     const stale = isCalendarStale(calendarUpdatedAt, now);
     const keyed = new Map(rows.map((row) => [`${row.date}|${row.session}`, row]));
 
+    // One booking owns the whole date. A live hold or booking on ANY session
+    // (`day`, `night`, or `full`) means the group is already taken that day —
+    // reality does not allow two shows on one date. Production 2026-11-27 had
+    // an accepted, DP-paid `full` booking while `day`/`night` still read
+    // `available`, so clients offered a sold date. An expired hold owns
+    // nothing and falls back to the session rows. Vendor `blocked` stays
+    // per-session unless the vendor blocked `full`.
+    const occupyingDate = (date: string) => {
+      const sessions: CalendarSession[] = ['day', 'night', 'full'];
+      const rows = sessions
+        .map((session) => keyed.get(`${date}|${session}`))
+        .filter((row): row is CalendarSlotRow => row !== undefined);
+      const booked = rows.find((row) => availabilityStateFor(row, now) === 'booked');
+      if (booked) return booked;
+      const held = rows.find((row) => availabilityStateFor(row, now) === 'held');
+      if (held) return held;
+      const full = keyed.get(`${date}|full`);
+      if (full && availabilityStateFor(full, now) === 'blocked') return full;
+      return null;
+    };
+
     const days: AvailabilityDay[] = [];
     const push = (date: string, session: CalendarSession): void => {
-      const row = keyed.get(`${date}|${session}`) ?? null;
+      const own = keyed.get(`${date}|${session}`) ?? null;
+      const row = occupyingDate(date) ?? own;
       days.push({
         date,
         session,

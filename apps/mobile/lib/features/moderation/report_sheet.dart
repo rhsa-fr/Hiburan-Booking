@@ -231,8 +231,8 @@ class _ReportSheetState extends State<_ReportSheet> {
           ElevatedButton(
             onPressed: _busy ? null : _submit,
             style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              foregroundColor: AppColors.onPrimary,
+              backgroundColor: AppColors.lime,
+              foregroundColor: AppColors.onLime,
               minimumSize: const Size.fromHeight(48),
             ),
             child: Text(_busy ? 'Mengirim…' : 'Kirim laporan'),

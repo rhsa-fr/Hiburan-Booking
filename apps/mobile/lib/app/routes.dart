@@ -19,6 +19,7 @@ import '../features/vendor/vendor_bank_account_page.dart';
 import '../features/vendor/vendor_booking_detail_page.dart';
 import '../features/vendor/vendor_bookings_page.dart';
 import '../features/vendor/vendor_manage_packages_page.dart';
+import '../features/profile/edit_profile_page.dart';
 import '../features/vendor/vendor_manage_profile_page.dart';
 import '../features/vendor/vendor_shell.dart';
 
@@ -78,6 +79,7 @@ abstract final class Routes {
   static const bookings = 'bookings';
   static const bookingStatus = 'bookingStatus';
   static const bookingChat = 'bookingChat';
+  static const editProfile = 'editProfile';
   static const vendorHome = 'vendorHome';
   static const vendorBookingDetail = 'vendorBookingDetail';
   static const vendorBookings = 'vendorBookings';
@@ -167,6 +169,8 @@ abstract final class Routes {
           );
         }
         return _page(const LoginPage(), settings);
+      case Routes.editProfile:
+        return _page(const EditProfilePage(), settings);
       case Routes.vendorHome:
         return _page(const VendorShell(), settings);
       case Routes.vendorBookingDetail:

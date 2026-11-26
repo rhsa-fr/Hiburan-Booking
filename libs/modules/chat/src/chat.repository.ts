@@ -30,6 +30,19 @@ export interface ChatHistoryOptions {
   limit: number;
 }
 
+/** One row per booking that has at least one visible chat message. */
+export interface ChatThreadRow {
+  booking_id: string;
+  booking_code: string;
+  vendor_id: string;
+  vendor_name: string;
+  customer_name: string | null;
+  last_message: string;
+  last_at: Date;
+  unread_count: number;
+  is_customer: boolean;
+}
+
 export interface NewChatMessage {
   bookingId: string;
   senderId: string;
@@ -127,8 +140,70 @@ export class ChatRepository {
     return result.rows;
   }
 
-  async insertMessage(input: NewChatMessage): Promise<ChatMessageRow> {
-    const result = await this.pool.query<ChatMessageRow>(
+  /**
+   * Inbox: only bookings that already contain a visible message. A customer
+   * sees every vendor they ever chatted with; a vendor owner/member sees every
+   * booking whose customer wrote to them. The caller's own messages never count
+   * as unread.
+   */
+  async listThreads(userId: string): Promise<ChatThreadRow[]> {
+    const result = await this.pool.query<ChatThreadRow>(
+      `SELECT b.id                         AS booking_id,
+              b.code                       AS booking_code,
+              v.id                         AS vendor_id,
+              v.display_name               AS vendor_name,
+              COALESCE(cu.name, cu.email, cu.phone, 'Pelanggan') AS customer_name,
+              m.body                       AS last_message,
+              m.created_at                 AS last_at,
+              (b.customer_id = $1)         AS is_customer,
+              (
+                SELECT count(*)::int
+                  FROM chat_messages cm
+                 WHERE cm.booking_id = b.id
+                   AND cm.sender_id <> $1
+                   AND cm.read_at IS NULL
+                   AND cm.hidden_at IS NULL
+                   AND NOT EXISTS (
+                         SELECT 1 FROM user_blocks ub
+                          WHERE ub.blocker_id = $1
+                            AND ub.blocked_id = cm.sender_id
+                       )
+              )                             AS unread_count
+         FROM bookings b
+         JOIN vendors v ON v.id = b.vendor_id
+         JOIN users cu ON cu.id = b.customer_id
+         JOIN LATERAL (
+           SELECT cm.body, cm.created_at
+             FROM chat_messages cm
+            WHERE cm.booking_id = b.id
+              AND cm.hidden_at IS NULL
+              AND NOT EXISTS (
+                    SELECT 1 FROM user_blocks ub
+                     WHERE ub.blocker_id = $1
+                       AND ub.blocked_id = cm.sender_id
+                  )
+            ORDER BY cm.created_at DESC, cm.id DESC
+            LIMIT 1
+         ) m ON true
+        WHERE b.customer_id = $1
+           OR EXISTS (
+                SELECT 1 FROM vendors vv
+                 WHERE vv.id = b.vendor_id AND vv.owner_user_id = $1
+              )
+           OR EXISTS (
+                SELECT 1 FROM vendor_members vm
+                 WHERE vm.vendor_id = b.vendor_id
+                   AND vm.user_id = $1
+                   AND vm.is_active
+              )
+        ORDER BY m.created_at DESC
+        LIMIT 100`,
+      [userId]
+    );
+    return result.rows;
+  }
+
+  async insertMessage(input: NewChatMessage): Promise<ChatMessageRow> {    const result = await this.pool.query<ChatMessageRow>(
       `INSERT INTO chat_messages (booking_id, sender_id, sender_role, body)
        VALUES ($1, $2, $3, $4)
        RETURNING ${COLUMNS}`,

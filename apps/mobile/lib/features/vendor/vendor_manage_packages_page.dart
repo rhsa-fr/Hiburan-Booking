@@ -169,7 +169,7 @@ class _VendorManagePackagesPageState extends State<VendorManagePackagesPage> {
       bottomNavigationBar: _loading || _error != null
           ? null
           : Container(
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 color: VendorColors.cardWhite,
                 borderRadius: BorderRadius.vertical(
                   top: Radius.circular(VendorRadii.lg),
@@ -234,7 +234,7 @@ class _VendorManagePackagesPageState extends State<VendorManagePackagesPage> {
         Container(
           padding: const EdgeInsets.all(VendorSp.lg),
           decoration: BoxDecoration(
-            gradient: const LinearGradient(
+            gradient: LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
               colors: [Color(0xFF182540), VendorColors.ink],
@@ -373,7 +373,7 @@ class _PackageTip extends StatelessWidget {
       decoration: BoxDecoration(
         border: last
             ? null
-            : const Border(bottom: BorderSide(color: VendorColors.lineSoft)),
+            : Border(bottom: BorderSide(color: VendorColors.lineSoft)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -450,7 +450,7 @@ class _PackageCard extends StatelessWidget {
               height: 76,
               color: VendorColors.softFill,
               child: photo.isEmpty
-                  ? const Icon(
+                  ? Icon(
                       Icons.music_note,
                       size: 24,
                       color: VendorColors.mutedSoft,
@@ -458,7 +458,7 @@ class _PackageCard extends StatelessWidget {
                   : Image.network(
                       photo,
                       fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) => const Icon(
+                      errorBuilder: (_, _, _) => Icon(
                         Icons.broken_image_outlined,
                         size: 20,
                         color: VendorColors.mutedSoft,
@@ -512,7 +512,7 @@ class _PackageCard extends StatelessWidget {
                       onPressed: onDelete,
                       tooltip: 'Nonaktifkan paket',
                       visualDensity: VisualDensity.compact,
-                      icon: const Icon(
+                      icon: Icon(
                         Icons.delete_outline,
                         size: 18,
                         color: VendorColors.muted,

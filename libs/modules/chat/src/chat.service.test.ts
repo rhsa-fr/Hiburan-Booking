@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Pool } from 'pg';
-import type { ChatParticipantRow, ChatMessageRow } from './chat.repository';
+import type { ChatParticipantRow, ChatMessageRow, ChatThreadRow } from './chat.repository';
 import {
   ChatRepository,
   READ_NOTIFY_BATCH_SIZE,
@@ -42,10 +42,26 @@ function row(id: string, createdAt: string, body = 'halo'): ChatMessageRow {
   };
 }
 
+function threadRow(overrides: Partial<ChatThreadRow> = {}): ChatThreadRow {
+  return {
+    booking_id: BOOKING_ID,
+    booking_code: 'TRL-2611-0001',
+    vendor_id: '55555555-5555-4555-8555-555555555555',
+    vendor_name: 'Organ Tarling DWS',
+    customer_name: 'Rina Puspita',
+    last_message: 'Halo, masih tersedia?',
+    last_at: new Date('2026-11-26T08:00:00.000Z'),
+    unread_count: 2,
+    is_customer: true,
+    ...overrides
+  };
+}
+
 function fakeRepository(overrides: Partial<ChatRepository> = {}): ChatRepository {
   return {
     findParticipants: vi.fn(),
     listMessages: vi.fn(),
+    listThreads: vi.fn(),
     insertMessage: vi.fn(),
     markRead: vi.fn(),
     ...overrides
@@ -495,5 +511,27 @@ describe('ChatService.markRead', () => {
       )
     ).rejects.toThrow('tidak terlibat');
     expect(markRead).not.toHaveBeenCalled();
+  });
+});
+describe('ChatService.threads', () => {
+  it('uses the vendor name for a customer and the customer name for a vendor', async () => {
+    const listThreads = vi.fn().mockResolvedValue([
+      threadRow(),
+      threadRow({ is_customer: false, booking_id: '66666666-6666-4666-8666-666666666666' })
+    ]);
+    const service = new ChatService(fakeRepository({ listThreads }));
+
+    const rows = await service.threads({ id: CUSTOMER_ID, roles: ['customer'] });
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({
+      counterpart_name: 'Organ Tarling DWS',
+      counterpart_role: 'vendor',
+      unread_count: 2
+    });
+    expect(rows[1]).toMatchObject({
+      counterpart_name: 'Rina Puspita',
+      counterpart_role: 'customer'
+    });
   });
 });

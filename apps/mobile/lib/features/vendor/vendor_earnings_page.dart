@@ -223,14 +223,13 @@ class _VendorEarningsPageState extends State<VendorEarningsPage> {
           VendorSp.xl,
         ),
         children: [
-          const VendorSectionTitle(label: 'Saldo Tertahan (Escrow PJP)'),
           Container(
             padding: const EdgeInsets.all(VendorSp.lg),
             decoration: BoxDecoration(
-              gradient: const LinearGradient(
+              gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: [Color(0xFF1B2946), VendorColors.ink],
+                colors: [VendorColors.headerTop, VendorColors.stage],
               ),
               borderRadius: BorderRadius.circular(VendorRadii.md),
               boxShadow: const [
@@ -245,23 +244,31 @@ class _VendorEarningsPageState extends State<VendorEarningsPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'DITAHAN PJP',
+                  'BISA DICAIRKAN',
                   style: vendorText(
                     size: 10.5,
-                    weight: FontWeight.w600,
-                    color: Colors.white.withValues(alpha: 0.58),
-                    letterSpacing: 1.4,
+                    weight: FontWeight.w700,
+                    color: Colors.white.withValues(alpha: 0.62),
+                    letterSpacing: 1.3,
                   ),
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  rupiahTight(_heldIdr),
+                  rupiahTight(_availableIdr),
                   style: vendorText(
-                    size: 27,
+                    size: 30,
                     weight: FontWeight.w800,
                     color: VendorColors.lime,
                     letterSpacing: -1,
                     height: 1.05,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  'Saldo yang sudah bisa kamu cairkan.',
+                  style: vendorText(
+                    size: 11.5,
+                    color: Colors.white.withValues(alpha: 0.56),
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -278,15 +285,15 @@ class _VendorEarningsPageState extends State<VendorEarningsPage> {
                     children: [
                       Expanded(
                         child: _HeroStat(
-                          label: 'Omzet bulan ini',
-                          value: rupiahTight(_monthIdr),
+                          label: 'Ditahan PJP',
+                          value: rupiahTight(_heldIdr),
                         ),
                       ),
                       const SizedBox(width: VendorSp.md),
                       Expanded(
                         child: _HeroStat(
-                          label: 'Transaksi cair',
-                          value: '$_settledTotal',
+                          label: 'Omzet bulan ini',
+                          value: rupiahTight(_monthIdr),
                         ),
                       ),
                     ],
@@ -295,99 +302,133 @@ class _VendorEarningsPageState extends State<VendorEarningsPage> {
               ],
             ),
           ),
-          const SizedBox(height: VendorSp.sm),
-          Text(
-            'Dana pelanggan ditahan PJP berizin. Setelah acara selesai dan '
-            'jendela sengketa lewat, dana masuk ke saldo yang bisa dicairkan; '
-            'admin mengirimnya ke rekening terverifikasi.',
-            style: vendorText(size: 11, color: VendorColors.muted, height: 1.5),
+          const SizedBox(height: VendorSp.md),
+          const _PayoutSteps(),
+          const SizedBox(height: VendorSp.md),
+          VendorCard(
+            padding: const EdgeInsets.all(VendorSp.md),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'SEDANG DIPROSES',
+                        style: vendorText(
+                          size: 9.5,
+                          weight: FontWeight.w700,
+                          color: VendorColors.muted,
+                          letterSpacing: 0.9,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        _pendingPayoutIdr > 0
+                            ? rupiahTight(_pendingPayoutIdr)
+                            : 'Belum ada',
+                        style: vendorText(
+                          size: 16,
+                          weight: FontWeight.w800,
+                          color: _pendingPayoutIdr > 0
+                              ? VendorColors.ink
+                              : VendorColors.mutedSoft,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: VendorSp.md),
+                Icon(
+                  Icons.schedule_rounded,
+                  size: 22,
+                  color: VendorColors.amber,
+                ),
+              ],
+            ),
           ),
           const SizedBox(height: VendorSp.md),
           VendorCard(
             padding: const EdgeInsets.all(VendorSp.md),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            child: Row(
               children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: _MoneyPair(
-                        label: 'Bisa dicairkan',
-                        amount: _availableIdr,
-                      ),
-                    ),
-                    const SizedBox(width: VendorSp.md),
-                    Expanded(
-                      child: _MoneyPair(
-                        label: 'Sedang diproses',
-                        amount: _pendingPayoutIdr,
-                      ),
-                    ),
-                  ],
+                Icon(
+                  Icons.account_balance_outlined,
+                  size: 20,
+                  color: _bankAccount == null
+                      ? VendorColors.amber
+                      : VendorColors.green,
                 ),
-                const SizedBox(height: VendorSp.md),
-                Container(
-                  padding: const EdgeInsets.only(top: 10),
-                  decoration: const BoxDecoration(
-                    border: Border(top: BorderSide(color: VendorColors.lineSoft)),
-                  ),
-                  child: Row(
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(
-                        child: Text(
-                          _bankAccount == null
-                              ? 'Rekening pencairan belum terverifikasi.'
-                              : '${_bankAccount!['bank_name'] ?? 'Bank'} · '
-                                    '${_bankAccount!['account_number_masked'] ?? '—'}',
-                          style: vendorText(
-                            size: 11.5,
-                            color: _bankAccount == null
-                                ? VendorColors.amber
-                                : VendorColors.muted,
-                          ),
+                      Text(
+                        _bankAccount == null
+                            ? 'Rekening belum diisi'
+                            : 'Rekening pencairan',
+                        style: vendorText(
+                          size: 12.5,
+                          weight: FontWeight.w700,
+                          color: _bankAccount == null
+                              ? VendorColors.amber
+                              : VendorColors.ink,
                         ),
                       ),
-                      const SizedBox(width: VendorSp.sm),
-                      VendorButton(
-                        label: 'Kelola rekening',
-                        kind: VendorButtonKind.secondary,
-                        small: true,
-                        onPressed: _openBankAccounts,
+                      const SizedBox(height: 2),
+                      Text(
+                        _bankAccount == null
+                            ? 'Isi rekening supaya dana bisa ditransfer.'
+                            : '${_bankAccount!['bank_name'] ?? 'Bank'} · '
+                                  '${_bankAccount!['account_number_masked'] ?? '—'}',
+                        style: vendorText(
+                          size: 11,
+                          color: VendorColors.muted,
+                        ),
                       ),
                     ],
                   ),
                 ),
+                const SizedBox(width: VendorSp.sm),
+                VendorButton(
+                  label: 'Kelola',
+                  kind: VendorButtonKind.secondary,
+                  small: true,
+                  onPressed: _openBankAccounts,
+                ),
               ],
             ),
           ),
+          const SizedBox(height: VendorSp.lg),
           VendorSectionTitle(
-            label: 'Dana dilepas',
+            label: 'Riwayat pencairan',
             trailing: '$_settledTotal transaksi',
           ),
-          SizedBox(
-            width: double.infinity,
-            child: VendorButton(
-              label: _exporting
-                  ? 'Menyiapkan laporan…'
-                  : 'Ekspor CSV bulan ini',
-              icon: Icons.file_download_outlined,
-              kind: VendorButtonKind.secondary,
-              onPressed: _exporting ? null : _exportCsv,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'CSV memuat seluruh transaksi bulan berjalan — bukan hanya 20 '
-            'terbaru — dan angkanya diambil dari jurnal ledger.',
-            style: vendorText(size: 11, color: VendorColors.muted, height: 1.5),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Dana yang sudah dilepas ke saldo.',
+                  style: vendorText(size: 11.5, color: VendorColors.muted),
+                ),
+              ),
+              VendorButton(
+                label: _exporting ? 'Menyiapkan…' : 'Ekspor CSV',
+                icon: Icons.file_download_outlined,
+                kind: VendorButtonKind.secondary,
+                small: true,
+                onPressed: _exporting ? null : _exportCsv,
+              ),
+            ],
           ),
           const SizedBox(height: VendorSp.sm),
           if (_settled.isEmpty)
             const VendorEmpty(
               title: 'Belum ada riwayat pencairan',
               message:
-                  'Dana akan muncul di sini setelah acara selesai dan '
-                  'pencairan diproses.',
+                  'Dana muncul di sini setelah acara selesai dan pencairan '
+                  'diproses.',
             )
           else
             for (var i = 0; i < _settled.length; i++) ...[
@@ -402,7 +443,7 @@ class _VendorEarningsPageState extends State<VendorEarningsPage> {
               style: vendorText(size: 11, color: VendorColors.muted),
             ),
           ],
-          const SizedBox(height: VendorSp.xl),
+          const SizedBox(height: VendorSp.lg),
           VendorSectionTitle(
             label: 'Transfer ke rekening',
             trailing: _payouts.isEmpty ? null : '${_payouts.length} terbaru',
@@ -424,41 +465,72 @@ class _VendorEarningsPageState extends State<VendorEarningsPage> {
   }
 }
 
-class _MoneyPair extends StatelessWidget {
-  const _MoneyPair({required this.label, required this.amount});
-
-  final String label;
-  final int amount;
+/// Three plain-language steps that explain the escrow without a paragraph.
+class _PayoutSteps extends StatelessWidget {
+  const _PayoutSteps();
 
   @override
   Widget build(BuildContext context) {
-    final hasAmount = amount > 0;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label.toUpperCase(),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: vendorText(
-            size: 10,
-            weight: FontWeight.w600,
-            color: VendorColors.muted,
-            letterSpacing: 0.8,
-          ),
-        ),
-        const SizedBox(height: 3),
-        Text(
-          hasAmount ? rupiahTight(amount) : 'Belum ada',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: vendorText(
-            size: 16,
-            weight: FontWeight.w800,
-            color: hasAmount ? VendorColors.ink : VendorColors.mutedSoft,
-          ),
-        ),
-      ],
+    const steps = ['Acara selesai', 'Masa sengketa', 'Dana cair'];
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: VendorSp.md,
+        vertical: 10,
+      ),
+      decoration: BoxDecoration(
+        color: VendorColors.card,
+        borderRadius: BorderRadius.circular(VendorRadii.md),
+        border: Border.all(color: VendorColors.lineSoft),
+      ),
+      child: Row(
+        children: [
+          for (var i = 0; i < steps.length; i++) ...[
+            if (i > 0)
+              Icon(
+                Icons.chevron_right_rounded,
+                size: 15,
+                color: VendorColors.mutedSoft,
+              ),
+            Expanded(
+              child: Row(
+                children: [
+                  Container(
+                    width: 20,
+                    height: 20,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: VendorColors.limeSoft,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: VendorColors.limeDark),
+                    ),
+                    child: Text(
+                      '${i + 1}',
+                      style: vendorText(
+                        size: 10,
+                        weight: FontWeight.w800,
+                        height: 1,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 5),
+                  Expanded(
+                    child: Text(
+                      steps[i],
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: vendorText(
+                        size: 10.5,
+                        weight: FontWeight.w700,
+                        height: 1.2,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }
@@ -785,7 +857,7 @@ class _EarningsExportSheet extends StatelessWidget {
               ),
               if (clawback > 0)
                 _ExportAmountRow('Clawback', clawback),
-              const Divider(height: VendorSp.lg, color: VendorColors.lineSoft),
+              Divider(height: VendorSp.lg, color: VendorColors.lineSoft),
               _ExportAmountRow(
                 'Pendapatan bersih',
                 _amount(totals, 'net_vendor_idr'),

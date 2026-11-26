@@ -7,6 +7,7 @@ import '../../core/format.dart';
 import '../../core/models.dart';
 import '../booking/booking_support.dart';
 import 'vendor_booking_detail_page.dart';
+import 'vendor_day_state.dart';
 import 'vendor_header.dart';
 import 'vendor_theme.dart';
 import 'vendor_ui.dart';
@@ -348,40 +349,17 @@ class _VendorDashboardPageState extends State<VendorDashboardPage> {
                         ],
                       ),
                     ),
+                    if (_nextEvent != null) ...[
+                      const VendorSectionTitle(label: 'Acara terdekat'),
+                      _nextEventCard(_nextEvent!),
+                    ],
                     VendorSectionTitle(
                       label: 'Antrean Booking',
                       trailing: '${_bookings.length} pesanan',
                     ),
                     _queue(),
-                    if (widget.onOpenBookings != null ||
-                        widget.onOpenEarnings != null) ...[
-                      const SizedBox(height: VendorSp.sm),
-                      Row(
-                        children: [
-                          if (widget.onOpenBookings != null)
-                            Expanded(
-                              child: VendorButton(
-                                label: 'Semua pesanan',
-                                icon: Icons.receipt_long_outlined,
-                                kind: VendorButtonKind.secondary,
-                                onPressed: widget.onOpenBookings,
-                              ),
-                            ),
-                          if (widget.onOpenBookings != null &&
-                              widget.onOpenEarnings != null)
-                            const SizedBox(width: VendorSp.sm),
-                          if (widget.onOpenEarnings != null)
-                            Expanded(
-                              child: VendorButton(
-                                label: 'Lihat saldo',
-                                icon: Icons.account_balance_wallet_outlined,
-                                kind: VendorButtonKind.secondary,
-                                onPressed: widget.onOpenEarnings,
-                              ),
-                            ),
-                        ],
-                      ),
-                    ],
+                    const VendorSectionTitle(label: 'Menu cepat'),
+                    _quickActions(),
                     const VendorSectionTitle(label: 'Jadwal 7 hari'),
                     _weekCard(),
                     const VendorSectionTitle(label: 'Uang'),
@@ -515,6 +493,208 @@ class _VendorDashboardPageState extends State<VendorDashboardPage> {
     );
   }
 
+  Map<String, dynamic>? get _nextEvent {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    Map<String, dynamic>? best;
+    DateTime? bestDay;
+    for (final item in _bookings) {
+      final status = item['lifecycle_status']?.toString() ?? '';
+      if (status != 'accepted' &&
+          status != 'confirmed' &&
+          status != 'in_progress') {
+        continue;
+      }
+      final date = DateTime.tryParse(item['event_start_date']?.toString() ?? '');
+      if (date == null) continue;
+      final day = DateTime(date.year, date.month, date.day);
+      if (day.isBefore(today)) continue;
+      if (bestDay == null || day.isBefore(bestDay)) {
+        best = item;
+        bestDay = day;
+      }
+    }
+    return best;
+  }
+
+  Widget _nextEventCard(Map<String, dynamic> item) {
+    final parts = vendorDateParts(item['event_start_date']?.toString());
+    final date = DateTime.tryParse(item['event_start_date']?.toString() ?? '');
+    final now = DateTime.now();
+    final days = date == null
+        ? null
+        : DateTime(date.year, date.month, date.day)
+              .difference(DateTime(now.year, now.month, now.day))
+              .inDays;
+    final countdown = days == null
+        ? null
+        : days == 0
+        ? 'Hari ini'
+        : days == 1
+        ? 'Besok'
+        : 'H-$days';
+    final customer = item['customer_name']?.toString() ?? 'Pelanggan';
+    final value = moneyValue(item, 'total_customer_idr') ?? 0;
+    final title = item['event_title']?.toString() ?? 'Acara';
+
+    return VendorCard(
+      padding: EdgeInsets.zero,
+      onTap: () => _openDetail(item),
+      child: Row(
+        children: [
+          Container(
+            width: 58,
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            decoration: BoxDecoration(
+              color: VendorColors.stage,
+              borderRadius: BorderRadius.horizontal(
+                left: Radius.circular(VendorRadii.lg),
+              ),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  parts.dow.toUpperCase(),
+                  style: vendorText(
+                    size: 10,
+                    weight: FontWeight.w700,
+                    color: VendorColors.onHeader.withValues(alpha: 0.6),
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                Text(
+                  parts.dom,
+                  style: vendorText(
+                    size: 21,
+                    weight: FontWeight.w800,
+                    color: VendorColors.onHeader,
+                    letterSpacing: -0.5,
+                  ),
+                ),
+                Text(
+                  parts.mon.toUpperCase(),
+                  style: vendorText(
+                    size: 10,
+                    weight: FontWeight.w600,
+                    color: VendorColors.lime,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 6, 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          customer,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: vendorText(
+                            size: 13.5,
+                            weight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      if (countdown != null)
+                        VendorPill(
+                          label: countdown,
+                          tone: VendorPillTone.ok,
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: vendorText(size: 11.5, color: VendorColors.muted),
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    rupiahTight(value),
+                    style: vendorText(size: 13, weight: FontWeight.w800),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: Icon(
+              Icons.chevron_right_rounded,
+              size: 20,
+              color: VendorColors.muted,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _quickActions() {
+    final actions =
+        <({IconData icon, String title, String subtitle, VoidCallback? onTap})>[
+          (
+            icon: Icons.receipt_long_outlined,
+            title: 'Semua pesanan',
+            subtitle: 'Status & riwayat',
+            onTap: widget.onOpenBookings,
+          ),
+          (
+            icon: Icons.calendar_month_outlined,
+            title: 'Kalender',
+            subtitle: 'Tanggal & agenda',
+            onTap: widget.onOpenCalendar,
+          ),
+          (
+            icon: Icons.inventory_2_outlined,
+            title: 'Paket & harga',
+            subtitle: 'Atur penawaran',
+            onTap: () =>
+                Navigator.pushNamed(context, Routes.vendorManagePackages),
+          ),
+          (
+            icon: Icons.account_balance_wallet_outlined,
+            title: 'Saldo',
+            subtitle: 'Pencairan & laporan',
+            onTap: widget.onOpenEarnings,
+          ),
+        ];
+    return Column(
+      children: [
+        IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(child: _QuickTile(action: actions[0])),
+              const SizedBox(width: VendorSp.sm),
+              Expanded(child: _QuickTile(action: actions[1])),
+            ],
+          ),
+        ),
+        const SizedBox(height: VendorSp.sm),
+        IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(child: _QuickTile(action: actions[2])),
+              const SizedBox(width: VendorSp.sm),
+              Expanded(child: _QuickTile(action: actions[3])),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   Future<void> _openDetail(Map<String, dynamic> item) async {
     final bookingId = item['id']?.toString() ?? '';
     if (bookingId.isEmpty) return;
@@ -576,16 +756,17 @@ class _VendorDashboardPageState extends State<VendorDashboardPage> {
           const SizedBox(height: 9),
           Container(
             padding: const EdgeInsets.only(top: 7),
-            decoration: const BoxDecoration(
+            decoration: BoxDecoration(
               border: Border(top: BorderSide(color: VendorColors.lineSoft)),
             ),
-            child: const Wrap(
+            child: Wrap(
               spacing: 12,
               runSpacing: 4,
               children: [
-                _WeekLegend(color: VendorColors.ink, label: 'Terisi'),
-                _WeekLegend(color: VendorColors.limeDark, label: 'Tersedia'),
-                _WeekLegend(color: VendorColors.amber, label: 'Ditahan'),
+                _WeekLegend(color: VendorColors.lime, label: 'Buka'),
+                _WeekLegend(color: VendorColors.amber, label: 'Sebagian'),
+                _WeekLegend(color: VendorColors.ink, label: 'Penuh'),
+                _WeekLegend(color: VendorColors.danger, label: 'Tutup'),
                 _WeekLegend(color: VendorColors.line, label: 'Kosong'),
               ],
             ),
@@ -610,10 +791,10 @@ class _VendorDashboardPageState extends State<VendorDashboardPage> {
     return Container(
       padding: const EdgeInsets.all(VendorSp.lg),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
+        gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFF182540), VendorColors.ink],
+          colors: [VendorColors.headerTop, VendorColors.stage],
         ),
         borderRadius: BorderRadius.circular(VendorRadii.lg),
         boxShadow: const [
@@ -743,6 +924,50 @@ class _VendorDashboardPageState extends State<VendorDashboardPage> {
   }
 }
 
+class _QuickTile extends StatelessWidget {
+  const _QuickTile({required this.action});
+
+  final ({IconData icon, String title, String subtitle, VoidCallback? onTap})
+  action;
+
+  @override
+  Widget build(BuildContext context) {
+    return VendorCard(
+      padding: const EdgeInsets.all(12),
+      onTap: action.onTap,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 30,
+            height: 30,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: VendorColors.limeSoft,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(action.icon, size: 16, color: VendorColors.ink),
+          ),
+          const SizedBox(height: 9),
+          Text(
+            action.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: vendorText(size: 12.5, weight: FontWeight.w700),
+          ),
+          const SizedBox(height: 1),
+          Text(
+            action.subtitle,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: vendorText(size: 10.5, color: VendorColors.muted),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _DashStat extends StatelessWidget {
   const _DashStat({
     required this.value,
@@ -832,7 +1057,7 @@ class _GuideRow extends StatelessWidget {
       decoration: BoxDecoration(
         border: last
             ? null
-            : const Border(bottom: BorderSide(color: VendorColors.lineSoft)),
+            : Border(bottom: BorderSide(color: VendorColors.lineSoft)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -921,7 +1146,7 @@ class _JobCard extends StatelessWidget {
                 Container(
                   width: 52,
                   padding: const EdgeInsets.symmetric(vertical: 12),
-                  decoration: const BoxDecoration(
+                  decoration: BoxDecoration(
                     color: VendorColors.softFill,
                     border: Border(right: BorderSide(color: VendorColors.line)),
                   ),
@@ -1006,7 +1231,7 @@ class _JobCard extends StatelessWidget {
           ),
           Container(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
-            decoration: const BoxDecoration(
+            decoration: BoxDecoration(
               color: VendorColors.softRow,
               border: Border(top: BorderSide(color: VendorColors.lineSoft)),
             ),
@@ -1112,6 +1337,28 @@ class _WeekCell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final state = aggregateVendorDayState(dayState, nightState);
+    final label = vendorDayStateLabel(state);
+    final (background, foreground, border) = switch (state) {
+      'open' => (
+        VendorColors.lime,
+        VendorColors.onLime,
+        VendorColors.limeDark,
+      ),
+      'held' || 'partial' => (
+        VendorColors.waitBg,
+        VendorColors.waitFg,
+        VendorColors.amber.withValues(alpha: 0.40),
+      ),
+      'full' => (VendorColors.stage, Colors.white, VendorColors.stage),
+      'blocked' => (
+        VendorColors.danger.withValues(alpha: 0.12),
+        VendorColors.danger,
+        VendorColors.danger.withValues(alpha: 0.35),
+      ),
+      _ => (VendorColors.softRow, VendorColors.muted, VendorColors.lineSoft),
+    };
+
     return Column(
       children: [
         Text(
@@ -1131,38 +1378,33 @@ class _WeekCell extends StatelessWidget {
           style: vendorText(size: 13, weight: FontWeight.w700),
         ),
         const SizedBox(height: 5),
-        _SlotBar(state: dayState),
-        const SizedBox(height: 3),
-        _SlotBar(state: nightState),
+        Container(
+          height: 18,
+          alignment: Alignment.center,
+          padding: const EdgeInsets.symmetric(horizontal: 3),
+          decoration: BoxDecoration(
+            color: background,
+            borderRadius: BorderRadius.circular(5),
+            border: Border.all(color: border),
+          ),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              label,
+              maxLines: 1,
+              style: vendorText(
+                size: 9,
+                weight: FontWeight.w800,
+                color: foreground,
+                height: 1.1,
+              ),
+            ),
+          ),
+        ),
       ],
     );
   }
 }
-
-class _SlotBar extends StatelessWidget {
-  const _SlotBar({required this.state});
-
-  final String? state;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 7,
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: _slotColor(state),
-        borderRadius: BorderRadius.circular(3),
-      ),
-    );
-  }
-}
-
-Color _slotColor(String? state) => switch (state) {
-  'available' => VendorColors.limeDark,
-  'held' => VendorColors.amber,
-  'booked' => VendorColors.ink,
-  _ => VendorColors.line,
-};
 
 class _WeekLegend extends StatelessWidget {
   const _WeekLegend({required this.color, required this.label});
@@ -1177,10 +1419,10 @@ class _WeekLegend extends StatelessWidget {
       children: [
         Container(
           width: 10,
-          height: 4,
+          height: 10,
           decoration: BoxDecoration(
             color: color,
-            borderRadius: BorderRadius.circular(1),
+            borderRadius: BorderRadius.circular(3),
           ),
         ),
         const SizedBox(width: 4),

@@ -125,14 +125,14 @@ class VendorCard extends StatelessWidget {
     super.key,
     required this.child,
     this.padding = const EdgeInsets.all(VendorSp.md),
-    this.color = VendorColors.cardWhite,
+    this.color,
     this.onTap,
     this.margin,
   });
 
   final Widget child;
   final EdgeInsetsGeometry padding;
-  final Color color;
+  final Color? color;
   final VoidCallback? onTap;
   final EdgeInsetsGeometry? margin;
 
@@ -142,7 +142,7 @@ class VendorCard extends StatelessWidget {
       margin: margin,
       padding: padding,
       decoration: BoxDecoration(
-        color: color,
+        color: color ?? VendorColors.card,
         borderRadius: BorderRadius.circular(VendorRadii.lg),
         border: Border.all(color: VendorColors.lineSoft),
         boxShadow: const [
@@ -293,11 +293,11 @@ class VendorButton extends StatelessWidget {
       VendorButtonKind.primary => (
         VendorColors.lime,
         VendorColors.limeDark,
-        VendorColors.ink,
+        VendorColors.onLime,
       ),
       VendorButtonKind.secondary => (
         VendorColors.cardWhite,
-        const Color(0xFFD4D6D0),
+        VendorColors.line,
         VendorColors.ink,
       ),
       VendorButtonKind.outlineOnDark => (
@@ -377,7 +377,7 @@ class VendorStatCell extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: VendorSp.md, horizontal: 6),
       decoration: BoxDecoration(
         border: showDivider
-            ? const Border(right: BorderSide(color: VendorColors.lineSoft))
+            ? Border(right: BorderSide(color: VendorColors.lineSoft))
             : null,
       ),
       child: Column(
@@ -858,14 +858,14 @@ class VendorLedgerRow extends StatelessWidget {
     super.key,
     required this.label,
     required this.value,
-    this.valueColor = VendorColors.ink,
+    this.valueColor,
     this.emphasize = false,
     this.showDivider = true,
   });
 
   final String label;
   final String value;
-  final Color valueColor;
+  final Color? valueColor;
   final bool emphasize;
   final bool showDivider;
 
@@ -875,7 +875,7 @@ class VendorLedgerRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 10),
       decoration: BoxDecoration(
         border: showDivider
-            ? const Border(bottom: BorderSide(color: VendorColors.lineSoft))
+            ? Border(bottom: BorderSide(color: VendorColors.lineSoft))
             : null,
       ),
       child: Row(
@@ -898,7 +898,7 @@ class VendorLedgerRow extends StatelessWidget {
             style: vendorText(
               size: emphasize ? 15.5 : 14,
               weight: FontWeight.w800,
-              color: valueColor,
+              color: valueColor ?? VendorColors.ink,
             ),
           ),
         ],
@@ -972,7 +972,7 @@ class VendorTextField extends StatelessWidget {
             ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(VendorRadii.sm + 2),
-              borderSide: const BorderSide(color: VendorColors.line),
+              borderSide: BorderSide(color: VendorColors.line),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(VendorRadii.sm + 2),
@@ -983,7 +983,7 @@ class VendorTextField extends StatelessWidget {
             ),
             disabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(VendorRadii.sm + 2),
-              borderSide: const BorderSide(color: VendorColors.lineSoft),
+              borderSide: BorderSide(color: VendorColors.lineSoft),
             ),
           ),
         ),
@@ -1068,7 +1068,7 @@ class VendorMediaTile extends StatelessWidget {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(
+                        Icon(
                           Icons.add_photo_alternate_outlined,
                           size: 26,
                           color: VendorColors.mutedSoft,
@@ -1086,7 +1086,7 @@ class VendorMediaTile extends StatelessWidget {
                   ),
                 if (busy)
                   Container(
-                    color: VendorColors.ink.withValues(alpha: 0.45),
+                    color: VendorColors.stage.withValues(alpha: 0.45),
                     child: const Center(
                       child: SizedBox(
                         width: 20,

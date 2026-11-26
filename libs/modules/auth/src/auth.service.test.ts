@@ -269,6 +269,22 @@ class FakeAuthRepository implements AuthRepository {
     return this.users.some((user) => user.phone === phone);
   }
 
+  async phoneExistsForOther(phone: string, userId: string): Promise<boolean> {
+    return this.users.some(
+      (user) => user.phone === phone && user.id !== userId
+    );
+  }
+
+  async updateUserProfile(
+    userId: string,
+    input: { name?: string; phone?: string }
+  ): Promise<void> {
+    const user = this.users.find((candidate) => candidate.id === userId);
+    if (!user) throw new AppError('UNAUTHENTICATED', 'Sesi tidak valid');
+    if (input.phone !== undefined) user.phone = input.phone;
+    if (input.name !== undefined) user.name = input.name;
+  }
+
   async findActivePolicyVersion(
     code: string
   ): Promise<{ id: string; code: string; version: number } | null> {
@@ -756,8 +772,7 @@ async function adminSession(
   });
 }
 
-function addUser(
-  repository: FakeAuthRepository,
+function addUser(  repository: FakeAuthRepository,
   roles: Role[] = [],
   options: {
     id?: string;
@@ -3379,5 +3394,40 @@ describe('AuthService refresh token + IP limits', () => {
     const { service } = makeHarness({ nodeEnv: 'development', otpDevMode: false });
     const result = await service.requestOtp({ email: EMAIL });
     expect(result).not.toHaveProperty('dev_code');
+  });
+});
+describe('AuthService.updateProfile', () => {
+  it('updates the display name and normalises the phone', async () => {
+    const h = makeHarness();
+    addUser(h.repository, ['customer'], { name: 'Nama Lama' });
+
+    const result = await h.service.updateProfile(USER_ID, {
+      full_name: 'Rina Puspita',
+      phone: '0812 3456 780'
+    });
+
+    expect(result.user.full_name).toBe('Rina Puspita');
+    expect(result.user.phone).toBe('628123456780');
+  });
+
+  it('rejects a phone already owned by another account', async () => {
+    const h = makeHarness();
+    addUser(h.repository, ['customer']);
+    addUser(h.repository, ['customer'], {
+      id: '22222222-2222-4222-8222-222222222222',
+      phone: '628123456780'
+    });
+
+    await expect(
+      h.service.updateProfile(USER_ID, { phone: '0812 3456 780' })
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+  });
+
+  it('rejects an empty change', async () => {
+    const h = makeHarness();
+    addUser(h.repository, ['customer']);
+    await expect(h.service.updateProfile(USER_ID, {})).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR'
+    });
   });
 });

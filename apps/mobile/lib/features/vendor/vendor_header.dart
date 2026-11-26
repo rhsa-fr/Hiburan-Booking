@@ -34,7 +34,7 @@ class VendorHeader extends StatelessWidget implements PreferredSizeWidget {
   Widget build(BuildContext context) {
     return AppBar(
       automaticallyImplyLeading: false,
-      backgroundColor: VendorColors.ink,
+      backgroundColor: VendorColors.stage,
       surfaceTintColor: Colors.transparent,
       elevation: 0,
       scrolledUnderElevation: 0,
@@ -44,12 +44,12 @@ class VendorHeader extends StatelessWidget implements PreferredSizeWidget {
       flexibleSpace: Stack(
         fit: StackFit.expand,
         children: [
-          const DecoratedBox(
+          DecoratedBox(
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: [VendorColors.headerTop, VendorColors.ink],
+                colors: [VendorColors.headerTop, VendorColors.stage],
               ),
             ),
           ),

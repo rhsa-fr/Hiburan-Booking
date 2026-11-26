@@ -131,13 +131,10 @@ void main() {
       await tester.pump(const Duration(milliseconds: 30));
     }
 
-    expect(find.text('Ekspor CSV bulan ini'), findsOneWidget);
-    expect(
-      find.textContaining('bukan hanya 20 terbaru'),
-      findsOneWidget,
-    );
+    expect(find.text('Ekspor CSV'), findsOneWidget);
+    expect(find.text('Riwayat pencairan'), findsOneWidget);
 
-    await tester.tap(find.text('Ekspor CSV bulan ini'));
+    await tester.tap(find.text('Ekspor CSV'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 350));
 

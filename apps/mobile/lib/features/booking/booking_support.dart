@@ -184,14 +184,14 @@ class BookingPanel extends StatelessWidget {
   const BookingPanel({
     super.key,
     required this.child,
-    this.color = AppColors.card,
-    this.borderColor = AppColors.line,
+    this.color,
+    this.borderColor,
     this.padding = const EdgeInsets.all(Sp.lg),
   });
 
   final Widget child;
-  final Color color;
-  final Color borderColor;
+  final Color? color;
+  final Color? borderColor;
 
   /// Checkout panels pass a tighter `Sp.md`; every other panel keeps `Sp.lg`.
   final EdgeInsetsGeometry padding;
@@ -201,9 +201,9 @@ class BookingPanel extends StatelessWidget {
     return Container(
       padding: padding,
       decoration: BoxDecoration(
-        color: color,
+        color: color ?? AppColors.card,
         borderRadius: BorderRadius.circular(Radii.lg),
-        border: Border.all(color: borderColor),
+        border: Border.all(color: borderColor ?? AppColors.line),
         boxShadow: const [
           BoxShadow(
             color: Color(0x060F172A),

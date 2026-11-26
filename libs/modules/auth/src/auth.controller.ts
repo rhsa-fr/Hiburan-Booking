@@ -34,6 +34,7 @@ import {
   Headers,
   HttpCode,
   Ip,
+  Patch,
   Post,
   Req,
   Res,
@@ -230,6 +231,21 @@ const DeleteAccountBody = z.object({
   confirm: z.literal('HAPUS AKUN'),
   reason: z.string().max(300).optional()
 });
+
+/**
+ * Email is intentionally absent: changing the login email needs a fresh
+ * verification code, so this endpoint only touches the display name and phone.
+ */
+const UpdateProfileBody = z
+  .object({
+    full_name: z.string().trim().min(1).max(100).optional(),
+    phone: z.string().trim().min(1).max(20).optional()
+  })
+  .strict()
+  .refine(
+    (value) => value.full_name !== undefined || value.phone !== undefined,
+    { message: 'Isi nama atau nomor yang ingin diubah' }
+  );
 
 /** FR-128: opaque ticket from the login step plus the authenticator code. */
 const TwoFactorVerifyBody = z.object({
@@ -638,6 +654,28 @@ export class AuthController {
     }
 
     return { data: await this.auth.getProfile(user.id) };
+  }
+
+  /** Updates the caller's display name and phone; email stays verified. */
+  @Patch('me')
+  @UseGuards(AuthGuard)
+  async updateMe(
+    @Body() body: unknown,
+    @Req() req: AuthenticatedRequest
+  ): Promise<{ data: CurrentUserResult }> {
+    const user = req.user;
+    if (!user) throw new AppError('UNAUTHENTICATED', 'Authentication is required');
+
+    const parsed = UpdateProfileBody.safeParse(body ?? {});
+    if (!parsed.success) {
+      throw new AppError(
+        'VALIDATION_ERROR',
+        'Profil tidak valid',
+        parsed.error.issues
+      );
+    }
+
+    return { data: await this.auth.updateProfile(user.id, parsed.data) };
   }
 
   /**

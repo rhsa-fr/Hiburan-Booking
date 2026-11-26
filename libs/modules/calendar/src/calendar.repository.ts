@@ -125,8 +125,52 @@ export class CalendarRepository {
       (a, b) => a.date.localeCompare(b.date) || a.session.localeCompare(b.session)
     );
 
+    if (options.blocking) {
+      // One date belongs to one booking. Serialize every request for the same
+      // vendor+date so a simultaneous `day` and `night` request cannot both
+      // pass the check below; the session_span exclusion alone only stops
+      // overlapping sessions (day vs night do not overlap).
+      for (const date of new Set(ordered.map((slot) => slot.date))) {
+        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+          `booking-slot:${vendorId}:${date}`
+        ]);
+      }
+    }
+
     for (const slot of ordered) {
       try {
+        if (options.blocking) {
+          const taken = await client.query(
+            `SELECT 1
+               FROM booking_slots
+              WHERE vendor_id = $1
+                AND date = $2
+                AND is_blocking
+                AND booking_id <> $3
+              LIMIT 1`,
+            [vendorId, slot.date, slot.bookingId]
+          );
+          if ((taken.rowCount ?? 0) > 0) {
+            throw unavailable(slot, 'date_taken');
+          }
+
+          // Vendor blocks live only in `calendar_slots`, and a `full` block
+          // covers both half-day sessions.
+          const blocked = await client.query(
+            `SELECT 1
+               FROM calendar_slots
+              WHERE vendor_id = $1
+                AND date = $2
+                AND status = 'blocked'
+                AND (session = $3 OR session = 'full' OR $3 = 'full')
+              LIMIT 1`,
+            [vendorId, slot.date, slot.session]
+          );
+          if ((blocked.rowCount ?? 0) > 0) {
+            throw blockedByVendor(slot, 'calendar_block');
+          }
+        }
+
         await client.query(
           `INSERT INTO booking_slots
              (booking_id, vendor_id, date, session, start_time, end_time, is_blocking)
