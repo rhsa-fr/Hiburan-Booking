@@ -371,8 +371,11 @@ export class BookingService {
   ) {}
 
   /**
-   * L-01: creates the booking in `requested` with non-blocking slots. The slot
-   * is only blocked at accept (L-03); price and commission are snapshotted now.
+   * Creates the booking in `requested` and **holds the slot for 24 hours**
+   * (the vendor respond deadline). A second customer cannot request the same
+   * date while the hold is live; the DB exclusion constraint is the arbiter.
+   * Reject/expire/cancel release the hold, and an expired hold is readable as
+   * `unconfirmed` so the date frees itself even if no job ran.
    */
   async createBooking(
     input: CreateBookingDto,
@@ -545,7 +548,7 @@ export class BookingService {
           date: slot.date,
           session: slot.session
         })),
-        { blocking: false }
+        { blocking: true, holdExpiresAt: respondDeadline }
       );
 
       await this.writeHistory(client, booking.id, created, 'booking.create', role, user.id, input.notes);

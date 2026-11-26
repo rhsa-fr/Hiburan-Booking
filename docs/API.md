@@ -377,6 +377,12 @@ Respons berisi booking lengkap. Replay dengan key + payload sama mengembalikan
 booking yang sama (tidak membuat baris baru) dan menandai
 `Idempotency-Replayed: true`.
 
+Sejak 2026-11-26 (ADR 0043), pembuatan booking **mengunci slot selama 24 jam**
+(batas `respond_deadline`). Pelanggan lain yang mencoba tanggal + sesi yang sama
+menerima `409 SLOT_UNAVAILABLE`. Kunci dilepas saat vendor menolak, booking
+dibatalkan/kedaluwarsa, atau hold-nya lewat waktu — hold yang kedaluwarsa terbaca
+sebagai `unconfirmed` sehingga tanggal kembali bisa dipesan.
+
 ### `GET /bookings`
 
 Query: `page`, `page_size`, `status` (opsional).

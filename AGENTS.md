@@ -339,6 +339,10 @@ Sudah diperbaiki (jangan dikembalikan tanpa keputusan tertulis):
 
 Invarian baru (2026-11-23, jangan dikembalikan tanpa ADR):
 
+- **Kunci tanggal saat request** (ADR 0043): `POST /bookings` memblokir slot
+  selama 24 jam (`blocking: true`, `holdExpiresAt = respond_deadline`). Pelanggan
+  lain menerima `409 SLOT_UNAVAILABLE`. Kunci lepas saat tolak/batal/kedaluwarsa
+  atau hold lewat waktu. Jangan mengembalikan ke non-blocking.
 - **Timeline booking kanonik 4 langkah**: Booking dibuat → Vendor menerima →
   Bayar DP/DP diterima → Acara. Judul "DP diterima" hanya boleh muncul saat
   `payment_status` sudah lunas DP; jangan hardcode. Label status dipusatkan di
