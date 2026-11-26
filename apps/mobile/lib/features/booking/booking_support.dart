@@ -105,8 +105,7 @@ bool isTerminalLifecycle(String status) => const {
   if (isFullySettled(payment)) {
     return (
       label: 'Lunas',
-      detail:
-          'Dibayar ${rupiah(totalCustomerIdr)} · Sisa ${rupiah(outstandingIdr)}',
+      detail: 'Dibayar ${rupiah(totalCustomerIdr)}',
     );
   }
   if (payment == 'refunded') {
@@ -116,7 +115,7 @@ bool isTerminalLifecycle(String status) => const {
     return (label: 'Tidak ditagih', detail: 'Tidak ada tagihan');
   }
   return (
-    label: 'Sisa ${rupiah(outstandingIdr)}',
+    label: outstandingIdr > 0 ? 'Sisa ${rupiah(outstandingIdr)}' : 'Lunas',
     detail: isDpSettled(payment)
         ? 'DP ${rupiah(dpAmountIdr)}'
         : 'Belum ada pembayaran',

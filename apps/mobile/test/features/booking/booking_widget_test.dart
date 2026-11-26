@@ -348,7 +348,7 @@ void main() {
     await _dispose(tester);
   });
 
-  testWidgets('list shows Lunas and Sisa Rp 0 for a fully_paid booking', (
+  testWidgets('list shows Lunas without Rp0 for a fully_paid booking', (
     tester,
   ) async {
     final session = Session();
@@ -412,10 +412,8 @@ void main() {
     }
 
     expect(find.text('Lunas'), findsOneWidget);
-    expect(
-      find.text('Dibayar Rp 5.050.000 · Sisa Rp 0'),
-      findsOneWidget,
-    );
+    expect(find.text('Dibayar Rp 5.050.000'), findsOneWidget);
+    expect(find.textContaining('Sisa Rp 0'), findsNothing);
 
     await _dispose(tester);
   });

@@ -15,6 +15,22 @@ export interface VendorApplication {
   vendor_id: string | null;
   created_at: string;
   reviewed_at: string | null;
+  /**
+   * Staged onboarding fields (migrasi 041). Rows submitted with the old form
+   * keep `form_version` 1 and leave everything below `category_name` empty,
+   * so every field is optional and null-safe in the panel.
+   */
+  form_version?: number | null;
+  category_slug?: string | null;
+  category_name?: string | null;
+  years_active?: number | null;
+  description?: string | null;
+  personnel_count?: number | null;
+  equipment_summary?: string | null;
+  portfolio_url?: string | null;
+  agreement_version_id?: string | null;
+  /** Version number of the `vendor` policy accepted at submit. */
+  agreement_version?: number | null;
 }
 
 export interface VendorApplicationPage {

@@ -196,7 +196,7 @@ dibuat oleh npm 11, dan `node:22` membawa npm 10 yang menolak lock ini.
 4. `flutter analyze` + `flutter test`, lalu screenshot 390×844.
 
 **Migrasi DB**
-1. Nomor urut berikutnya di `db/migrations` (terakhir `035_vendor_earnings_index.sql`, berikutnya `036`).
+1. Nomor urut berikutnya di `db/migrations` (terakhir `041_vendor_onboarding_wizard.sql`, berikutnya `042`).
 2. Idempoten bila memungkinkan; sediakan jalur koreksi ke depan, bukan `DROP` data.
 3. Jalankan `npm run migrate:dry` sebelum `npm run migrate`.
 
@@ -272,9 +272,14 @@ Sudah diperbaiki (jangan dikembalikan tanpa keputusan tertulis):
   menampilkan webhook pembayaran gagal 24 jam.
 - Hapus akun mandiri (FR-101): `DELETE /auth/me` menganonimkan PII, mencabut sesi +
   peran, mencatat `account_deletion_requests`, dan idempoten.
-- Registrasi vendor mandiri (FR-002/FR-003): `vendor_applications`, upload KTP privat
+- Registrasi vendor mandiri (FR-002/FR-003, migrasi `041`): wizard 5 langkah +
+  gate Ketentuan Mitra (`policy_versions` code `vendor`). `POST /vendor-applications`
+  versi 2 mewajibkan field kelengkapan dan `agreement_policy_version_id`; consent
+  ditulis atomik dengan pengajuan. `GET /vendor-applications/eligibility` memberi
+  blockers (profil, email, vendor/open application) dan dokumen policy aktif.
+  Batas 3 pengajuan/24 jam; KTP diunggah saat submit, tetap privat
   (`PRIVATE_UPLOAD_DIR`, bukan `/v1/media`), approval `admin_super` membuat vendor +
-  peran `vendor_owner`; `GET /regions` untuk formulir (migrasi `017`).
+  peran `vendor_owner` + kategori primer; `GET /regions` untuk formulir.
 - KTP dienkripsi AES-256-GCM sebelum ditulis (`KTP_ENCRYPTION_KEY`, wajib di
   production), permission 0600/0700, akses hanya `admin_super` dan dicatat di
   `audit_logs`; reject/hapus akun menghapus file dan referensinya.

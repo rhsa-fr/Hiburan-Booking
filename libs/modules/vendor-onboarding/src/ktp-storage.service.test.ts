@@ -96,4 +96,37 @@ describe('KtpStorageService', () => {
     resetConfigForTests();
     expect(() => new KtpStorageService()).toThrow(/KTP_ENCRYPTION_KEY/);
   });
+
+  it('prunes only old unreferenced files for that user', async () => {
+    const service = new KtpStorageService();
+    await service.onModuleInit();
+
+    const userDir = join(dir, 'ktp', USER_ID);
+    await fs.mkdir(userDir, { recursive: true });
+    const oldUnreferenced = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jpg';
+    const freshUnreferenced = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.png';
+    const oldReferenced = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc.webp';
+    const now = new Date('2026-11-26T12:00:00.000Z');
+    const old = new Date('2026-11-24T12:00:00.000Z'); // 48h before `now`
+
+    for (const name of [oldUnreferenced, freshUnreferenced, oldReferenced]) {
+      await fs.writeFile(join(userDir, name), 'x');
+    }
+    await fs.utimes(join(userDir, oldUnreferenced), old, old);
+    await fs.utimes(join(userDir, freshUnreferenced), now, now);
+    await fs.utimes(join(userDir, oldReferenced), old, old);
+
+    await service.pruneUserOrphans(USER_ID, [`ktp/${USER_ID}/${oldReferenced}`], now);
+
+    await expect(fs.stat(join(userDir, oldUnreferenced))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(fs.stat(join(userDir, freshUnreferenced))).resolves.toBeTruthy();
+    await expect(fs.stat(join(userDir, oldReferenced))).resolves.toBeTruthy();
+  });
+
+  it('never throws when the user directory does not exist', async () => {
+    const service = new KtpStorageService();
+    await service.onModuleInit();
+
+    await expect(service.pruneUserOrphans(USER_ID, [], new Date())).resolves.toBeUndefined();
+  });
 });

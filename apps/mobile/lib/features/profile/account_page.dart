@@ -7,13 +7,13 @@ import '../../app/theme.dart';
 import '../../app/theme_controller.dart';
 import '../../app/theme_picker.dart';
 import '../../core/api_exception.dart';
-import '../../core/format.dart';
 import '../../core/models.dart';
 import '../../core/ui.dart';
 import '../../core/widgets.dart';
 import '../booking/booking_support.dart';
 import '../update/app_update_models.dart';
 import '../update/update_dialog.dart';
+import 'policy_sheet.dart';
 import 'vendor_apply_page.dart';
 
 /// Support line the customer can reach from the account tab.
@@ -140,7 +140,7 @@ class _AccountPageState extends State<AccountPage> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(Radii.lg)),
       ),
-      builder: (_) => _PolicySheet(code: code, title: title),
+      builder: (_) => PolicySheet(code: code, title: title),
     );
   }
 
@@ -510,82 +510,89 @@ class _IdentityCard extends StatelessWidget {
 
     return Container(
       decoration: BoxDecoration(
-        color: AppColors.stage,
+        color: AppColors.card,
         borderRadius: BorderRadius.circular(18),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Stack(
-        children: [
-          const Positioned.fill(child: StageBeams(intensity: 0.7)),
-          Padding(
-            padding: const EdgeInsets.all(Sp.lg),
-            child: Row(
-              children: [
-                Container(
-                  width: 60,
-                  height: 60,
-                  alignment: Alignment.center,
-                  decoration: const BoxDecoration(
-                    color: AppColors.lime,
-                    shape: BoxShape.circle,
-                  ),
-                  child: Text(
-                    _monogram(user),
-                    style: TextStyle(
-                      fontSize: 19,
-                      height: 1,
-                      fontWeight: FontWeight.w800,
-                      color: AppColors.onLime,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        title.isEmpty ? 'Akun Tarlink' : title,
-                        style: text.titleLarge?.copyWith(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w800,
-                          height: 1.2,
-                          letterSpacing: -0.5,
-                          color: Colors.white,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      if (showPhone) ...[
-                        const SizedBox(height: 3),
-                        Text(
-                          phone,
-                          style: text.bodyMedium?.copyWith(
-                            color: Colors.white.withValues(alpha: 0.78),
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                      if (email.isNotEmpty) ...[
-                        const SizedBox(height: 1),
-                        Text(
-                          email,
-                          style: text.bodySmall?.copyWith(
-                            color: Colors.white.withValues(alpha: 0.52),
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ],
-            ),
+        border: Border.all(color: AppColors.line),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x0F000000),
+            blurRadius: 18,
+            offset: Offset(0, 6),
           ),
         ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: const EdgeInsets.all(Sp.lg),
+        child: Row(
+          children: [
+            Container(
+              width: 56,
+              height: 56,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: AppColors.limeSoft,
+                shape: BoxShape.circle,
+              ),
+              child: Text(
+                _monogram(user),
+                style: TextStyle(
+                  fontSize: 18,
+                  height: 1,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.ink,
+                ),
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    title.isEmpty ? 'Akun Tarlink' : title,
+                    style: text.titleLarge?.copyWith(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                      height: 1.2,
+                      letterSpacing: -0.4,
+                      color: AppColors.ink,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (showPhone) ...[
+                    const SizedBox(height: 3),
+                    Text(
+                      phone,
+                      style: text.bodyMedium?.copyWith(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w500,
+                        color: AppColors.inkMuted,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                  if (email.isNotEmpty) ...[
+                    const SizedBox(height: 1),
+                    Text(
+                      email,
+                      style: text.bodySmall?.copyWith(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w400,
+                        color: AppColors.muted2,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -951,301 +958,6 @@ class _DeleteAccountSheetState extends State<_DeleteAccountSheet> {
       ),
     );
   }
-}
-
-class _PolicySheet extends StatefulWidget {
-  const _PolicySheet({required this.code, required this.title});
-
-  final String code;
-  final String title;
-
-  @override
-  State<_PolicySheet> createState() => _PolicySheetState();
-}
-
-class _PolicySheetState extends State<_PolicySheet> {
-  Policy? _policy;
-  bool _loading = true;
-  String? _error;
-  bool _started = false;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (_started) return;
-    _started = true;
-    _load();
-  }
-
-  Future<void> _load() async {
-    final api = AppScope.of(context).api;
-    try {
-      final raw = await api.get('/policies/${widget.code}');
-      if (!mounted) return;
-      setState(() {
-        _policy = Policy.fromJson(_asMap(raw));
-        _loading = false;
-        _error = null;
-      });
-    } on ApiException catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _error = error.statusCode == 404
-            ? 'Kebijakan ini belum tersedia di server.'
-            : apiMessage(error);
-      });
-    }
-  }
-
-  void _retry() {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    _load();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    return SizedBox(
-      height: MediaQuery.sizeOf(context).height * 0.78,
-      child: SafeArea(
-        top: false,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const SizedBox(height: Sp.sm),
-            Center(
-              child: Container(
-                width: 36,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: AppColors.neutralSoft,
-                  borderRadius: BorderRadius.circular(Radii.pill),
-                ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.sm, Sp.sm, Sp.sm),
-              child: Row(
-                children: [
-                  Expanded(child: Text(widget.title, style: text.titleLarge)),
-                  IconButton(
-                    onPressed: () => Navigator.pop(context),
-                    tooltip: 'Tutup',
-                    icon: const Icon(Icons.close, size: 20),
-                    color: AppColors.inkMuted,
-                    constraints: const BoxConstraints(
-                      minWidth: 48,
-                      minHeight: 48,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Divider(height: 1, thickness: 1, color: AppColors.line),
-            Expanded(child: _content(context)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _content(BuildContext context) {
-    if (_loading) {
-      return const SingleChildScrollView(
-        padding: EdgeInsets.all(Sp.lg),
-        child: AppLoading(label: 'Memuat kebijakan'),
-      );
-    }
-    final message = _error;
-    if (message != null) {
-      return AppError(message: message, onRetry: _retry);
-    }
-    final policy = _policy;
-    if (policy == null) {
-      return const SizedBox.shrink();
-    }
-
-    final text = Theme.of(context).textTheme;
-    final effective = policy.effectiveFrom.trim();
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.md, Sp.lg, Sp.xl),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (effective.isNotEmpty) ...[
-            Text(
-              'Berlaku sejak ${formatDateIso(effective)} · Versi '
-              '${policy.version}',
-              style: text.bodySmall,
-            ),
-            const SizedBox(height: Sp.lg),
-          ],
-          ..._bodyWidgets(context, policy),
-        ],
-      ),
-    );
-  }
-
-  List<Widget> _bodyWidgets(BuildContext context, Policy policy) {
-    final text = Theme.of(context).textTheme;
-    final widgets = <Widget>[];
-    final body = policy.body;
-
-    void paragraph(String value) {
-      widgets.add(Text(value, style: text.bodyMedium?.copyWith(height: 1.6)));
-    }
-
-    void heading(String value) {
-      widgets.add(
-        Text(
-          value,
-          style: text.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-        ),
-      );
-      widgets.add(const SizedBox(height: Sp.sm));
-    }
-
-    if (body is String && body.trim().isNotEmpty) {
-      paragraph(body.trim());
-    } else if (body is Map) {
-      final map = <String, dynamic>{};
-      body.forEach((key, value) => map['$key'] = value);
-
-      final tiers = map['tiers'];
-      if (tiers is List && tiers.isNotEmpty) {
-        final entries = tiers.whereType<Map>().toList()
-          ..sort(
-            (a, b) => _intValue(
-              b['min_days_before'],
-            ).compareTo(_intValue(a['min_days_before'])),
-          );
-        final positive =
-            entries
-                .map((entry) => _intValue(entry['min_days_before']))
-                .where((days) => days > 0)
-                .toList()
-              ..sort();
-
-        heading('Pengembalian DP');
-        for (final entry in entries) {
-          final days = _intValue(entry['min_days_before']);
-          final when = days > 0
-              ? 'Dibatalkan $days hari atau lebih sebelum acara'
-              : positive.isEmpty
-              ? 'Dibatalkan pada hari acara'
-              : 'Dibatalkan kurang dari ${positive.first} hari '
-                    'sebelum acara';
-          widgets.add(
-            _PolicyPair(
-              label: when,
-              value: _refundLabel(_intValue(entry['refund_percent_bp'])),
-            ),
-          );
-        }
-        widgets.add(const SizedBox(height: Sp.sm));
-      }
-
-      final vendorCancel = map['vendor_cancel'];
-      if (vendorCancel is Map && vendorCancel['refund_percent_bp'] is num) {
-        widgets.add(
-          _PolicyPair(
-            label: 'Jika vendor membatalkan',
-            value: _refundLabel(_intValue(vendorCancel['refund_percent_bp'])),
-          ),
-        );
-        widgets.add(const SizedBox(height: Sp.sm));
-      }
-
-      if (widgets.isEmpty) {
-        for (final entry in map.entries) {
-          final value = entry.value;
-          if (value is String && value.trim().isNotEmpty) {
-            widgets.add(
-              _PolicyPair(label: _humanizeKey(entry.key), value: value.trim()),
-            );
-          } else if (value is num || value is bool) {
-            widgets.add(
-              _PolicyPair(label: _humanizeKey(entry.key), value: '$value'),
-            );
-          }
-        }
-      }
-    }
-
-    if (widgets.isEmpty) {
-      widgets.add(
-        Text(
-          'Isi kebijakan belum bisa ditampilkan.',
-          style: text.bodyMedium?.copyWith(color: AppColors.danger),
-        ),
-      );
-    }
-    return widgets;
-  }
-}
-
-class _PolicyPair extends StatelessWidget {
-  const _PolicyPair({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: Sp.xs),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: Text(
-              label,
-              style: text.bodyMedium?.copyWith(color: AppColors.inkMuted),
-            ),
-          ),
-          const SizedBox(width: Sp.md),
-          Text(
-            value,
-            textAlign: TextAlign.end,
-            style: text.bodyMedium?.copyWith(
-              fontWeight: FontWeight.w600,
-              color: AppColors.ink,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-Map<String, dynamic> _asMap(dynamic value) =>
-    value is Map ? value.cast<String, dynamic>() : const <String, dynamic>{};
-
-int _intValue(dynamic value) {
-  if (value is num) return value.toInt();
-  return int.tryParse('$value') ?? 0;
-}
-
-String _refundLabel(int basisPoints) {
-  final percent = basisPoints / 100;
-  if (percent >= 100) return 'DP dikembalikan penuh';
-  if (percent <= 0) return 'DP tidak dikembalikan';
-  return 'DP dikembalikan ${_percentText(percent)}%';
-}
-
-String _percentText(double value) => value == value.roundToDouble()
-    ? '${value.round()}'
-    : value.toStringAsFixed(1).replaceAll('.', ',');
-
-String _humanizeKey(String key) {
-  final words = key.replaceAll(RegExp(r'[_-]+'), ' ').trim();
-  if (words.isEmpty) return key;
-  return words[0].toUpperCase() + words.substring(1);
 }
 
 /// `6281234567890` â†’ `+62 812-3456-7890`; other shapes keep their digits.

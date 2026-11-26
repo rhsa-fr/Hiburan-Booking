@@ -3,7 +3,9 @@ import {
   Controller,
   Get,
   Header,
+  Headers,
   HttpCode,
+  Ip,
   Param,
   Post,
   Query,
@@ -17,13 +19,15 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { z } from 'zod';
 import { AppError } from '@tarlink/core/errors';
 import { AuthGuard, Roles, RolesGuard, type AuthenticatedRequest } from '@tarlink/platform/auth';
+import { SlidingWindowLimiter } from '@tarlink/platform/rate-limit';
 import type { UploadedImage } from '@tarlink/modules/vendor-portal';
 import {
   LIST_VENDOR_APPLICATIONS_QUERY,
   REVIEW_VENDOR_APPLICATION_BODY,
   SUBMIT_VENDOR_APPLICATION_BODY,
   type VendorApplicationList,
-  type VendorApplicationView
+  type VendorApplicationView,
+  type VendorEligibilityView
 } from './vendor-onboarding.contracts';
 import { MAX_KTP_BYTES } from './ktp-storage.service';
 import { VendorOnboardingService, type ReviewActor } from './vendor-onboarding.service';
@@ -37,7 +41,11 @@ function requireUser(request: AuthenticatedRequest): { id: string; roles: string
 
 function adminActor(request: AuthenticatedRequest): ReviewActor {
   const user = requireUser(request);
-  const role = user.roles.find((candidate) => candidate.startsWith('admin_'));
+  // Deterministic: the strongest admin role wins when an account holds several,
+  // instead of whichever name happens to sort first (admin_finance < admin_super).
+  const role = user.roles.includes('admin_super')
+    ? 'admin_super'
+    : user.roles.find((candidate) => candidate.startsWith('admin_'));
   if (!role) throw new AppError('FORBIDDEN', 'Butuh peran admin.');
   return { id: user.id, role };
 }
@@ -56,6 +64,9 @@ export class RegionsController {
 @Controller()
 @UseGuards(AuthGuard, RolesGuard)
 export class VendorOnboardingController {
+  /** Caps scripted KTP uploads; the real protection remains auth + KTP ownership. */
+  private readonly ktpUploads = new SlidingWindowLimiter({ max: 5, windowMs: 60 * 60_000 });
+
   constructor(private readonly onboarding: VendorOnboardingService) {}
 
   /** Private KTP upload; the file is never served from `/v1/media`. */
@@ -68,6 +79,11 @@ export class VendorOnboardingController {
     @Req() request: AuthenticatedRequest
   ): Promise<{ data: { ktp_object_key: string } }> {
     const user = requireUser(request);
+    if (!this.ktpUploads.attempt(user.id)) {
+      throw new AppError('RATE_LIMITED', 'Terlalu banyak unggahan KTP. Coba lagi nanti.', {
+        reason: 'KTP_UPLOAD_LIMIT'
+      });
+    }
     return { data: await this.onboarding.uploadKtp(user.id, file) };
   }
 
@@ -76,14 +92,45 @@ export class VendorOnboardingController {
   @Roles('customer')
   async submit(
     @Body() body: unknown,
+    @Ip() ip: string,
+    @Headers('user-agent') userAgent: string | undefined,
     @Req() request: AuthenticatedRequest
   ): Promise<{ data: VendorApplicationView }> {
     const user = requireUser(request);
+    // 1.0.8 and earlier post the six-field body without the Ketentuan Mitra
+    // version. A generic validation error leaves them stuck; tell them to
+    // update instead. The v2 body always carries the agreement version.
+    const legacyForm =
+      typeof body === 'object' &&
+      body !== null &&
+      !('agreement_policy_version_id' in body) &&
+      'display_name' in body;
+    if (legacyForm) {
+      throw new AppError(
+        'CONFLICT',
+        'Perbarui aplikasi Tarlink ke versi terbaru untuk mendaftar sebagai vendor.',
+        { reason: 'APP_UPDATE_REQUIRED' }
+      );
+    }
     const parsed = SUBMIT_VENDOR_APPLICATION_BODY.safeParse(body);
     if (!parsed.success) {
       throw new AppError('VALIDATION_ERROR', 'Pengajuan vendor tidak valid', parsed.error.issues);
     }
-    return { data: await this.onboarding.submit(user.id, parsed.data) };
+    return {
+      data: await this.onboarding.submit(user.id, parsed.data, {
+        ip: ip ?? null,
+        userAgent: userAgent ?? null
+      })
+    };
+  }
+
+  @Get('vendor-applications/eligibility')
+  @Roles('customer')
+  async eligibility(
+    @Req() request: AuthenticatedRequest
+  ): Promise<{ data: VendorEligibilityView }> {
+    const user = requireUser(request);
+    return { data: await this.onboarding.eligibility(user.id) };
   }
 
   @Get('vendor-applications/me')

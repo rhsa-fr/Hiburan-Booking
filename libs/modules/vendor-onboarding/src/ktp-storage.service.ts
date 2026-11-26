@@ -28,6 +28,9 @@ import { extensionFor, type UploadedImage } from '@tarlink/modules/vendor-portal
 
 export const MAX_KTP_BYTES = 5 * 1024 * 1024;
 
+/** Abandoned uploads older than this are removed on the next upload. */
+const ORPHAN_TTL_MS = 24 * 60 * 60 * 1000;
+
 const KTP_KEY_PATTERN = /^ktp\/[0-9a-f-]{36}\/[0-9a-f-]{36}\.(jpg|png|webp)$/;
 
 const MIME_BY_EXTENSION: Record<string, string> = {
@@ -115,6 +118,53 @@ export class KtpStorageService implements OnModuleInit {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * Deletes abandoned encrypted uploads for one user.
+   *
+   * The API process is the only one that can see `PRIVATE_UPLOAD_DIR` (the
+   * worker has no access to this volume), so cleanup runs inline on the next
+   * successful upload instead of in a job. It is deliberately bounded: one
+   * directory listing, files older than 24h that no `vendor_applications` row or
+   * `vendors` row references. Files still referenced are never touched, and a
+   * per-file failure is ignored so an upload is never blocked by cleanup.
+   *
+   * Users who never come back keep their orphans; a full sweep needs a
+   * volume-aware job (follow-up, not this packet).
+   */
+  async pruneUserOrphans(
+    userId: string,
+    referencedKeys: readonly string[],
+    now: Date = new Date()
+  ): Promise<void> {
+    const base = resolve(this.root, 'ktp');
+    const dir = resolve(base, userId);
+    if (!dir.startsWith(`${base}${sep}`)) return;
+
+    const referenced = new Set(referencedKeys);
+    const cutoff = now.getTime() - ORPHAN_TTL_MS;
+    const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => null);
+    if (!entries) return;
+
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const objectKey = `ktp/${userId}/${entry.name}`;
+      // Only ever delete real KTP objects, never arbitrary files.
+      if (!KTP_KEY_PATTERN.test(objectKey)) continue;
+      if (referenced.has(objectKey)) continue;
+
+      const path = resolve(dir, entry.name);
+      if (!path.startsWith(`${dir}${sep}`)) continue;
+
+      try {
+        const stat = await fs.stat(path);
+        if (!stat.isFile() || stat.mtimeMs >= cutoff) continue;
+        await fs.rm(path, { force: true });
+      } catch {
+        // Best effort: a single file must not break the upload path.
+      }
     }
   }
 

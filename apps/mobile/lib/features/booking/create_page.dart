@@ -1121,13 +1121,14 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
     return Container(
       padding: const EdgeInsets.all(Sp.md),
       decoration: BoxDecoration(
-        color: AppColors.stage,
-        borderRadius: BorderRadius.circular(Radii.lg),
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.line),
         boxShadow: const [
           BoxShadow(
-            color: Color(0x240B1220),
-            blurRadius: 20,
-            offset: Offset(0, 8),
+            color: Color(0x0F000000),
+            blurRadius: 18,
+            offset: Offset(0, 6),
           ),
         ],
       ),
@@ -1140,16 +1141,16 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
                 width: 38,
                 height: 38,
                 decoration: BoxDecoration(
-                  color: AppColors.lime.withValues(alpha: 0.14),
+                  color: AppColors.accentSoft,
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(
-                    color: AppColors.lime.withValues(alpha: 0.40),
+                    color: AppColors.accent.withValues(alpha: 0.18),
                   ),
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.my_location,
                   size: 18,
-                  color: AppColors.lime,
+                  color: AppColors.accent,
                 ),
               ),
               const SizedBox(width: Sp.md),
@@ -1162,7 +1163,7 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
                       style: text.titleMedium?.copyWith(
                         fontSize: 13.5,
                         fontWeight: FontWeight.w700,
-                        color: Colors.white,
+                        color: AppColors.ink,
                       ),
                     ),
                     const SizedBox(height: 1),
@@ -1170,7 +1171,7 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
                       'Akurasi ±${pin.accuracyMeters.round()} m',
                       style: text.bodySmall?.copyWith(
                         fontSize: 11.5,
-                        color: Colors.white.withValues(alpha: 0.56),
+                        color: AppColors.inkMuted,
                       ),
                     ),
                   ],
@@ -1179,11 +1180,11 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
               TextButton(
                 onPressed: _locating ? null : _useCurrentLocation,
                 style: TextButton.styleFrom(
-                  foregroundColor: AppColors.lime,
+                  foregroundColor: AppColors.accent,
                   minimumSize: const Size(0, 44),
                   padding: const EdgeInsets.symmetric(horizontal: Sp.sm),
                   textStyle: text.labelMedium?.copyWith(
-                    color: AppColors.lime,
+                    color: AppColors.accent,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
@@ -1195,16 +1196,16 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.06),
+              color: AppColors.surfaceSoft,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+              border: Border.all(color: AppColors.line),
             ),
             child: Row(
               children: [
-                const Icon(
+                Icon(
                   Icons.place_outlined,
                   size: 16,
-                  color: AppColors.lime,
+                  color: AppColors.accent,
                 ),
                 const SizedBox(width: 8),
                 Expanded(
@@ -1213,7 +1214,7 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: text.bodyMedium?.copyWith(
-                      color: Colors.white.withValues(alpha: 0.94),
+                      color: AppColors.ink,
                       fontWeight: FontWeight.w700,
                       fontFeatures: _tabularFigures,
                     ),
@@ -1224,11 +1225,7 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
           ),
           if (suggestion != null) ...[
             const SizedBox(height: 12),
-            Divider(
-              height: 1,
-              thickness: 1,
-              color: Colors.white.withValues(alpha: 0.12),
-            ),
+            Divider(height: 1, thickness: 1, color: AppColors.line),
             const SizedBox(height: 10),
             Text(
               'Alamat di titik ini',
@@ -1236,7 +1233,7 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
                 fontSize: 10,
                 letterSpacing: 0.6,
                 fontWeight: FontWeight.w700,
-                color: Colors.white.withValues(alpha: 0.56),
+                color: AppColors.inkMuted,
               ),
             ),
             const SizedBox(height: 3),
@@ -1247,7 +1244,7 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
               style: text.bodyMedium?.copyWith(
                 fontSize: 13,
                 height: 1.4,
-                color: Colors.white.withValues(alpha: 0.92),
+                color: AppColors.ink,
               ),
             ),
             Align(
@@ -1255,11 +1252,11 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
               child: TextButton(
                 onPressed: _acceptSuggestion,
                 style: TextButton.styleFrom(
-                  foregroundColor: AppColors.lime,
+                  foregroundColor: AppColors.accent,
                   minimumSize: const Size(0, 44),
                   padding: EdgeInsets.zero,
                   textStyle: text.labelMedium?.copyWith(
-                    color: AppColors.lime,
+                    color: AppColors.accent,
                     fontWeight: FontWeight.w700,
                   ),
                 ),

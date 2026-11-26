@@ -7,6 +7,14 @@ yang tampil di dialog pembaruan saat aplikasi dibuka.
 Tulis dari sudut pandang pengguna: apa yang berubah, bukan commit apa yang masuk.
 Maksimal ~12 baris; dialog memakai area gulir 96 px.
 
+## 1.1.0
+
+- Pendaftaran vendor kini 5 langkah dan wajib menyetujui Ketentuan Mitra.
+- Pengajuan lebih lengkap: kategori, pengalaman, personel, peralatan, portofolio.
+- Hanya akun terverifikasi dengan profil lengkap yang bisa mengajukan.
+- Batas 3 pengajuan per 24 jam; KTP tetap privat dan terenkripsi.
+- Panel admin menampilkan detail pengajuan dan versi ketentuan.
+
 ## 1.0.8
 
 - Mode gelap opsional di Profil → Tampilan; default tetap terang.

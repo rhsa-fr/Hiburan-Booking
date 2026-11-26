@@ -958,18 +958,83 @@ Pelanggan mengajukan diri sebagai vendor, lalu `admin_super` memutuskan. Akun te
 `customer` sampai disetujui; persetujuan membuat baris `vendors`, memberi peran
 `vendor_owner`, dan menyalin objek KTP privat ke `vendors.ktp_object_key`.
 
+Sejak migrasi `041`, formulir bertahap **v2** meminta data kelayakan dan persetujuan
+Ketentuan Mitra (`policy_versions` code `vendor`). Pengajuan lama tetap sah:
+`form_version = 1` dan seluruh kolom v2 `NULL`. Tidak ada perubahan aturan approval —
+approve/reject tetap `admin_super`, dan KTP tetap hanya bisa dibuka `admin_super`.
+
 | Method | Path | Peran | Fungsi |
 |---|---|---|---|
 | GET | `/regions` | publik | Daftar kabupaten/kota untuk formulir |
+| GET | `/vendor-applications/eligibility` | `customer` | Kelayakan + dokumen Ketentuan Mitra aktif + kategori |
 | POST | `/vendor-applications/ktp` | `customer` | Upload foto KTP (multipart `file`, maks 5 MB) → `{ ktp_object_key }` |
-| POST | `/vendor-applications` | `customer` | Kirim pengajuan |
+| POST | `/vendor-applications` | `customer` | Kirim pengajuan (form v2) |
 | GET | `/vendor-applications/me` | `customer` | Status pengajuan terbaru (`null` bila belum ada) |
 | GET | `/admin/vendor-applications` | `admin_support`, `admin_super` | Antrean (`status`, `page`, `page_size`) |
 | GET | `/admin/vendor-applications/:id/ktp` | `admin_super` | Stream foto KTP privat |
 | POST | `/admin/vendor-applications/:id/approve` | `admin_super` | Setujui |
 | POST | `/admin/vendor-applications/:id/reject` | `admin_super` | Tolak (`{ note? }`) |
 
-Body pengajuan:
+### Kelayakan pengajuan (`GET /vendor-applications/eligibility`)
+
+Dipakai wizard mobile untuk memutuskan langkah berikutnya (lengkapi profil, verifikasi
+email, atau lanjut mengisi formulir). Read-only dan **tidak** menggantikan validasi saat
+submit; server memeriksa ulang semuanya di `POST /vendor-applications`.
+
+```json
+{
+  "data": {
+    "can_submit": false,
+    "blockers": [
+      {
+        "code": "EMAIL_NOT_VERIFIED",
+        "message": "Verifikasi email akun dulu sebelum mendaftar sebagai vendor."
+      }
+    ],
+    "account": {
+      "name": "Siti Aminah",
+      "phone": "081234567890",
+      "email": "siti@contoh.id",
+      "email_verified": false
+    },
+    "application": null,
+    "policy": {
+      "id": "8f7c2b1e-1f0e-4c6e-9d7a-3c6f6a2b9d10",
+      "code": "vendor",
+      "version": 1,
+      "body_hash": "<64 hex>",
+      "effective_from": "2026-11-26T00:00:00.000Z",
+      "body": { "status": "operational", "sections": ["…"] }
+    },
+    "categories": [{ "slug": "tarling", "name": "Tarling" }]
+  }
+}
+```
+
+- `can_submit` bernilai `true` hanya bila `blockers` kosong.
+- `blockers[].code` adalah kode khusus eligibility dan **berbeda** dari
+  `details.reason` saat submit:
+
+  | `blockers[].code` | Arti | Tindakan klien |
+  |---|---|---|
+  | `ACCOUNT_INACTIVE` | Status akun bukan `active` | Arahkan ke dukungan |
+  | `NAME_MISSING` | Nama akun < 2 karakter | Lengkapi Profil |
+  | `PHONE_MISSING` | Nomor telepon kosong | Lengkapi Profil |
+  | `EMAIL_NOT_VERIFIED` | Email akun belum diverifikasi | Kirim/verifikasi OTP email |
+  | `VENDOR_ACCOUNT_EXISTS` | Akun sudah punya vendor | Tidak bisa mendaftar |
+  | `APPLICATION_OPEN` | Masih ada pengajuan `draft`/`submitted` | Tampilkan status pengajuan |
+  | `POLICY_UNAVAILABLE` | Belum ada Ketentuan Mitra aktif | Coba lagi nanti |
+
+- `application` adalah pengajuan terbaru dengan bentuk view yang sama (NIK tersamar),
+  atau `null` bila belum ada. Dipakai untuk menampilkan status dan catatan penolakan.
+- `policy` adalah dokumen Ketentuan Mitra aktif yang **wajib** disetujui. `id` inilah
+  yang dikirim sebagai `agreement_policy_version_id`; `body` boleh dirender apa adanya.
+  Bila `null`, submit tidak mungkin dan wizard harus menunggu.
+- `categories` hanya berisi kategori aktif (`is_active`) untuk langkah pilih kategori.
+
+### Body pengajuan (v2, 13 field)
+
+`form_version` **tidak** dikirim klien; server menulisnya sendiri (`2`).
 
 ```json
 {
@@ -978,22 +1043,95 @@ Body pengajuan:
   "nik": "3212010101010001",
   "region_code": "3212",
   "base_address": "Jl. Pantura No. 1, Indramayu",
-  "ktp_object_key": "ktp/<userId>/<uuid>.jpg"
+  "ktp_object_key": "ktp/<userId>/<uuid>.jpg",
+  "category_slug": "tarling",
+  "years_active": 6,
+  "description": "Grup tarling aktif sejak 2020 dengan pemain tetap dan jadwal pentas rutin di Pantura.",
+  "personnel_count": 8,
+  "equipment_summary": "Sound system 2000 watt, dua kendang, satu gitar, dan satu biola.",
+  "portfolio_url": "https://contoh.id/portofolio",
+  "agreement_policy_version_id": "8f7c2b1e-1f0e-4c6e-9d7a-3c6f6a2b9d10"
 }
 ```
 
-- `ktp_object_key` wajib berawalan `ktp/<userId pengaju>/`; kunci milik akun lain
-  ditolak `400`. File disimpan di `PRIVATE_UPLOAD_DIR`, **dienkripsi AES-256-GCM**
-  sebelum ditulis, dan **tidak** diserve lewat `/v1/media`.
+Body bersifat **strict**: field di luar daftar ini ditolak `400`.
+
+| Field | Aturan |
+|---|---|
+| `display_name` | 2–150 karakter, wajib |
+| `legal_name` | 2–150 karakter, wajib |
+| `nik` | tepat 16 digit angka, wajib |
+| `region_code` | 1–10 karakter, wajib, harus wilayah **aktif** di `regions` |
+| `base_address` | 10–1000 karakter, wajib |
+| `ktp_object_key` | 1–300 karakter, wajib berawalan `ktp/<userId pengaju>/` dan filenya ada |
+| `category_slug` | 2–50 karakter, huruf kecil/angka/tanda hubung, harus kategori **aktif** |
+| `years_active` | integer 0–80, wajib |
+| `description` | 40–1000 karakter, wajib |
+| `personnel_count` | integer 1–1000, wajib |
+| `equipment_summary` | 20–1000 karakter, wajib |
+| `portfolio_url` | opsional; hanya `https://…` ≤300 karakter disimpan, string kosong/`null` → `NULL` |
+| `agreement_policy_version_id` | UUID versi `vendor` **aktif** (dari `eligibility.policy.id`), wajib |
+
+- **KTP diunggah saat submit.** Wizard mengunggah file sekali di langkah terakhir lewat
+  `POST /vendor-applications/ktp`, lalu memakai `ktp_object_key` itu di body. Submit
+  memeriksa awalan kunci **dan** keberadaan file; kegagalan tidak meninggalkan baris
+  pengajuan. File disimpan di `PRIVATE_UPLOAD_DIR`, **dienkripsi AES-256-GCM** sebelum
+  ditulis, dan **tidak** diserve lewat `/v1/media`.
+- **Batas unggahan KTP.** Maksimal **5 unggahan per jam** per akun
+  (`429 RATE_LIMITED`, `details.reason = "KTP_UPLOAD_LIMIT"`). Sebelum menyimpan file
+  baru, API menghapus file di folder user yang lebih tua dari 24 jam dan tidak lagi
+  direferensikan `vendor_applications`/`vendors` (best effort). Sapuan penuh untuk akun
+  yang tidak pernah kembali belum ada.
+- **Gate Ketentuan Mitra.** `agreement_policy_version_id` harus sama dengan policy
+  `vendor` yang aktif saat submit. Persetujuan dicatat di `user_consents` **dalam
+  transaksi yang sama** dengan baris pengajuan dan audit `vendor.application.submit`
+  (`form_version`, `policy_version`, `category_slug`). Bila transaksi gagal, ketiganya
+  batal bersama. Versi basi ditolak, tidak disimpan diam-diam.
+- **Batas kirim.** Maksimal **3 pengajuan per 24 jam bergulir** per akun. Satu akun juga
+  hanya boleh punya satu pengajuan terbuka (`draft`/`submitted`); setelah ditolak,
+  pengajuan baru diperbolehkan selama batas 24 jam belum terlampaui. `RESUBMIT_LIMIT`
+  menyertakan `retry_after_seconds`.
+- **Formulir lama.** `form_version` bernilai `1` (baris historis, kolom v2 `NULL`) atau
+  `2` (wizard). Pengajuan baru selalu v2.
+- **Admin view.** `GET /admin/vendor-applications` ikut membawa `form_version`,
+  `category_slug`, `category_name`, `years_active`, `description`, `personnel_count`,
+  `equipment_summary`, `portfolio_url`, `agreement_version_id`, dan
+  `agreement_version`. Semuanya `null` untuk baris form v1.
 - Akses file KTP hanya untuk `admin_super`; setiap unduhan dicatat sebagai
   `vendor.application.ktp_access` di `audit_logs`.
 - NIK penuh hanya dikembalikan ke `admin_super`; `admin_support` dan pemilik
   melihat NIK tersamar (`************0001`).
 - Saat pengajuan ditolak atau akun dihapus, referensi KTP dikosongkan dan file
   terenkripsinya dihapus (data minimisation).
-- Satu akun hanya boleh punya satu pengajuan terbuka (`submitted`). Setelah
-  ditolak, pengajuan baru diperbolehkan.
 - Syarat menyetujui: peserta belum punya vendor, wilayah valid, dan file KTP ada.
+
+### Error `details.reason`
+
+Kegagalan aturan bisnis dibalas dengan envelope biasa. Klien **wajib** bercabang pada
+`error.code` / `details.reason`, bukan pada `message`.
+
+| `details.reason` | Kapan | `error.code` / status | Detail tambahan |
+|---|---|---|---|
+| `PROFILE_INCOMPLETE` | Nama atau nomor telepon profil belum lengkap / akun tidak aktif | `VALIDATION_ERROR` / `400` | — |
+| `VENDOR_EXISTS` | Akun sudah memiliki vendor | `CONFLICT` / `409` | — |
+| `APPLICATION_OPEN` | Masih ada pengajuan `draft`/`submitted` | `CONFLICT` / `409` | — |
+| `APP_UPDATE_REQUIRED` | Body formulir lama (APK sebelum 1.1.0) | `CONFLICT` / `409` | — |
+| `RESUBMIT_LIMIT` | Sudah 3 pengajuan dalam 24 jam bergulir | `RATE_LIMITED` / `429` | `retry_after_seconds` |
+| `REGION_UNKNOWN` | `region_code` tidak ada / tidak aktif | `VALIDATION_ERROR` / `400` | — |
+| `CATEGORY_UNKNOWN` | `category_slug` tidak ada | `VALIDATION_ERROR` / `400` | — |
+| `CATEGORY_INACTIVE` | Kategori ada tetapi dinonaktifkan | `VALIDATION_ERROR` / `400` | — |
+| `POLICY_VERSION_STALE` | `agreement_policy_version_id` bukan policy aktif | `CONFLICT` / `409` | `current_policy_version_id`, `current_policy_version` |
+| `KTP_INVALID` | Awalan kunci salah, file hilang, atau bukan milik akun | `VALIDATION_ERROR` / `400` | — |
+
+Email yang belum diverifikasi **tidak** memakai `details.reason`: responsnya
+`403` dengan `error.code = "EMAIL_NOT_VERIFIED"`. Body yang gagal validasi Zod juga
+tidak punya `reason`; `details` berisi daftar issue validasi. `POST
+/vendor-applications/ktp` memakai `429` dengan `details.reason = "KTP_UPLOAD_LIMIT"`
+setelah 5 unggahan per jam per akun.
+
+`GET /vendor-applications/me` tetap tersedia untuk klien lama: bentuk responsnya tidak
+berubah, hanya bertambah field v2 (`form_version` selalu ada; sisanya `null` pada baris
+v1).
 
 ---
 

@@ -1,9 +1,10 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, FileText, IdCard, RotateCw, X } from 'lucide-react';
+import { CheckCircle2, Eye, FileText, IdCard, RotateCw, X } from 'lucide-react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import {
   Button,
   Card,
@@ -57,6 +58,29 @@ function statusLabel(status: VendorApplicationStatus): string {
   }
 }
 
+/** One compact line for the table; parts the API did not send are skipped. */
+function vendorMetaLine(item: VendorApplication): string {
+  const parts: string[] = [];
+  if (item.category_name) parts.push(item.category_name);
+  if (item.years_active != null) parts.push(`${item.years_active} thn`);
+  if (item.personnel_count != null) parts.push(`${item.personnel_count} personel`);
+  return parts.join(' · ');
+}
+
+/** Only plain https links become anchors; anything else stays inert text. */
+function isHttpsUrl(value: string): boolean {
+  return value.startsWith('https://') && value.length > 'https://'.length;
+}
+
+function DetailRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="grid gap-1 border-t border-border py-2.5 sm:grid-cols-[180px_1fr] sm:gap-4">
+      <dt className="text-sm font-medium text-textMuted">{label}</dt>
+      <dd className="break-words text-sm leading-relaxed text-textMain">{children}</dd>
+    </div>
+  );
+}
+
 export function ApplicationsView() {
   const router = useRouter();
   const pathname = usePathname();
@@ -69,6 +93,7 @@ export function ApplicationsView() {
 
   const [approveTarget, setApproveTarget] = useState<VendorApplication | null>(null);
   const [rejectTarget, setRejectTarget] = useState<VendorApplication | null>(null);
+  const [detailTarget, setDetailTarget] = useState<VendorApplication | null>(null);
   const [rejectNote, setRejectNote] = useState('');
   const [toastNotice, setToastNotice] = useState<string | null>(null);
   const superAdmin = isSuperAdmin();
@@ -116,6 +141,7 @@ export function ApplicationsView() {
     else params.set('status', tabId);
     const query = params.toString();
     setApproveTarget(null);
+    setDetailTarget(null);
     router.replace(`${pathname}${query ? `?${query}` : ''}`);
   }
 
@@ -197,6 +223,14 @@ export function ApplicationsView() {
                     <span className="mt-1 block max-w-[320px] text-xs leading-snug text-textSecondary">
                       {item.base_address}
                     </span>
+                    {vendorMetaLine(item) ? (
+                      <span className="mt-1 block text-xs text-textSecondary">
+                        {vendorMetaLine(item)}
+                      </span>
+                    ) : null}
+                    {item.form_version === 1 ? (
+                      <span className="mt-1 block text-xs text-textMuted">Formulir lama</span>
+                    ) : null}
                   </TableCell>
                   <TableCell>
                     <span className="font-mono text-sm text-textMain">{item.nik}</span>
@@ -214,7 +248,15 @@ export function ApplicationsView() {
                   </TableCell>
                   <TableCell align="right">
                     {pending ? (
-                      <div className="flex flex-wrap justify-end gap-2">
+                      <div className="flex flex-wrap items-center justify-end gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          icon={<Eye aria-hidden className="h-4 w-4" />}
+                          onClick={() => setDetailTarget(item)}
+                        >
+                          Detail
+                        </Button>
                         {superAdmin ? (
                           <>
                             <Button
@@ -251,9 +293,19 @@ export function ApplicationsView() {
                         )}
                       </div>
                     ) : (
-                      <span className="text-sm text-textSecondary">
-                        {statusLabel(item.status)}
-                      </span>
+                      <div className="flex flex-wrap items-center justify-end gap-2">
+                        <span className="text-sm text-textSecondary">
+                          {statusLabel(item.status)}
+                        </span>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          icon={<Eye aria-hidden className="h-4 w-4" />}
+                          onClick={() => setDetailTarget(item)}
+                        >
+                          Detail
+                        </Button>
+                      </div>
                     )}
                   </TableCell>
                 </TableRow>
@@ -262,6 +314,102 @@ export function ApplicationsView() {
           </Table>
         </Card>
       )}
+
+      <Modal
+        open={detailTarget !== null}
+        onClose={() => setDetailTarget(null)}
+        labelledBy="application-detail-title"
+        size="md"
+      >
+        {detailTarget ? (
+          <>
+            <h2
+              id="application-detail-title"
+              className="pr-10 text-xl font-bold tracking-[-0.01em] text-textMain"
+            >
+              Detail pengajuan
+            </h2>
+            <p className="mt-2 text-base leading-relaxed text-textSecondary">
+              {detailTarget.display_name} · {detailTarget.legal_name}
+            </p>
+
+            <dl className="mt-4">
+              <DetailRow label="Kategori">
+                {detailTarget.category_name ?? (
+                  <span className="text-textMuted">Belum diisi</span>
+                )}
+              </DetailRow>
+              <DetailRow label="Wilayah">{detailTarget.region_code}</DetailRow>
+              <DetailRow label="Alamat">{detailTarget.base_address}</DetailRow>
+              <DetailRow label="Tahun aktif">
+                {detailTarget.years_active != null ? (
+                  `${detailTarget.years_active} tahun`
+                ) : (
+                  <span className="text-textMuted">Belum diisi</span>
+                )}
+              </DetailRow>
+              <DetailRow label="Jumlah personel">
+                {detailTarget.personnel_count != null ? (
+                  `${detailTarget.personnel_count} personel`
+                ) : (
+                  <span className="text-textMuted">Belum diisi</span>
+                )}
+              </DetailRow>
+              <DetailRow label="Deskripsi">
+                {detailTarget.description ?? (
+                  <span className="text-textMuted">Belum diisi</span>
+                )}
+              </DetailRow>
+              <DetailRow label="Peralatan">
+                {detailTarget.equipment_summary ?? (
+                  <span className="text-textMuted">Belum diisi</span>
+                )}
+              </DetailRow>
+              <DetailRow label="Portofolio">
+                {detailTarget.portfolio_url ? (
+                  isHttpsUrl(detailTarget.portfolio_url) ? (
+                    <a
+                      href={detailTarget.portfolio_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="break-all text-accentText underline underline-offset-2"
+                    >
+                      {detailTarget.portfolio_url}
+                    </a>
+                  ) : (
+                    <span className="break-all">{detailTarget.portfolio_url}</span>
+                  )
+                ) : (
+                  <span className="text-textMuted">Belum diisi</span>
+                )}
+              </DetailRow>
+              <DetailRow label="Formulir">
+                {detailTarget.form_version === 1 ? (
+                  'Formulir lama (v1)'
+                ) : detailTarget.form_version === 2 ? (
+                  'Formulir bertahap (v2)'
+                ) : (
+                  <span className="text-textMuted">Tidak tersedia</span>
+                )}
+              </DetailRow>
+              <DetailRow label="Ketentuan Mitra">
+                {detailTarget.agreement_version != null ? (
+                  `Versi ${detailTarget.agreement_version}`
+                ) : (
+                  <span className="text-textMuted">Belum dicatat</span>
+                )}
+              </DetailRow>
+              {detailTarget.review_note ? (
+                <DetailRow label="Catatan review">{detailTarget.review_note}</DetailRow>
+              ) : null}
+            </dl>
+
+            <p className="mt-4 rounded-card border border-border bg-subtle px-3 py-2 text-xs leading-relaxed text-textMuted">
+              NIK lengkap dan foto KTP hanya dapat dibuka admin super.
+            </p>
+          </>
+        ) : null}
+      </Modal>
 
       <ConfirmDialog
         open={approveTarget !== null}
@@ -294,7 +442,7 @@ export function ApplicationsView() {
         </h2>
         <p className="mt-2 text-base leading-relaxed text-textSecondary">
           {rejectTarget
-            ? `${rejectTarget.display_name} tidak akan menjadi vendor. Catatan dikirim ke pemohon.`
+            ? `${rejectTarget.display_name} tidak akan menjadi vendor. Catatan tampil di status pengajuan pemohon.`
             : ''}
         </p>
         <Textarea
