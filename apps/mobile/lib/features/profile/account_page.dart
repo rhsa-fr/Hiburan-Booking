@@ -510,82 +510,89 @@ class _IdentityCard extends StatelessWidget {
 
     return Container(
       decoration: BoxDecoration(
-        color: AppColors.stage,
+        color: AppColors.card,
         borderRadius: BorderRadius.circular(18),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Stack(
-        children: [
-          const Positioned.fill(child: StageBeams(intensity: 0.7)),
-          Padding(
-            padding: const EdgeInsets.all(Sp.lg),
-            child: Row(
-              children: [
-                Container(
-                  width: 60,
-                  height: 60,
-                  alignment: Alignment.center,
-                  decoration: const BoxDecoration(
-                    color: AppColors.lime,
-                    shape: BoxShape.circle,
-                  ),
-                  child: Text(
-                    _monogram(user),
-                    style: TextStyle(
-                      fontSize: 19,
-                      height: 1,
-                      fontWeight: FontWeight.w800,
-                      color: AppColors.onLime,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        title.isEmpty ? 'Akun Tarlink' : title,
-                        style: text.titleLarge?.copyWith(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w800,
-                          height: 1.2,
-                          letterSpacing: -0.5,
-                          color: Colors.white,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      if (showPhone) ...[
-                        const SizedBox(height: 3),
-                        Text(
-                          phone,
-                          style: text.bodyMedium?.copyWith(
-                            color: Colors.white.withValues(alpha: 0.78),
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                      if (email.isNotEmpty) ...[
-                        const SizedBox(height: 1),
-                        Text(
-                          email,
-                          style: text.bodySmall?.copyWith(
-                            color: Colors.white.withValues(alpha: 0.52),
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ],
-            ),
+        border: Border.all(color: AppColors.line),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x0F000000),
+            blurRadius: 18,
+            offset: Offset(0, 6),
           ),
         ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: const EdgeInsets.all(Sp.lg),
+        child: Row(
+          children: [
+            Container(
+              width: 56,
+              height: 56,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: AppColors.limeSoft,
+                shape: BoxShape.circle,
+              ),
+              child: Text(
+                _monogram(user),
+                style: TextStyle(
+                  fontSize: 18,
+                  height: 1,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.ink,
+                ),
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    title.isEmpty ? 'Akun Tarlink' : title,
+                    style: text.titleLarge?.copyWith(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                      height: 1.2,
+                      letterSpacing: -0.4,
+                      color: AppColors.ink,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (showPhone) ...[
+                    const SizedBox(height: 3),
+                    Text(
+                      phone,
+                      style: text.bodyMedium?.copyWith(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w500,
+                        color: AppColors.inkMuted,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                  if (email.isNotEmpty) ...[
+                    const SizedBox(height: 1),
+                    Text(
+                      email,
+                      style: text.bodySmall?.copyWith(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w400,
+                        color: AppColors.muted2,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -481,30 +481,30 @@ class _DateSpine extends StatelessWidget {
     final value = date;
     return Container(
       width: 58,
-      color: AppColors.stage,
+      color: AppColors.surfaceSoft,
       padding: const EdgeInsets.symmetric(vertical: 13),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.start,
         children: [
           Text(
             value == null ? 'JADWAL' : _weekdays[value.weekday - 1],
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 10,
               height: 1.2,
               fontWeight: FontWeight.w800,
               letterSpacing: 1,
-              color: AppColors.lime,
+              color: value == null ? AppColors.muted2 : AppColors.accent,
             ),
           ),
           const SizedBox(height: 2),
           Text(
             value == null ? '—' : '${value.day}',
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 25,
               height: 1.05,
               fontWeight: FontWeight.w800,
               letterSpacing: -0.8,
-              color: Colors.white,
+              color: AppColors.ink,
             ),
           ),
           const SizedBox(height: 1),
@@ -515,7 +515,7 @@ class _DateSpine extends StatelessWidget {
               height: 1.2,
               fontWeight: FontWeight.w700,
               letterSpacing: 0.9,
-              color: Colors.white.withValues(alpha: 0.55),
+              color: AppColors.inkMuted,
             ),
           ),
         ],
@@ -531,7 +531,7 @@ class _TicketSeamPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = AppColors.lineStrong
+      ..color = AppColors.line
       ..strokeWidth = 1;
     for (var y = 0.0; y < size.height; y += 7) {
       canvas.drawLine(Offset(0.5, y), Offset(0.5, y + 4), paint);

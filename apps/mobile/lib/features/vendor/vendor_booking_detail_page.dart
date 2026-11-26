@@ -347,6 +347,7 @@ class _VendorBookingDetailPageState extends State<VendorBookingDetailPage> {
     final entitlement = moneyValue(booking, 'vendor_entitlement_idr') ?? 0;
     final commission = moneyValue(booking, 'commission_idr') ?? 0;
     final dpPaid = isDpSettled(payment);
+    final remaining = (total - dp).clamp(0, total);
     final released = settlement == 'released' || booking['released_at'] != null;
     final held = settlement == 'held';
 
@@ -613,7 +614,9 @@ class _VendorBookingDetailPageState extends State<VendorBookingDetailPage> {
                     const SizedBox(height: 5),
                     Text(
                       dpPaid
-                          ? 'Sisa pelunasan ${rupiahTight((total - dp).clamp(0, total))} sebelum hari H'
+                          ? remaining > 0
+                                ? 'Sisa pelunasan ${rupiahTight(remaining)} sebelum hari H'
+                                : 'Pembayaran sudah lunas'
                           : 'Menunggu pembayaran DP dari pelanggan',
                       style: vendorText(
                         size: 11,

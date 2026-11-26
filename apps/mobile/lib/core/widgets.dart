@@ -389,12 +389,8 @@ class StatusChip extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            width: 5,
-            height: 5,
-            decoration: BoxDecoration(color: tone.fg, shape: BoxShape.circle),
-          ),
-          const SizedBox(width: 5),
+          Icon(_statusIcon(status), size: 11, color: tone.fg),
+          const SizedBox(width: 4),
           Text(
             tone.label,
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
@@ -479,6 +475,27 @@ const _labels = <StatusKind, Map<String, String>>{
     _ => (label: label, fg: AppColors.inkMuted, bg: AppColors.neutralSoft),
   };
 }
+
+/// Status meaning as a glyph: a plain dot carried no information.
+IconData _statusIcon(String status) => switch (status.toLowerCase()) {
+  'available' ||
+  'confirmed' ||
+  'scheduled' ||
+  'settled' ||
+  'completed' => Icons.check_circle_outline,
+  'fully_paid' || 'dp_paid' => Icons.task_alt,
+  'in_progress' => Icons.play_circle_outline,
+  'pending' || 'awaiting_payment' || 'waiting_payment' => Icons.schedule,
+  'held' => Icons.hourglass_empty,
+  'unconfirmed' => Icons.help_outline,
+  'stale' => Icons.update,
+  'blocked' => Icons.block,
+  'booked' => Icons.event_busy_outlined,
+  'cancelled' || 'canceled' || 'failed' || 'expired' => Icons.cancel_outlined,
+  'partially_refunded' || 'refunded' => Icons.undo,
+  'draft' => Icons.edit_note,
+  _ => Icons.info_outline,
+};
 
 String _humanize(String value) {
   if (value.isEmpty) return 'Tidak diketahui';

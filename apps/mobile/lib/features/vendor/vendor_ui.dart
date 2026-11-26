@@ -243,12 +243,17 @@ class VendorPill extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              width: 5,
-              height: 5,
-              decoration: BoxDecoration(color: fg, shape: BoxShape.circle),
+            Icon(
+              switch (tone) {
+                VendorPillTone.wait => Icons.schedule,
+                VendorPillTone.ok => Icons.check_circle_outline,
+                VendorPillTone.done => Icons.task_alt,
+                VendorPillTone.no => Icons.cancel_outlined,
+              },
+              size: 11,
+              color: fg,
             ),
-            const SizedBox(width: 5),
+            const SizedBox(width: 4),
             ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 160),
               child: Text(

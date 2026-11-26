@@ -551,13 +551,10 @@ class _HeaderCountPill extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            width: 5,
-            height: 5,
-            decoration: const BoxDecoration(
-              color: AppColors.lime,
-              shape: BoxShape.circle,
-            ),
+          Icon(
+            Icons.groups_outlined,
+            size: 12,
+            color: AppColors.lime,
           ),
           const SizedBox(width: 6),
           Text(
@@ -855,36 +852,8 @@ class _TrustPanel extends StatelessWidget {
   }
 }
 
-class _DarkPill extends StatelessWidget {
-  const _DarkPill({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(Radii.pill),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.20)),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(
-          fontSize: 10,
-          height: 1.2,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 0.2,
-          color: Colors.white,
-        ),
-      ),
-    );
-  }
-}
-
-/// The active booking is the one thing a customer opens the app for, so it gets
-/// the stage: a dark ticket with a lime amount, not another white card.
+/// The active booking is the one thing a customer opens the app for, so it sits
+/// at the top of Beranda as a compact, light summary — quiet until it matters.
 class _ActiveBookingCard extends StatelessWidget {
   const _ActiveBookingCard({required this.booking, required this.onOpen});
 
@@ -893,10 +862,9 @@ class _ActiveBookingCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    final pill = paymentPill(booking.paymentStatus);
     final total = booking.totalCustomerIdr;
-    final paid = total - booking.outstandingIdr;
+    final outstanding = booking.outstandingIdr;
+    final paid = total - outstanding;
     final paidClamped = paid < 0 ? 0 : (paid > total ? total : paid);
     final paidRatio = total <= 0 ? 0.0 : paidClamped / total;
     final slot = booking.firstSlot;
@@ -910,180 +878,240 @@ class _ActiveBookingCard extends StatelessWidget {
             eventDate.day,
           ).difference(DateTime(today.year, today.month, today.day)).inDays;
 
+    String? countdown;
+    if (daysLeft == 0) {
+      countdown = 'HARI INI';
+    } else if (daysLeft == 1) {
+      countdown = 'BESOK';
+    } else if (daysLeft != null && daysLeft > 1) {
+      countdown = 'H-$daysLeft';
+    }
+
+    final packageName = booking.package.name.trim();
+    final session = slot == null ? '' : sessionText(slot.session);
+    final meta = [
+      if (packageName.isNotEmpty) packageName,
+      if (session.isNotEmpty) session,
+    ].join(' · ');
+    final fullyPaid = total > 0 && paidClamped >= total;
+
     return Container(
       decoration: BoxDecoration(
-        color: AppColors.ink,
+        color: AppColors.card,
         borderRadius: BorderRadius.circular(18),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Stack(
-        children: [
-          const Positioned.fill(child: StageBeams(intensity: 0.55)),
-          Material(
-            color: Colors.transparent,
-            child: InkWell(
-              onTap: onOpen,
-              child: Padding(
-                padding: const EdgeInsets.all(Sp.lg),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(
-                      children: [
-                        const Text(
-                          'BOOKING AKTIF',
-                          style: TextStyle(
-                            fontSize: 9.5,
-                            height: 1.2,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 1.5,
-                            color: AppColors.lime,
-                          ),
-                        ),
-                        const Spacer(),
-                        _DarkPill(label: pill.label),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      booking.vendor.displayName,
-                      style: text.titleLarge?.copyWith(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                        height: 1.15,
-                        letterSpacing: -0.5,
-                        color: Colors.white,
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 5),
-                    Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            eventDate == null
-                                ? booking.code
-                                : '${booking.code} · ${formatDate(eventDate)}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 11.5,
-                              height: 1.3,
-                              fontWeight: FontWeight.w500,
-                              color: Colors.white.withValues(alpha: 0.55),
-                            ),
-                          ),
-                        ),
-                        if (daysLeft != null && daysLeft >= 0) ...[
-                          const SizedBox(width: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: AppColors.lime,
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Text(
-                              daysLeft == 0 ? 'HARI INI' : 'H-$daysLeft',
-                              style: TextStyle(
-                                fontSize: 10,
-                                height: 1.2,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: 0.4,
-                                color: AppColors.ink,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                    const SizedBox(height: 18),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Sisa pembayaran',
-                                style: TextStyle(
-                                  fontSize: 10.5,
-                                  height: 1.2,
-                                  fontWeight: FontWeight.w600,
-                                  letterSpacing: 0.3,
-                                  color: Colors.white.withValues(alpha: 0.55),
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                rupiahTight(booking.outstandingIdr),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 26,
-                                  height: 1.05,
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: -1.1,
-                                  color: AppColors.lime,
-                                  fontFeatures: _tabularFigures,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: Sp.md),
-                        Container(
-                          width: 42,
-                          height: 42,
-                          decoration: const BoxDecoration(
-                            color: AppColors.lime,
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(
-                            Icons.arrow_forward,
-                            size: 20,
-                            color: AppColors.ink,
-                          ),
-                        ),
-                      ],
-                    ),
-                    if (total > 0) ...[
-                      const SizedBox(height: 16),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(Radii.pill),
-                        child: LinearProgressIndicator(
-                          value: paidRatio,
-                          minHeight: 5,
-                          backgroundColor: Colors.white.withValues(alpha: 0.14),
-                          valueColor: const AlwaysStoppedAnimation<Color>(
-                            AppColors.lime,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 7),
-                      Text(
-                        paid >= total
-                            ? 'Lunas ${rupiahTight(total)}'
-                            : 'Sudah dibayar ${rupiahTight(paidClamped)} dari ${rupiahTight(total)}',
-                        style: TextStyle(
-                          fontSize: 10.5,
-                          height: 1.3,
-                          fontWeight: FontWeight.w500,
-                          color: Colors.white.withValues(alpha: 0.50),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
+        border: Border.all(color: AppColors.line),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x0F000000),
+            blurRadius: 18,
+            offset: Offset(0, 6),
           ),
         ],
       ),
+      clipBehavior: Clip.antiAlias,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onOpen,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 15, 16, 15),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.confirmation_number_outlined,
+                      size: 13,
+                      color: AppColors.accent,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      'BOOKING AKTIF',
+                      style: TextStyle(
+                        fontSize: 9,
+                        height: 1.2,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 1.4,
+                        color: AppColors.inkMuted,
+                      ),
+                    ),
+                    const Spacer(),
+                    if (countdown != null)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 7,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppColors.surfaceSoft,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          countdown,
+                          style: TextStyle(
+                            fontSize: 9,
+                            height: 1.2,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.3,
+                            color: AppColors.ink,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  booking.vendor.displayName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 15.5,
+                    height: 1.2,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.2,
+                    color: AppColors.ink,
+                  ),
+                ),
+                if (meta.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    meta,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11,
+                      height: 1.3,
+                      fontWeight: FontWeight.w500,
+                      color: AppColors.inkMuted,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 6),
+                _dateCodeLine(eventDate),
+                const SizedBox(height: 12),
+                Container(height: 1, color: AppColors.line),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        outstanding > 0 ? 'Sisa pembayaran' : 'Pembayaran',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          height: 1.2,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.inkMuted,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: Sp.sm),
+                    Text(
+                      outstanding > 0 ? rupiahTight(outstanding) : 'Lunas',
+                      maxLines: 1,
+                      style: TextStyle(
+                        fontSize: 18.5,
+                        height: 1.1,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.6,
+                        color: fullyPaid ? AppColors.accent : AppColors.ink,
+                        fontFeatures: _tabularFigures,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(
+                      Icons.chevron_right,
+                      size: 20,
+                      color: AppColors.muted2,
+                    ),
+                  ],
+                ),
+                if (total > 0) ...[
+                  const SizedBox(height: 10),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(Radii.pill),
+                    child: LinearProgressIndicator(
+                      value: paidRatio,
+                      minHeight: 4,
+                      backgroundColor: AppColors.surfaceHigh,
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        AppColors.accent,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    fullyPaid
+                        ? 'Lunas ${rupiahTight(total)}'
+                        : 'Sudah dibayar ${rupiahTight(paidClamped)} dari ${rupiahTight(total)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 9.5,
+                      height: 1.3,
+                      fontWeight: FontWeight.w500,
+                      color: AppColors.inkMuted,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _dateCodeLine(DateTime? date) {
+    final style = TextStyle(
+      fontSize: 10.5,
+      height: 1.25,
+      fontWeight: FontWeight.w500,
+      color: AppColors.inkMuted,
+    );
+
+    if (date == null) {
+      return Text(
+        booking.code,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: style,
+      );
+    }
+
+    return Row(
+      children: [
+        Icon(Icons.calendar_today_outlined, size: 12, color: AppColors.muted2),
+        const SizedBox(width: 4),
+        Flexible(
+          child: Text(
+            formatDate(date),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: style,
+          ),
+        ),
+        const SizedBox(width: 6),
+        Container(
+          width: 3,
+          height: 3,
+          decoration: BoxDecoration(
+            color: AppColors.muted2,
+            shape: BoxShape.circle,
+          ),
+        ),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            booking.code,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: style,
+          ),
+        ),
+      ],
     );
   }
 }
