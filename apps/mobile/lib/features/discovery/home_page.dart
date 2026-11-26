@@ -10,6 +10,7 @@ import '../../core/ui.dart';
 import '../../core/widgets.dart';
 import '../booking/booking_support.dart';
 import '../booking/list_page.dart';
+import '../chat/chat_inbox_page.dart';
 import '../notifications/notification_bell.dart';
 import '../profile/account_page.dart';
 import 'browse_page.dart';
@@ -28,7 +29,8 @@ class _HomePageState extends State<HomePage> {
   static const _beranda = 0;
   static const _jelajah = 1;
   static const _booking = 2;
-  static const _profil = 3;
+  static const _chat = 3;
+  static const _profil = 4;
 
   final _search = TextEditingController();
   final _visited = <int>{_beranda};
@@ -108,6 +110,10 @@ class _HomePageState extends State<HomePage> {
           const SizedBox.shrink(),
         if (_visited.contains(_booking))
           BookingListPage(onBrowse: () => _selectTab(_jelajah))
+        else
+          const SizedBox.shrink(),
+        if (_visited.contains(_chat))
+          const ChatInboxPage()
         else
           const SizedBox.shrink(),
         if (_visited.contains(_profil))

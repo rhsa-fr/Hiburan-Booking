@@ -47,6 +47,19 @@ export interface ChatReadReceipt {
   readonly read_at: string;
 }
 
+/** One row of `GET /chats`: a booking thread with its last visible message. */
+export interface ChatThreadView {
+  readonly booking_id: string;
+  readonly booking_code: string;
+  readonly vendor_id: string;
+  readonly vendor_name: string;
+  readonly counterpart_name: string;
+  readonly counterpart_role: 'customer' | 'vendor';
+  readonly last_message: string;
+  readonly last_at: string;
+  readonly unread_count: number;
+}
+
 /**
  * `read` is the only NOTIFY payload that is not a stored chat row: it carries
  * ids, never message bodies, so it is safe to fan out to the whole thread.

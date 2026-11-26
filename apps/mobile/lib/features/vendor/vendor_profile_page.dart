@@ -109,6 +109,11 @@ class _VendorProfilePageState extends State<VendorProfilePage> {
     }
   }
 
+  Future<void> _openEditProfile() async {
+    await Navigator.pushNamed(context, Routes.editProfile);
+    if (mounted) setState(() {});
+  }
+
   Future<void> _openWhatsApp(String? raw) async {
     final digits = whatsappDigits(raw);
     if (digits == null) return;
@@ -301,6 +306,7 @@ class _VendorProfilePageState extends State<VendorProfilePage> {
 
   Widget _content(Map<String, dynamic> me, Map<String, dynamic>? public) {
     final theme = ThemeScope.maybeOf(context);
+    final account = AppScope.of(context).session.user;
     final verification = me['verification_status']?.toString() ?? '';
     final regionName = public?['region_name']?.toString().trim() ?? '';
     final regionCode = me['region_code']?.toString() ?? '';
@@ -433,6 +439,16 @@ class _VendorProfilePageState extends State<VendorProfilePage> {
             padding: EdgeInsets.zero,
             child: Column(
               children: [
+                _InfoRow(
+                  title: 'Akun saya',
+                  subtitle:
+                      account?.fullName ??
+                      account?.email ??
+                      account?.phone ??
+                      'Nama, email, nomor',
+                  trailingIcon: Icons.person_outline,
+                  onTap: _openEditProfile,
+                ),
                 _InfoRow(
                   title: 'Identitas & verifikasi',
                   subtitle:

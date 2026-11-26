@@ -373,6 +373,7 @@ class _CustomerTabBar extends StatelessWidget {
       active: Icons.receipt_long,
       label: 'Booking',
     ),
+    (icon: Icons.chat_bubble_outline, active: Icons.chat_bubble, label: 'Chat'),
     (icon: Icons.person_outline, active: Icons.person, label: 'Profil'),
   ];
 

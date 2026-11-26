@@ -259,6 +259,13 @@ export interface AuthRepository {
   emailExists(email: string): Promise<boolean>;
   /** True when any user already owns this phone. */
   phoneExists(phone: string): Promise<boolean>;
+  /** True when another active user already owns this phone. */
+  phoneExistsForOther(phone: string, userId: string): Promise<boolean>;
+  /** Updates the caller's display name and/or phone. */
+  updateUserProfile(
+    userId: string,
+    input: { name?: string; phone?: string }
+  ): Promise<void>;
   /** Version that is active right now for `code`, or null when none is published. */
   findActivePolicyVersion(code: string): Promise<ActivePolicyVersion | null>;
   /**
@@ -681,6 +688,33 @@ export class PgAuthRepository implements AuthRepository {
       [phone]
     );
     return rows[0]?.exists ?? false;
+  }
+
+  async phoneExistsForOther(phone: string, userId: string): Promise<boolean> {
+    const rows = await query<{ exists: boolean }>(
+      'SELECT EXISTS (SELECT 1 FROM users WHERE phone = $1 AND id <> $2) AS exists',
+      [phone, userId]
+    );
+    return rows[0]?.exists ?? false;
+  }
+
+  async updateUserProfile(
+    userId: string,
+    input: { name?: string; phone?: string }
+  ): Promise<void> {
+    const rows = await query<{ id: string }>(
+      `UPDATE users
+          SET name = COALESCE($2, name),
+              phone = COALESCE($3, phone),
+              updated_at = now()
+        WHERE id = $1
+          AND status = 'active'
+        RETURNING id`,
+      [userId, input.name ?? null, input.phone ?? null]
+    );
+    if (rows.length === 0) {
+      throw new AppError('UNAUTHENTICATED', 'Sesi tidak valid');
+    }
   }
 
   async findActivePolicyVersion(code: string): Promise<ActivePolicyVersion | null> {

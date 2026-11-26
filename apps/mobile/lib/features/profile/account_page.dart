@@ -230,6 +230,11 @@ class _AccountPageState extends State<AccountPage> {
     final user = _user;
     final update = AppScope.of(context).update;
     final theme = ThemeScope.maybeOf(context);
+    final isVendor =
+        user?.roles.any(
+          (role) => role == 'vendor_owner' || role == 'vendor_member',
+        ) ??
+        false;
     final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
 
     return Scaffold(
@@ -279,7 +284,12 @@ class _AccountPageState extends State<AccountPage> {
                         ],
                       ],
                       const SizedBox(height: Sp.md),
-                      _VendorPromo(onTap: _openVendorApply),
+                      _VendorPromo(
+                        onTap: isVendor
+                            ? _openVendorMode
+                            : _openVendorApply,
+                        registered: isVendor,
+                      ),
                       const SizedBox(height: Sp.xl),
                       const _ProfileSectionTitle('Preferensi'),
                       const SizedBox(height: Sp.sm),
@@ -380,6 +390,11 @@ class _AccountPageState extends State<AccountPage> {
                       const SizedBox(height: Sp.sm),
                       _menuCard([
                         _MenuRow(
+                          icon: Icons.person_outline,
+                          label: 'Edit profil',
+                          onTap: _openEditProfile,
+                        ),
+                        _MenuRow(
                           icon: Icons.delete_forever_outlined,
                           label: 'Hapus akun',
                           danger: true,
@@ -429,6 +444,17 @@ class _AccountPageState extends State<AccountPage> {
         ],
       ),
     );
+  }
+
+  Future<void> _openEditProfile() async {
+    final updated = await Navigator.pushNamed(context, Routes.editProfile);
+    if (updated == true && mounted) {
+      setState(() => _user = AppScope.of(context).session.user);
+    }
+  }
+
+  void _openVendorMode() {
+    Navigator.pushNamed(context, Routes.vendorHome);
   }
 
   void _openVendorApply() {
@@ -568,9 +594,10 @@ class _IdentityCard extends StatelessWidget {
 /// Growth card: the vendor door is a first-class action, not the ninth row of
 /// a settings list. It opens the application form that already exists.
 class _VendorPromo extends StatelessWidget {
-  const _VendorPromo({required this.onTap});
+  const _VendorPromo({required this.onTap, this.registered = false});
 
   final VoidCallback onTap;
+  final bool registered;
 
   @override
   Widget build(BuildContext context) {
@@ -592,8 +619,10 @@ class _VendorPromo extends StatelessWidget {
                   color: AppColors.stage,
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(
-                  Icons.storefront_outlined,
+                child: Icon(
+                  registered
+                      ? Icons.dashboard_customize_outlined
+                      : Icons.storefront_outlined,
                   size: 20,
                   color: AppColors.lime,
                 ),
@@ -604,7 +633,7 @@ class _VendorPromo extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Buka jasa hiburanmu',
+                      registered ? 'Kelola vendor' : 'Buka jasa hiburanmu',
                       style: text.labelLarge?.copyWith(
                         fontSize: 14,
                         fontWeight: FontWeight.w800,
@@ -614,7 +643,9 @@ class _VendorPromo extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'Daftarkan grup atau sound system.',
+                      registered
+                          ? 'Dashboard, kalender, dan pesanan.'
+                          : 'Daftarkan grup atau sound system.',
                       style: text.bodySmall?.copyWith(
                         color: AppColors.onLime.withValues(alpha: 0.68),
                       ),

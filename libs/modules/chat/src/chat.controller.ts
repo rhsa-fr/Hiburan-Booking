@@ -17,7 +17,8 @@ import {
   SEND_CHAT_MESSAGE_SCHEMA,
   type ChatMessagePage,
   type ChatMessageView,
-  type ChatReadReceipt
+  type ChatReadReceipt,
+  type ChatThreadView
 } from './chat.contracts';
 import { ChatService } from './chat.service';
 
@@ -37,8 +38,7 @@ function requireBookingId(id: string): string {
 /** One chat thread per booking. The service decides who may read or write. */
 @Controller('bookings/:bookingId/chat')
 @UseGuards(AuthGuard, RolesGuard)
-export class ChatController {
-  constructor(private readonly chat: ChatService) {}
+export class ChatController {  constructor(private readonly chat: ChatService) {}
 
   @Get('messages')
   async list(
@@ -84,5 +84,19 @@ export class ChatController {
         parsed.data.body
       )
     };
+  }
+}
+
+/** Inbox of every booking thread the caller participates in. */
+@Controller('chats')
+@UseGuards(AuthGuard, RolesGuard)
+export class ChatInboxController {
+  constructor(private readonly chat: ChatService) {}
+
+  @Get()
+  async list(
+    @Req() request: AuthenticatedRequest
+  ): Promise<{ data: { items: ChatThreadView[] } }> {
+    return { data: { items: await this.chat.threads(requireUser(request)) } };
   }
 }

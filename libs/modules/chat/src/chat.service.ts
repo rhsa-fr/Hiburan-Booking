@@ -4,12 +4,14 @@ import type {
   ChatMessageView,
   ChatReadReceipt,
   ChatRole,
+  ChatThreadView,
   ListChatMessagesQuery
 } from './chat.contracts';
 import {
   ChatRepository,
   toChatMessageView,
-  type ChatMessageRow
+  type ChatMessageRow,
+  type ChatThreadRow
 } from './chat.repository';
 
 const MAX_BODY_LENGTH = 2000;
@@ -80,6 +82,24 @@ export class ChatService {
     if (participants.is_vendor_owner || participants.is_vendor_member) return 'vendor';
     if (user.roles.some((role) => ADMIN_ROLES.has(role))) return 'admin';
     throw new AppError('FORBIDDEN', 'Kamu tidak terlibat dalam booking ini');
+  }
+
+  /** Inbox rows for the current customer or vendor; one row per booking. */
+  async threads(user: ChatUser): Promise<ChatThreadView[]> {
+    const rows: ChatThreadRow[] = await this.repository.listThreads(user.id);
+    return rows.map((row) => ({
+      booking_id: row.booking_id,
+      booking_code: row.booking_code,
+      vendor_id: row.vendor_id,
+      vendor_name: row.vendor_name,
+      counterpart_name: row.is_customer
+        ? row.vendor_name
+        : row.customer_name ?? 'Pelanggan',
+      counterpart_role: row.is_customer ? 'vendor' : 'customer',
+      last_message: row.last_message,
+      last_at: row.last_at.toISOString(),
+      unread_count: row.unread_count
+    }));
   }
 
   async list(

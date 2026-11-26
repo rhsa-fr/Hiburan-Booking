@@ -357,6 +357,12 @@ export interface CurrentUserResult {
   };
 }
 
+/** `PATCH /auth/me`: only fields a user may change without re-verification. */
+export interface UpdateProfileInput {
+  readonly full_name?: string;
+  readonly phone?: string;
+}
+
 export interface LogoutResult {
   readonly revoked: number;
 }
@@ -1449,6 +1455,47 @@ export class AuthService {
         created_at: user.createdAt.toISOString()
       }
     };
+  }
+
+  /** Updates the caller's display name and/or phone after validation. */
+  async updateProfile(
+    userId: string,
+    input: UpdateProfileInput
+  ): Promise<CurrentUserResult> {
+    const name = input.full_name?.trim();
+    if (name !== undefined && (name.length < 1 || name.length > 100)) {
+      throw new AppError(
+        'VALIDATION_ERROR',
+        'Nama maksimal 100 karakter dan tidak boleh kosong'
+      );
+    }
+
+    let phone: string | undefined;
+    if (input.phone !== undefined) {
+      phone = normalizePhone(input.phone);
+      if (await this.repository.phoneExistsForOther(phone, userId)) {
+        throw new AppError('CONFLICT', 'Nomor WhatsApp sudah dipakai akun lain');
+      }
+    }
+
+    if (name === undefined && phone === undefined) {
+      throw new AppError('VALIDATION_ERROR', 'Tidak ada perubahan profil');
+    }
+
+    try {
+      await this.repository.updateUserProfile(userId, { name, phone });
+    } catch (error) {
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        (error as { code?: string }).code === '23505'
+      ) {
+        throw new AppError('CONFLICT', 'Nomor WhatsApp sudah dipakai akun lain');
+      }
+      throw error;
+    }
+
+    return this.getProfile(userId);
   }
 
   /**
