@@ -55,7 +55,9 @@ class AppUpdateException implements Exception {
   String get message {
     switch (error) {
       case AppUpdateError.disabled:
-        return 'Pembaruan aplikasi belum disiapkan.';
+        return 'Build ini tidak punya pemeriksa pembaruan. Pasang APK Tarlink '
+            'terbaru sekali secara manual, setelah itu pembaruan bisa dicek '
+            'dari dalam aplikasi.';
       case AppUpdateError.network:
         return 'Gagal menghubungi server pembaruan. Periksa sambungan internet.';
       case AppUpdateError.invalidManifest:

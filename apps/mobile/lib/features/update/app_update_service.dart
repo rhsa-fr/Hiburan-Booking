@@ -64,8 +64,17 @@ class AppUpdateService {
 
   /// Checks the manifest and returns the offer to present, or null when there is
   /// nothing to offer. [manual] bypasses the snooze and sends `no-cache`.
+  ///
+  /// A manual check on a build compiled without [appUpdateManifestUrl] throws
+  /// [AppUpdateError.disabled]: telling the user "sudah versi terbaru" there is
+  /// a lie, because this build can never see a newer version.
   Future<AppUpdateInfo?> checkForUpdate({bool manual = false}) async {
-    if (!enabled) return null;
+    if (!enabled) {
+      if (manual) {
+        throw const AppUpdateException(AppUpdateError.disabled);
+      }
+      return null;
+    }
     final device = await deviceInfo();
     final manifest = await _fetchManifest(manual: manual);
     final info = decideAppUpdate(manifest: manifest, device: device);

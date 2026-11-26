@@ -190,7 +190,19 @@ void main() {
     );
 
     expect(service.enabled, isFalse);
-    expect(await service.checkForUpdate(manual: true), isNull);
+    // A silent check stays quiet, a manual one must explain itself instead of
+    // claiming "sudah versi terbaru" on a build that can never check.
+    expect(await service.checkForUpdate(), isNull);
+    await expectLater(
+      service.checkForUpdate(manual: true),
+      throwsA(
+        isA<AppUpdateException>().having(
+          (error) => error.error,
+          'error',
+          AppUpdateError.disabled,
+        ),
+      ),
+    );
     expect(calls, 0);
   });
 
