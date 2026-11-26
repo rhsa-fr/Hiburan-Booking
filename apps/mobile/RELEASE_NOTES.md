@@ -9,13 +9,12 @@ Maksimal ~12 baris; dialog memakai area gulir 96 px.
 
 ## 1.0.8
 
-- Mode gelap kini tersedia sebagai opsi di Profil → Tampilan (default tetap terang).
-- Jadwal vendor dan pelanggan memakai label besar: Buka, Sebagian, Penuh, Tutup, Kosong.
-- Portal vendor: menu cepat, acara terdekat, dan halaman Saldo & Laporan yang lebih sederhana.
-- Profil pelanggan yang juga owner kini menampilkan tombol Kelola vendor.
-- Profil pelanggan dan owner bisa diedit (nama dan nomor WhatsApp).
-- Tab Chat baru berisi riwayat semua vendor yang pernah kamu hubungi.
-- Satu tanggal hanya untuk satu booking; tanggal yang sudah ditempati tidak bisa dipesan lagi.
+- Mode gelap opsional di Profil → Tampilan; default tetap terang.
+- Jadwal vendor & pelanggan berlabel Buka/Sebagian/Penuh/Tutup/Kosong.
+- Portal vendor: menu cepat, acara terdekat, Saldo & Laporan lebih sederhana.
+- Owner melihat tombol Kelola vendor; profil pelanggan & owner bisa diedit.
+- Tab Chat berisi riwayat semua vendor yang pernah dihubungi.
+- Satu tanggal satu booking; tanggal terpakai tidak bisa dipesan lagi.
 
 ## 1.0.7
 
