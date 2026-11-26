@@ -7,6 +7,16 @@ yang tampil di dialog pembaruan saat aplikasi dibuka.
 Tulis dari sudut pandang pengguna: apa yang berubah, bukan commit apa yang masuk.
 Maksimal ~12 baris; dialog memakai area gulir 96 px.
 
+## 1.0.8
+
+- Mode gelap kini tersedia sebagai opsi di Profil → Tampilan (default tetap terang).
+- Jadwal vendor dan pelanggan memakai label besar: Buka, Sebagian, Penuh, Tutup, Kosong.
+- Portal vendor: menu cepat, acara terdekat, dan halaman Saldo & Laporan yang lebih sederhana.
+- Profil pelanggan yang juga owner kini menampilkan tombol Kelola vendor.
+- Profil pelanggan dan owner bisa diedit (nama dan nomor WhatsApp).
+- Tab Chat baru berisi riwayat semua vendor yang pernah kamu hubungi.
+- Satu tanggal hanya untuk satu booking; tanggal yang sudah ditempati tidak bisa dipesan lagi.
+
 ## 1.0.7
 
 - Uji jalur pembaruan: aplikasi 1.0.6 harus menawarkan versi ini otomatis.
