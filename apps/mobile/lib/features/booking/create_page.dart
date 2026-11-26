@@ -740,7 +740,7 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
     final package = _package;
     if (package == null) return const SizedBox.shrink();
     final meta = <String>[
-      if (package.durationMinutes > 0) _duration(package.durationMinutes),
+      if (package.durationMinutes > 0) packageDurationLabel(package.durationMinutes),
       if (package.personnelCount > 0) '${package.personnelCount} personel',
     ].join(' · ');
 
@@ -1372,7 +1372,7 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
     if (package == null || vendor == null) return const SizedBox.shrink();
 
     final meta = <String>[
-      if (package.durationMinutes > 0) _duration(package.durationMinutes),
+      if (package.durationMinutes > 0) packageDurationLabel(package.durationMinutes),
       if (package.personnelCount > 0) '${package.personnelCount} personel',
     ].join(' · ');
 
@@ -1553,15 +1553,6 @@ class _CreateBookingPageState extends State<CreateBookingPage> {
       ],
     );
   }
-}
-
-String _duration(int minutes) {
-  if (minutes <= 0) return 'Durasi belum diisi';
-  final hours = minutes ~/ 60;
-  final rest = minutes % 60;
-  if (hours == 0) return '$rest menit';
-  if (rest == 0) return '$hours jam';
-  return '$hours jam $rest menit';
 }
 
 /// Inline requirement marker. Words instead of an asterisk, so nobody has to
@@ -2049,7 +2040,7 @@ class _DateButton extends StatelessWidget {
                             child: Text(
                               '${parsed.year}',
                               style: text.labelSmall?.copyWith(
-                                fontSize: 9,
+                                fontSize: 10,
                                 fontWeight: FontWeight.w700,
                                 color: selected
                                     ? AppColors.onPrimary

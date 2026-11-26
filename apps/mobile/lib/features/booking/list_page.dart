@@ -489,7 +489,7 @@ class _DateSpine extends StatelessWidget {
           Text(
             value == null ? 'JADWAL' : _weekdays[value.weekday - 1],
             style: const TextStyle(
-              fontSize: 8.5,
+              fontSize: 10,
               height: 1.2,
               fontWeight: FontWeight.w800,
               letterSpacing: 1,
@@ -511,7 +511,7 @@ class _DateSpine extends StatelessWidget {
           Text(
             value == null ? 'MENYUSUL' : _months[value.month - 1],
             style: TextStyle(
-              fontSize: 8.5,
+              fontSize: 10,
               height: 1.2,
               fontWeight: FontWeight.w700,
               letterSpacing: 0.9,

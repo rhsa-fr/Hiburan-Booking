@@ -88,6 +88,68 @@ String sessionLabel(String session) => switch (session.toLowerCase()) {
   _ => session.replaceAll('_', ' '),
 };
 
+/// The three durations a vendor can pick without typing (ADR 0042).
+/// Half day = 6 h, one day = 10 h, full day = 12 h; the API still stores plain
+/// minutes, so `packages.duration_minutes` and its 30–1440 CHECK hold.
+/// Production already ships 12-hour packages, so full day is 12 h rather than
+/// a 14 h preset nobody used.
+enum PackageDurationOption {
+  halfDay(360, 'Setengah hari', '6 jam'),
+  oneDay(600, '1 hari', '10 jam'),
+  fullDay(720, 'Full day', '12 jam');
+
+  const PackageDurationOption(this.minutes, this.label, this.hoursLabel);
+
+  final int minutes;
+  final String label;
+  final String hoursLabel;
+
+  String get display => '$label ($hoursLabel)';
+}
+
+/// The preset a stored value matches, or null when it is a custom duration.
+PackageDurationOption? packageDurationOption(int minutes) {
+  for (final option in PackageDurationOption.values) {
+    if (option.minutes == minutes) return option;
+  }
+  return null;
+}
+
+/// Customer-facing duration, always in hours. Presets read as words
+/// ("Setengah hari (6 jam)"); custom values stay literal in hours
+/// ("3 jam", "1,5 jam") so nobody reads a different unit than they typed.
+String packageDurationLabel(int minutes) {
+  if (minutes <= 0) return 'Durasi belum diisi';
+  final preset = packageDurationOption(minutes);
+  if (preset != null) return preset.display;
+  final hours = minutes / 60;
+  final text = hours == hours.roundToDouble()
+      ? hours.toStringAsFixed(0)
+      : hours.toStringAsFixed(1);
+  return '${text.replaceAll('.', ',')} jam';
+}
+
+/// Minutes → the text a vendor sees in the custom-hours field: 180 → "3".
+String packageDurationHoursInput(int minutes) {
+  final hours = minutes / 60;
+  final text = hours == hours.roundToDouble()
+      ? hours.toStringAsFixed(0)
+      : hours.toStringAsFixed(1);
+  return text.replaceAll('.', ',');
+}
+
+/// Custom-hours text → minutes. Accepts "3", "1,5", "1.5"; enforces 30–1440.
+/// Returns null when the text is not a number inside that range.
+int? packageDurationMinutesFromHours(String raw) {
+  final normalized = raw.trim().replaceAll(',', '.');
+  if (normalized.isEmpty) return null;
+  final hours = double.tryParse(normalized);
+  if (hours == null) return null;
+  final minutes = (hours * 60).round();
+  if (minutes < 30 || minutes > 1440) return null;
+  return minutes;
+}
+
 String relativeFreshness(String? isoTimestamp, {int staleAfterDays = 7}) {
   final timestamp = isoTimestamp == null ? null : DateTime.tryParse(isoTimestamp);
   if (timestamp == null) return 'Jadwal belum pernah diperbarui.';

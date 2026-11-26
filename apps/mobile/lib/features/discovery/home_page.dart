@@ -575,34 +575,33 @@ class _CategoryShortcuts extends StatelessWidget {
 
   final ValueChanged<String> onOpenCategory;
 
+  /// One saturated disc per category. Four pale tints of the same lightness
+  /// made the row read as four identical boxes; a solid disc plus a white glyph
+  /// gives each shortcut an identity and keeps the canvas quiet.
   static const _items =
-      <({String label, IconData icon, Color tint, Color ink, String category})>[
+      <({String label, IconData icon, Color disc, String category})>[
         (
           label: 'Tarling & Dangdut',
           icon: Icons.queue_music,
-          tint: AppColors.limeSoft,
-          ink: AppColors.primary,
+          disc: AppColors.ink,
           category: 'tarling',
         ),
         (
           label: 'Organ Tunggal',
           icon: Icons.piano,
-          tint: AppColors.accentSoft,
-          ink: AppColors.accent,
+          disc: AppColors.accent,
           category: 'organ-tunggal',
         ),
         (
           label: 'Seni Tradisi',
           icon: Icons.theater_comedy,
-          tint: AppColors.tertiarySoft,
-          ink: AppColors.tertiary,
+          disc: AppColors.tertiary,
           category: 'seni-tradisi',
         ),
         (
           label: 'Pendukung Acara',
-          icon: Icons.speaker_group_outlined,
-          tint: AppColors.secondarySoft,
-          ink: AppColors.secondary,
+          icon: Icons.speaker,
+          disc: AppColors.secondary,
           category: 'pendukung-acara',
         ),
       ];
@@ -629,60 +628,56 @@ class _CategoryShortcuts extends StatelessWidget {
 
   Widget _shortcut(
     BuildContext context,
-    ({String label, IconData icon, Color tint, Color ink, String category})
-    item,
+    ({String label, IconData icon, Color disc, String category}) item,
   ) {
     final text = Theme.of(context).textTheme;
-    final radius = BorderRadius.circular(Radii.lg);
     return Semantics(
       button: true,
       label: item.label,
-      child: Material(
-        color: Colors.transparent,
-        child: Ink(
-          decoration: BoxDecoration(
-            color: item.tint,
-            borderRadius: radius,
-            border: Border.all(color: item.ink.withValues(alpha: 0.10)),
-          ),
-          child: InkWell(
-            onTap: () => onOpenCategory(item.category),
-            borderRadius: radius,
-            child: SizedBox(
-              height: 96,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: Sp.xs + 2,
-                  vertical: Sp.md,
-                ),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(item.icon, size: 26, color: item.ink),
-                    const SizedBox(height: Sp.sm + 1),
-                    SizedBox(
-                      height: 29,
-                      child: Align(
-                        alignment: Alignment.topCenter,
-                        child: Text(
-                          item.label,
-                          textAlign: TextAlign.center,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: text.labelSmall?.copyWith(
-                            fontSize: 11.5,
-                            height: 1.25,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: -0.1,
-                            color: AppColors.ink,
-                          ),
-                        ),
-                      ),
+      child: InkWell(
+        onTap: () => onOpenCategory(item.category),
+        borderRadius: BorderRadius.circular(18),
+        child: SizedBox(
+          height: 96,
+          child: Column(
+            children: [
+              Container(
+                width: 54,
+                height: 54,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: item.disc,
+                  borderRadius: BorderRadius.circular(18),
+                  boxShadow: [
+                    BoxShadow(
+                      color: item.disc.withValues(alpha: 0.22),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
                     ),
                   ],
                 ),
+                child: Icon(item.icon, size: 24, color: Colors.white),
               ),
-            ),
+              const SizedBox(height: 7),
+              SizedBox(
+                height: 31,
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  child: Text(
+                    item.label,
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: text.labelMedium?.copyWith(
+                      fontSize: 12,
+                      height: 1.25,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.ink,
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -988,7 +983,7 @@ class _ActiveBookingCard extends StatelessWidget {
                             child: Text(
                               daysLeft == 0 ? 'HARI INI' : 'H-$daysLeft',
                               style: const TextStyle(
-                                fontSize: 9,
+                                fontSize: 10,
                                 height: 1.2,
                                 fontWeight: FontWeight.w800,
                                 letterSpacing: 0.4,
@@ -1023,7 +1018,7 @@ class _ActiveBookingCard extends StatelessWidget {
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
-                                  fontSize: 28,
+                                  fontSize: 26,
                                   height: 1.05,
                                   fontWeight: FontWeight.w800,
                                   letterSpacing: -1.1,

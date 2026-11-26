@@ -114,11 +114,10 @@ jobs:
 
       - name: Siapkan nama berkas
         run: |
-          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
-            BASE="tarlink-${GITHUB_REF_NAME#v}"
-          else
-            BASE="tarlink-${GITHUB_SHA::7}"
-          fi
+          # Nama selalu memakai versi, baik rilis tag maupun workflow_dispatch,
+          # supaya URL di manifest mudah dibaca dan tidak berubah-ubah.
+          VERSION_LINE=$(grep '^version:' pubspec.yaml | sed 's/version: //')
+          BASE="tarlink-${VERSION_LINE%%+*}"
           for abi in arm64-v8a armeabi-v7a x86_64; do
             cp "build/app/outputs/flutter-apk/app-${abi}-release.apk" \
               "${BASE}-${abi}.apk"
@@ -140,11 +139,20 @@ jobs:
             echo "::error::pubspec.yaml harus memakai format version: X.Y.Z+N"
             exit 1
           fi
+          # Changelog yang dilihat pengguna di dialog pembaruan. Bagian yang
+          # tidak ada jatuh ke teks generik supaya rilis tidak pernah gagal
+          # hanya karena catatan lupa diisi.
+          NOTES=$(awk -v v="## $VERSION" \
+            'index($0, v) == 1 { f = 1; next } /^## / { f = 0 } f' \
+            RELEASE_NOTES.md 2>/dev/null | sed '/^[[:space:]]*$/d' | head -12)
+          if [ -z "$NOTES" ]; then
+            NOTES="Tarlink $VERSION (build $BUILD)"
+          fi
           node ../../scripts/publish-apk.mjs . \
             --version "$VERSION" \
             --build "$BUILD" \
             --base-url "${{ vars.APP_UPDATE_BASE_URL }}" \
-            --notes "Tarlink $VERSION (build $BUILD)" \
+            --notes "$NOTES" \
             --out latest.json
 
       - name: Pastikan bucket Supabase ada

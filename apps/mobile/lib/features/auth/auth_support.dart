@@ -475,7 +475,7 @@ class AuthStage extends StatelessWidget {
                 Text(
                   title,
                   style: const TextStyle(
-                    fontSize: 31,
+                    fontSize: 26,
                     height: 1.04,
                     letterSpacing: -1.3,
                     fontWeight: FontWeight.w800,
