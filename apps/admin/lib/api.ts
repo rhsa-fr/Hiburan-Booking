@@ -769,6 +769,36 @@ let mockRegionState: AdminRegion[] = [
   { code: '3274', name: 'Kota Cirebon', level: 'city', parent_code: '32', is_active: true, vendor_count: 0 }
 ];
 
+/**
+ * Satu pengajuan contoh (form v2) supaya antrean dan modal Detail bisa dicoba
+ * tanpa backend. Tanggal sengaja tetap agar tampilan mock stabil.
+ */
+const mockVendorApplication = {
+  id: 'mock-application',
+  status: 'submitted',
+  display_name: 'Tarling Dian Malam',
+  legal_name: 'CV Tarling Dian Malam',
+  nik: '0000000000000000',
+  region_code: '3212',
+  base_address: 'Jl. Pantura No. 1, Indramayu',
+  review_note: null,
+  vendor_id: null,
+  created_at: '2026-11-01T02:00:00.000Z',
+  reviewed_at: null,
+  form_version: 2,
+  category_slug: 'tarling',
+  category_name: 'Tarling',
+  years_active: 6,
+  description:
+    'Grup tarling aktif sejak 2020 dengan pemain tetap dan jadwal pentas rutin di wilayah Pantura.',
+  personnel_count: 8,
+  equipment_summary:
+    'Sound system 2000 watt, dua kendang, satu gitar, dan satu biola beserta kabel cadangan.',
+  portfolio_url: 'https://example.com/portfolio-tarling',
+  agreement_version_id: '00000000-0000-0000-0000-000000000000',
+  agreement_version: 1
+};
+
 function mockRoute(path: string, init?: RequestInit): unknown {
   const url = new URL(path, 'https://mock.tarlink.local');
   const method = (init?.method ?? 'GET').toUpperCase();
@@ -925,7 +955,9 @@ function mockRoute(path: string, init?: RequestInit): unknown {
   }
 
   if (method === 'GET' && pathname === '/admin/vendor-applications') {
-    return { items: [], total: 0, page: 1, page_size: 20 };
+    const status = url.searchParams.get('status');
+    const items = status && status !== mockVendorApplication.status ? [] : [mockVendorApplication];
+    return { items, total: items.length, page: 1, page_size: 20 };
   }
   if (
     method === 'POST' &&
@@ -933,17 +965,9 @@ function mockRoute(path: string, init?: RequestInit): unknown {
   ) {
     return {
       data: {
-        id: 'mock-application',
+        ...mockVendorApplication,
         status: pathname.endsWith('/approve') ? 'approved' : 'rejected',
-        display_name: 'Vendor Mock',
-        legal_name: 'Vendor Mock',
-        nik: '0000000000000000',
-        region_code: 'ID-JB',
-        base_address: '-',
-        review_note: null,
-        vendor_id: null,
-        created_at: new Date().toISOString(),
-        reviewed_at: new Date().toISOString()
+        reviewed_at: '2026-11-02T02:00:00.000Z'
       }
     };
   }
