@@ -7,6 +7,11 @@ yang tampil di dialog pembaruan saat aplikasi dibuka.
 Tulis dari sudut pandang pengguna: apa yang berubah, bukan commit apa yang masuk.
 Maksimal ~12 baris; dialog memakai area gulir 96 px.
 
+## 1.0.7
+
+- Uji jalur pembaruan: aplikasi 1.0.6 harus menawarkan versi ini otomatis.
+- Tidak ada perubahan fitur; isinya sama dengan 1.0.6.
+
 ## 1.0.6
 
 - Pembaruan otomatis saat aplikasi dibuka kini benar-benar bekerja.
