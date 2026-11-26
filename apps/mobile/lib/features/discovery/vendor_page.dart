@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -36,7 +36,7 @@ const _monthShort = <String>[
   'Des',
 ];
 
-/// `Rp 1.500.000` → `Rp1.500.000`, the tighter form DESIGN.md asks for.
+/// `Rp 1.500.000` â†’ `Rp1.500.000`, the tighter form DESIGN.md asks for.
 String _rp(int amount) => rupiah(amount).replaceFirst('Rp ', 'Rp');
 
 /// Vendor profile, packages, and an honest 45-day schedule view.
@@ -80,7 +80,9 @@ class _VendorPageState extends State<VendorPage> {
   }
 
   void _syncHeroBar() {
-    final solid = _scroll.hasClients && _scroll.offset > 28;
+    // Solid as soon as the hero starts leaving the screen: a translucent bar
+    // let package titles show through the header while scrolling.
+    final solid = _scroll.hasClients && _scroll.offset > 8;
     if (solid != _heroSolid) setState(() => _heroSolid = solid);
   }
 
@@ -744,6 +746,7 @@ class _VendorPageState extends State<VendorPage> {
       padding: EdgeInsets.zero,
       children: [
         _heroImage(vendor),
+        const SizedBox(height: Sp.md),
         _factsBand(vendor),
         const SizedBox(height: Sp.xl),
         if (description.isNotEmpty) ...[
@@ -754,7 +757,20 @@ class _VendorPageState extends State<VendorPage> {
               children: [
                 _sectionTitle('Tentang grup'),
                 const SizedBox(height: Sp.sm),
-                _ExpandableDescription(text: description),
+                Container(
+                  padding: const EdgeInsets.fromLTRB(
+                    Sp.md + 2,
+                    Sp.md,
+                    Sp.md + 2,
+                    Sp.xs,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.card,
+                    borderRadius: BorderRadius.circular(Radii.lg),
+                    border: Border.all(color: AppColors.line),
+                  ),
+                  child: _ExpandableDescription(text: description),
+                ),
               ],
             ),
           ),
@@ -815,7 +831,7 @@ class _VendorPageState extends State<VendorPage> {
   }
 
   /// FR-123: laporkan vendor dari halaman publiknya. Dua ketukan
-  /// (Laporkan vendor → Kirim laporan), tanpa perlu membuka chat.
+  /// (Laporkan vendor â†’ Kirim laporan), tanpa perlu membuka chat.
   Widget _reportLink(VendorDetail vendor) {
     final text = Theme.of(context).textTheme;
     final authorized = AppScope.of(context).session.authorized;
@@ -1100,10 +1116,26 @@ class _VendorPageState extends State<VendorPage> {
   }
 
   Widget _factsBand(VendorDetail vendor) {
-    return Container(
-      color: AppColors.card,
-      padding: const EdgeInsets.fromLTRB(Sp.lg, Sp.lg, Sp.lg, Sp.lg),
-      child: _quickFacts(vendor),
+    final facts = _facts(vendor);
+    if (facts.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: Sp.lg),
+      child: Container(
+        padding: const EdgeInsets.all(Sp.md + 2),
+        decoration: BoxDecoration(
+          color: AppColors.card,
+          borderRadius: BorderRadius.circular(Radii.lg),
+          border: Border.all(color: AppColors.line),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x0F0B1220),
+              blurRadius: 18,
+              offset: Offset(0, 8),
+            ),
+          ],
+        ),
+        child: _quickFacts(facts),
+      ),
     );
   }
 
@@ -1210,21 +1242,26 @@ class _VendorPageState extends State<VendorPage> {
   }
 
   /// Four honest metrics on a white band, not another rounded card.
-  Widget _quickFacts(VendorDetail vendor) {
-    final text = Theme.of(context).textTheme;
+  /// Short, never-truncated facts for the summary card. Four narrow columns
+  /// used to cut "Full day (12 jam)" into "Full day (12..."; two columns with
+  /// an icon give every value room to breathe.
+  List<({IconData icon, String value, String label})> _facts(
+    VendorDetail vendor,
+  ) {
     final facts = <({IconData icon, String value, String label})>[];
     final package = vendor.packages.isEmpty ? null : vendor.packages.first;
     if (package != null && package.durationMinutes > 0) {
+      final preset = packageDurationOption(package.durationMinutes);
       facts.add((
         icon: Icons.schedule,
-        value: packageDurationLabel(package.durationMinutes),
+        value: preset?.hoursLabel ?? packageDurationLabel(package.durationMinutes),
         label: 'Durasi',
       ));
     }
     if (package != null && package.personnelCount > 0) {
       facts.add((
         icon: Icons.groups_outlined,
-        value: '${package.personnelCount}',
+        value: '${package.personnelCount} orang',
         label: 'Personel',
       ));
     }
@@ -1242,53 +1279,82 @@ class _VendorPageState extends State<VendorPage> {
         label: 'Jangkauan',
       ));
     }
-    if (facts.isEmpty) return const SizedBox.shrink();
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        for (var i = 0; i < facts.length; i++) ...[
-          if (i > 0)
-            Container(
-              width: 1,
-              height: 34,
-              margin: const EdgeInsets.only(top: 6),
-              color: AppColors.line,
-            ),
-          Expanded(
-            child: Padding(
-              padding: EdgeInsets.only(left: i == 0 ? 0 : 10),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(facts[i].icon, size: 15, color: AppColors.inkMuted),
-                  const SizedBox(height: 5),
-                  Text(
-                    facts[i].value,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: text.labelLarge?.copyWith(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: -0.3,
-                    ),
-                  ),
-                  const SizedBox(height: 1),
-                  Text(
-                    facts[i].label.toUpperCase(),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: text.labelSmall?.copyWith(
-                      fontSize: 10,
-                      letterSpacing: 0.8,
-                      color: AppColors.muted2,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
-              ),
-            ),
+    return facts;
+  }
+
+  Widget _quickFacts(List<({IconData icon, String value, String label})> facts) {
+    final rows = <Widget>[];
+    for (var i = 0; i < facts.length; i += 2) {
+      if (i > 0) {
+        rows.add(
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: Sp.md),
+            child: Divider(height: 1, color: AppColors.line),
           ),
-        ],
+        );
+      }
+      final right = i + 1 < facts.length ? facts[i + 1] : null;
+      rows.add(
+        Row(
+          children: [
+            Expanded(child: _factCell(facts[i])),
+            const SizedBox(width: Sp.md),
+            Expanded(
+              child: right == null
+                  ? const SizedBox.shrink()
+                  : _factCell(right),
+            ),
+          ],
+        ),
+      );
+    }
+    return Column(mainAxisSize: MainAxisSize.min, children: rows);
+  }
+
+  Widget _factCell(({IconData icon, String value, String label}) fact) {
+    final text = Theme.of(context).textTheme;
+    return Row(
+      children: [
+        Container(
+          width: 32,
+          height: 32,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: AppColors.surfaceSoft,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(fact.icon, size: 16, color: AppColors.ink),
+        ),
+        const SizedBox(width: 9),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                fact.value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: text.labelLarge?.copyWith(
+                  fontSize: 14.5,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.25,
+                ),
+              ),
+              const SizedBox(height: 1),
+              Text(
+                fact.label.toUpperCase(),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: text.labelSmall?.copyWith(
+                  fontSize: 10,
+                  letterSpacing: 0.7,
+                  color: AppColors.muted2,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
       ],
     );
   }

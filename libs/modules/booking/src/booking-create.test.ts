@@ -24,6 +24,7 @@ import type { BookingRepository, BookingRow } from './booking.repository';
 import { BookingService } from './booking.service';
 import type { AuthUser } from './current-user.decorator';
 import type { CreateBookingDto } from './dto';
+import { RESPOND_DEADLINE_HOURS } from './state-machine';
 
 const BOOKING_ID = '11111111-1111-4111-8111-111111111111';
 const VENDOR_ID = '22222222-2222-4222-8222-222222222222';
@@ -214,6 +215,23 @@ class MemoryStore implements IdempotencyStore {
 
 describe('BookingService.createBooking — policy', () => {
   beforeEach(() => vi.clearAllMocks());
+
+  it('holds the slot for the 24h respond window at request time', async () => {
+    const { calendar, service } = harness();
+
+    await service.createBooking(input, CUSTOMER, NOW);
+
+    const reserve = calendar.reserve as unknown as ReturnType<typeof vi.fn>;
+    expect(reserve).toHaveBeenCalledTimes(1);
+    const options = reserve.mock.calls[0]?.[3] as {
+      blocking: boolean;
+      holdExpiresAt: Date;
+    };
+    expect(options.blocking).toBe(true);
+    expect(options.holdExpiresAt.getTime()).toBe(
+      NOW.getTime() + RESPOND_DEADLINE_HOURS * 60 * 60 * 1000
+    );
+  });
 
   it('freezes the policy terms and stores client_generated_id', async () => {
     const { repo, service } = harness();

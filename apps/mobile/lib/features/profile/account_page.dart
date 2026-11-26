@@ -1009,7 +1009,7 @@ class _PolicySheetState extends State<_PolicySheet> {
         children: [
           if (effective.isNotEmpty) ...[
             Text(
-              'Berlaku sejak ${formatDateIso(effective)} Â· Versi '
+              'Berlaku sejak ${formatDateIso(effective)} · Versi '
               '${policy.version}',
               style: text.bodySmall,
             ),
